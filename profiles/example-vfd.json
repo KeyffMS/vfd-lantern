@@ -1,0 +1,45 @@
+{
+  "profile_version": 1,
+  "vendor": "Example Devices",
+  "model": "Fictional VFD 1000",
+  "protocol": {
+    "default_baud_rate": 9600,
+    "default_parity": "none",
+    "register_type": "holding"
+  },
+  "aliases": {
+    "control.target_frequency": "0x2001",
+    "status.output_frequency": "0x7000",
+    "status.output_current": "0x7002",
+    "status.dc_bus_voltage": "0x7003",
+    "status.fault_code": "0x8000"
+  },
+  "scaling": {
+    "frequency": 0.01,
+    "current": 0.1,
+    "voltage": 0.1
+  },
+  "faults": {
+    "1": {
+      "code": "DEMO.01",
+      "name": "Demonstration fault",
+      "description": "This is fictional data used only to demonstrate the profile format."
+    }
+  },
+  "parameter_groups": [
+    {
+      "group_name": "D0 - Demonstration parameters",
+      "base_address": "0x0000",
+      "registers": {
+        "0x0001": {
+          "code": "D0.01",
+          "name": "Demonstration parameter",
+          "min": 0,
+          "max": 100,
+          "unit": "%",
+          "scale": 1.0
+        }
+      }
+    }
+  ]
+}
