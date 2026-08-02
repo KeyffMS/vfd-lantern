@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  debian-trixie:
+    name: Debian 13 / stable Rust
+    runs-on: ubuntu-latest
+    container: debian:trixie-slim
+
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            curl \
+            git \
+            libudev-dev \
+            pkg-config
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Install Rust components
+        run: rustup component add clippy rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features
+
+      - name: Run tests
+        run: cargo test --all-features
