@@ -14,18 +14,19 @@ struct Cli {
     #[arg(long, value_name = "FILE")]
     profile: Option<PathBuf>,
 
-    /// Disable all write-capable operations.
-    #[arg(long, default_value_t = true)]
-    read_only: bool,
+    /// Explicitly enable commands that may write to a connected drive.
+    #[arg(long)]
+    enable_writes: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let read_only = !cli.enable_writes;
 
     println!("VFD Lantern {}", env!("CARGO_PKG_VERSION"));
     println!("Status: pre-alpha bootstrap");
-    println!("Read-only mode: {}", cli.read_only);
+    println!("Read-only mode: {read_only}");
 
     if let Some(profile) = cli.profile {
         println!("Requested profile: {}", profile.display());
