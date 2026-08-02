@@ -1,0 +1,25 @@
+[package]
+name = "vfd-lantern"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Universal VFD diagnostics, monitoring and configuration TUI for Linux"
+license = "MIT"
+repository = "https://github.com/KeyffMS/vfd-lantern"
+homepage = "https://vfd-lantern.aiteracja.pl"
+readme = "README.md"
+keywords = ["vfd", "modbus", "rs485", "diagnostics", "tui"]
+categories = ["command-line-utilities", "hardware-support"]
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.4", features = ["derive"] }
+crossterm = "0.29.0"
+ratatui = "0.30.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-modbus = { version = "0.17.0", default-features = false, features = ["rtu"] }
+tokio-serial = "5.5.0"
+toml = "1.1.3"
