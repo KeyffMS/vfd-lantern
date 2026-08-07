@@ -128,8 +128,7 @@ impl RegisterCodec {
                 checked_unsigned(self.encode_fixed(*value)?, u64::MAX.into())?
             }
             (RegisterEncoding::Signed64, EngineeringValue::Fixed(value)) => {
-                checked_signed(self.encode_fixed(*value)?, i64::MIN.into(), i64::MAX.into())? as i64
-                    as u64
+                checked_signed(self.encode_fixed(*value)?, i64::MIN.into(), i64::MAX.into())? as u64
             }
             (RegisterEncoding::Float32, EngineeringValue::Float32Bits(bits)) => u64::from(*bits),
             (RegisterEncoding::Float64, EngineeringValue::Float64Bits(bits)) => *bits,
