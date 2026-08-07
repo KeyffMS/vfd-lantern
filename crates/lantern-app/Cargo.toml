@@ -1,0 +1,16 @@
+[package]
+name = "lantern-app"
+description = "Application use cases and ports for VFD Lantern"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+lantern-domain = { path = "../lantern-domain" }
+lantern-profile = { path = "../lantern-profile" }
+
+[lints]
+workspace = true
