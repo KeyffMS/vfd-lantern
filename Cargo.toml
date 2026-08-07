@@ -58,7 +58,7 @@ toml = "=1.1.3"
 serde_jcs = "=0.2.0"
 schemars = "=1.2.2"
 serde_path_to_error = "=0.1.20"
-rust_decimal = { version = "=1.42.1", default-features = false, features = ["serde-str"] }
+rust_decimal = { version = "=1.42.1", default-features = false }
 csv = "=1.4.0"
 time = { version = "=0.3.54", features = ["formatting", "parsing", "serde"] }
 directories = "=6.0.0"
