@@ -119,7 +119,12 @@ fn parse_document(
             })
         }
         ProfileInputFormat::Toml => {
-            let deserializer = toml::Deserializer::new(source);
+            let deserializer =
+                toml::Deserializer::parse(source).map_err(|error| ProfileError::Parse {
+                    format,
+                    path: "<document>".to_owned(),
+                    message: error.to_string(),
+                })?;
             serde_path_to_error::deserialize(deserializer).map_err(|error| ProfileError::Parse {
                 format,
                 path: error.path().to_string(),
