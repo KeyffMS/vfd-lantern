@@ -1,0 +1,15 @@
+[package]
+name = "lantern-tui"
+description = "Ratatui presentation adapter for VFD Lantern"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+lantern-app = { path = "../lantern-app" }
+
+[lints]
+workspace = true

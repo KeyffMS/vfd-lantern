@@ -1,0 +1,18 @@
+[package]
+name = "lantern-sim"
+description = "Development-only VFD simulator harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+lantern-domain = { path = "../lantern-domain" }
+lantern-profile = { path = "../lantern-profile" }
+lantern-app = { path = "../lantern-app" }
+lantern-transport = { path = "../lantern-transport" }
+
+[lints]
+workspace = true

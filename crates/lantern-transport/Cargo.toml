@@ -1,0 +1,16 @@
+[package]
+name = "lantern-transport"
+description = "Serial and Modbus transport adapters for VFD Lantern"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+lantern-app = { path = "../lantern-app" }
+lantern-domain = { path = "../lantern-domain" }
+
+[lints]
+workspace = true
