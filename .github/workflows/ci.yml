@@ -20,7 +20,7 @@ jobs:
       - name: Install tools
         run: |
           apt-get update
-          apt-get install --yes --no-install-recommends coreutils git
+          apt-get install --yes --no-install-recommends ca-certificates coreutils git
       - name: Check out issue branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
