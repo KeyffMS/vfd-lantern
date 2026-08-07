@@ -1,18 +1,18 @@
-name: Apply issue 4 bundle
+name: Verify issue 4 bundle
 
 on:
   pull_request:
     branches: ["agent/issues-1-9"]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: apply-issue-4
+  group: verify-issue-4-bundle
   cancel-in-progress: true
 
 jobs:
-  apply:
+  verify:
     if: github.head_ref == 'agent/issue-4-work'
     runs-on: ubuntu-24.04
     container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
@@ -20,28 +20,12 @@ jobs:
       - name: Install tools
         run: |
           apt-get update
-          apt-get install --yes --no-install-recommends \
-            ca-certificates \
-            coreutils \
-            git \
-            gzip \
-            rustup \
-            tar
+          apt-get install --yes --no-install-recommends coreutils git
       - name: Check out issue branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: agent/issue-4-work
-      - name: Apply reviewed implementation bundle
+      - name: Verify chunk hashes
         run: |
-          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
-          rustup default 1.97.1
-          cat .github/issue4.bundle.* | base64 -d | tar -xz
-          rm -f profiles/example-vfd.json
-          cargo generate-lockfile
-          cargo fmt --all
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add --all
-          git commit -m "Apply profile schema implementation" || exit 0
-          git push origin HEAD:agent/issue-4-work
+          sha256sum .github/issue4.bundle.*
+          test "$(cat .github/issue4.bundle.* | sha256sum | cut -d' ' -f1)" = "c621d82983a451b15bf39042b1c8cf4e7d243f4d4f9e78e00dc89e119e2e2b55"
