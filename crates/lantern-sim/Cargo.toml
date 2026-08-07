@@ -9,10 +9,10 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-lantern-domain = { path = "../lantern-domain" }
-lantern-profile = { path = "../lantern-profile" }
-lantern-app = { path = "../lantern-app" }
-lantern-transport = { path = "../lantern-transport" }
+lantern-domain.workspace = true
+lantern-profile.workspace = true
+lantern-app.workspace = true
+lantern-transport.workspace = true
 
 [lints]
 workspace = true

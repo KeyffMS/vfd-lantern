@@ -9,7 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-lantern-domain = { path = "../lantern-domain" }
+lantern-domain.workspace = true
 
 [lints]
 workspace = true

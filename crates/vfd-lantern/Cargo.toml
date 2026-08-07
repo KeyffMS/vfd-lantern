@@ -10,12 +10,12 @@ homepage.workspace = true
 publish = false
 
 [dependencies]
-lantern-domain = { path = "../lantern-domain" }
-lantern-profile = { path = "../lantern-profile" }
-lantern-app = { path = "../lantern-app" }
-lantern-storage = { path = "../lantern-storage" }
-lantern-transport = { path = "../lantern-transport" }
-lantern-tui = { path = "../lantern-tui" }
+lantern-domain.workspace = true
+lantern-profile.workspace = true
+lantern-app.workspace = true
+lantern-storage.workspace = true
+lantern-transport.workspace = true
+lantern-tui.workspace = true
 
 [lints]
 workspace = true

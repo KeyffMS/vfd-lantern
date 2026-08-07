@@ -21,6 +21,61 @@ repository = "https://github.com/KeyffMS/vfd-lantern"
 homepage = "https://vfd-lantern.aiteracja.pl"
 authors = ["VFD Lantern contributors"]
 
+[workspace.dependencies]
+# Internal crates
+lantern-domain = { path = "crates/lantern-domain", version = "=0.1.0" }
+lantern-profile = { path = "crates/lantern-profile", version = "=0.1.0" }
+lantern-app = { path = "crates/lantern-app", version = "=0.1.0" }
+lantern-storage = { path = "crates/lantern-storage", version = "=0.1.0" }
+lantern-transport = { path = "crates/lantern-transport", version = "=0.1.0" }
+lantern-tui = { path = "crates/lantern-tui", version = "=0.1.0" }
+
+# Error handling and CLI
+anyhow = "=1.0.104"
+thiserror = "=2.0.19"
+clap = { version = "=4.6.4", features = ["derive"] }
+clap_complete = "=4.6.0"
+clap_mangen = "=0.2.29"
+
+# Terminal UI
+ratatui = { version = "=0.30.2", default-features = false, features = ["all-widgets", "crossterm_0_29", "layout-cache", "macros", "underline-color"] }
+crossterm = { version = "=0.29.0", features = ["event-stream"] }
+
+# Async runtime and transport
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "fs", "io-util"] }
+tokio-util = { version = "=0.7.18", features = ["rt"] }
+futures-util = "=0.3.32"
+tokio-modbus = { version = "=0.17.0", default-features = false, features = ["rtu"] }
+tokio-serial = "=5.5.0"
+udev = "=0.9.3"
+nix = { version = "=0.31.3", features = ["fs", "ioctl", "term"] }
+libc = "=0.2.177"
+
+# Formats and exact values
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+toml = "=1.1.3"
+serde_jcs = "=0.2.0"
+schemars = "=1.2.2"
+serde_path_to_error = "=0.1.20"
+rust_decimal = { version = "=1.42.1", default-features = false, features = ["serde-str"] }
+csv = "=1.4.0"
+time = { version = "=0.3.54", features = ["formatting", "parsing", "serde"] }
+directories = "=6.0.0"
+sha2 = "=0.11.0"
+
+# Observability and storage
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt", "json"] }
+tracing-appender = "=0.2.5"
+tempfile = "=3.27.0"
+
+# Tests and benchmarks
+proptest = "=1.9.0"
+insta = { version = "=1.43.2", features = ["json", "redactions"] }
+criterion = "=0.7.0"
+rand_chacha = "=0.9.0"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
