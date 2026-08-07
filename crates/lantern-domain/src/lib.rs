@@ -1,25 +1,29 @@
-//! Pure domain types shared by all VFD Lantern layers.
+//! Pure domain types, codecs, and invariants shared by VFD Lantern layers.
 
 #![forbid(unsafe_code)]
 
-/// Stable identifier of a validated device profile.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ProfileId(String);
+mod access;
+mod codec;
+mod ids;
+mod modbus;
+mod quantity;
+mod telemetry;
+mod value;
 
-impl ProfileId {
-    /// Creates a profile identifier after the caller has validated its syntax.
-    #[must_use]
-    pub fn validated(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// Returns the identifier as text.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Monotonic identifier of an application session.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct SessionId(pub u128);
+pub use access::{DriveState, ParameterAccess, RequiredDriveState, RestorePolicy};
+pub use codec::{CodecError, RegisterCodec, RegisterEncoding};
+pub use ids::{
+    BackupId, DeviceFingerprint, FaultEventId, IdError, OperationId, ParameterId, PlanId,
+    ProfileId, QuantityId, RequestId, SessionId,
+};
+pub use modbus::{
+    BaudRate, ByteOrder, DataBits, LinkSettings, ModbusFunction, ModbusTable, Parity,
+    LinkSettingsError, RegisterAddress, RegisterBlock, RegisterCount, RegisterRangeError, Rs485Mode, SlaveId,
+    StopBits, WordOrder,
+};
+pub use quantity::{QuantityKind, UnitError, UnitId};
+pub use telemetry::{
+    MonotonicInstant, RawRegisters, RawRegistersError, TelemetryQuality, TelemetrySampleCore,
+    UtcTimestamp,
+};
+pub use value::{EngineeringValue, FixedScale, RoundingMode, ScaleError};
