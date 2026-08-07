@@ -72,10 +72,22 @@ macro_rules! text_id {
     };
 }
 
-text_id!(ProfileId, "Stable identifier of a validated device profile.");
-text_id!(ParameterId, "Stable identifier of a parameter within a profile.");
-text_id!(DeviceFingerprint, "Stable fingerprint of an identified device.");
-text_id!(QuantityId, "Stable identifier of a custom physical quantity.");
+text_id!(
+    ProfileId,
+    "Stable identifier of a validated device profile."
+);
+text_id!(
+    ParameterId,
+    "Stable identifier of a parameter within a profile."
+);
+text_id!(
+    DeviceFingerprint,
+    "Stable fingerprint of an identified device."
+);
+text_id!(
+    QuantityId,
+    "Stable identifier of a custom physical quantity."
+);
 
 macro_rules! numeric_id {
     ($name:ident, $inner:ty, $documentation:literal) => {
@@ -100,10 +112,18 @@ macro_rules! numeric_id {
 }
 
 numeric_id!(RequestId, u64, "Identifier of one bus request.");
-numeric_id!(SessionId, u128, "Identifier of one logical connection session.");
+numeric_id!(
+    SessionId,
+    u128,
+    "Identifier of one logical connection session."
+);
 numeric_id!(BackupId, u128, "Identifier of a configuration backup.");
 numeric_id!(FaultEventId, u128, "Identifier of a fault timeline event.");
-numeric_id!(OperationId, u128, "Identifier of a guarded multi-step operation.");
+numeric_id!(
+    OperationId,
+    u128,
+    "Identifier of a guarded multi-step operation."
+);
 numeric_id!(PlanId, u128, "Identifier of a prepared immutable plan.");
 
 #[cfg(test)]

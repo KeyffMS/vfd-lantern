@@ -80,7 +80,8 @@ fn validate_unit_id(id: &str) -> Result<(), UnitError> {
         return Err(UnitError::TooLong);
     }
     for (index, character) in id.char_indices() {
-        if !(character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | '%' | '/')) {
+        if !(character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | '%' | '/'))
+        {
             return Err(UnitError::InvalidCharacter { index, character });
         }
     }

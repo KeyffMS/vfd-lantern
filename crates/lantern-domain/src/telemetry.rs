@@ -106,7 +106,10 @@ mod tests {
 
     #[test]
     fn raw_words_are_bounded() {
-        assert_eq!(RawRegisters::new(Vec::<u16>::new()), Err(RawRegistersError::Empty));
+        assert_eq!(
+            RawRegisters::new(Vec::<u16>::new()),
+            Err(RawRegistersError::Empty)
+        );
         assert!(matches!(
             RawRegisters::new(vec![0; 126]),
             Err(RawRegistersError::TooMany(126))

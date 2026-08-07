@@ -304,17 +304,23 @@ mod tests {
     #[test]
     fn protocol_limits_are_distinct() {
         let read = RegisterCount::new(125).expect("read count");
-        assert!(ModbusFunction::ReadHoldingRegisters
-            .validate_count(read)
-            .is_ok());
-        assert!(ModbusFunction::WriteMultipleRegisters
-            .validate_count(read)
-            .is_err());
+        assert!(
+            ModbusFunction::ReadHoldingRegisters
+                .validate_count(read)
+                .is_ok()
+        );
+        assert!(
+            ModbusFunction::WriteMultipleRegisters
+                .validate_count(read)
+                .is_err()
+        );
 
         let write = RegisterCount::new(123).expect("write count");
-        assert!(ModbusFunction::WriteMultipleRegisters
-            .validate_count(write)
-            .is_ok());
+        assert!(
+            ModbusFunction::WriteMultipleRegisters
+                .validate_count(write)
+                .is_ok()
+        );
     }
 
     #[test]

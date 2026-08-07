@@ -17,8 +17,8 @@ pub use ids::{
     ProfileId, QuantityId, RequestId, SessionId,
 };
 pub use modbus::{
-    BaudRate, ByteOrder, DataBits, LinkSettings, ModbusFunction, ModbusTable, Parity,
-    LinkSettingsError, RegisterAddress, RegisterBlock, RegisterCount, RegisterRangeError, Rs485Mode, SlaveId,
+    BaudRate, ByteOrder, DataBits, LinkSettings, LinkSettingsError, ModbusFunction, ModbusTable,
+    Parity, RegisterAddress, RegisterBlock, RegisterCount, RegisterRangeError, Rs485Mode, SlaveId,
     StopBits, WordOrder,
 };
 pub use quantity::{QuantityKind, UnitError, UnitId};

@@ -28,11 +28,7 @@ impl RegisterEncoding {
     #[must_use]
     pub const fn register_width(self) -> usize {
         match self {
-            Self::Unsigned16
-            | Self::Signed16
-            | Self::Bcd16
-            | Self::Enum16
-            | Self::Bitfield16 => 1,
+            Self::Unsigned16 | Self::Signed16 | Self::Bcd16 | Self::Enum16 | Self::Bitfield16 => 1,
             Self::Unsigned32
             | Self::Signed32
             | Self::Float32
@@ -117,20 +113,23 @@ impl RegisterCodec {
             (RegisterEncoding::Unsigned16, EngineeringValue::Fixed(value)) => {
                 checked_unsigned(self.encode_fixed(*value)?, u16::MAX.into())?
             }
-            (RegisterEncoding::Signed16, EngineeringValue::Fixed(value)) => {
-                u64::from(checked_signed(self.encode_fixed(*value)?, i16::MIN.into(), i16::MAX.into())? as i16 as u16)
-            }
+            (RegisterEncoding::Signed16, EngineeringValue::Fixed(value)) => u64::from(
+                checked_signed(self.encode_fixed(*value)?, i16::MIN.into(), i16::MAX.into())? as i16
+                    as u16,
+            ),
             (RegisterEncoding::Unsigned32, EngineeringValue::Fixed(value)) => {
                 checked_unsigned(self.encode_fixed(*value)?, u32::MAX.into())?
             }
-            (RegisterEncoding::Signed32, EngineeringValue::Fixed(value)) => {
-                u64::from(checked_signed(self.encode_fixed(*value)?, i32::MIN.into(), i32::MAX.into())? as i32 as u32)
-            }
+            (RegisterEncoding::Signed32, EngineeringValue::Fixed(value)) => u64::from(
+                checked_signed(self.encode_fixed(*value)?, i32::MIN.into(), i32::MAX.into())? as i32
+                    as u32,
+            ),
             (RegisterEncoding::Unsigned64, EngineeringValue::Fixed(value)) => {
                 checked_unsigned(self.encode_fixed(*value)?, u64::MAX.into())?
             }
             (RegisterEncoding::Signed64, EngineeringValue::Fixed(value)) => {
-                checked_signed(self.encode_fixed(*value)?, i64::MIN.into(), i64::MAX.into())? as i64 as u64
+                checked_signed(self.encode_fixed(*value)?, i64::MIN.into(), i64::MAX.into())? as i64
+                    as u64
             }
             (RegisterEncoding::Float32, EngineeringValue::Float32Bits(bits)) => u64::from(*bits),
             (RegisterEncoding::Float64, EngineeringValue::Float64Bits(bits)) => *bits,
@@ -348,7 +347,10 @@ mod tests {
         let words = codec
             .encode(&EngineeringValue::Float32Bits(bits))
             .expect("encode");
-        assert_eq!(codec.decode(&words), Ok(EngineeringValue::Float32Bits(bits)));
+        assert_eq!(
+            codec.decode(&words),
+            Ok(EngineeringValue::Float32Bits(bits))
+        );
     }
 
     proptest! {
