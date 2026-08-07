@@ -1,8 +1,8 @@
 name: Apply issue 4 bundle
 
 on:
-  push:
-    branches: ["agent/issue-4-work"]
+  pull_request:
+    branches: ["agent/issues-1-9"]
 
 permissions:
   contents: write
@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   apply:
+    if: github.head_ref == 'agent/issue-4-work'
     runs-on: ubuntu-24.04
     container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
     steps:
