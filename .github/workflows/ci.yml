@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -30,10 +30,8 @@ jobs:
             pkg-config \
             rustup
 
-      - name: Check out issue branch
+      - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Install pinned Rust toolchain
         run: |
@@ -43,19 +41,8 @@ jobs:
             --component clippy \
             --component llvm-tools-preview
           rustup default 1.97.1
-
-      - name: Apply canonical Rust formatting once
-        run: |
-          cargo fmt --all
-          if ! git diff --quiet; then
-            git config --global --add safe.directory "$GITHUB_WORKSPACE"
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add --all
-            git commit -m "Apply rustfmt"
-            branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-            git push origin "HEAD:${branch}"
-          fi
+          rustc --version
+          cargo --version
 
       - name: Validate lockfile and metadata
         run: cargo metadata --locked --format-version 1 --no-deps >/dev/null
