@@ -30,8 +30,10 @@ jobs:
             pkg-config \
             rustup
 
-      - name: Check out repository
+      - name: Check out issue branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Install pinned Rust toolchain
         run: |
@@ -42,17 +44,17 @@ jobs:
             --component llvm-tools-preview
           rustup default 1.97.1
 
-      - name: Refresh lockfile on the issue branch
-        if: github.event_name == 'push' && startsWith(github.ref_name, 'agent/issue-')
+      - name: Apply canonical Rust formatting once
         run: |
-          cargo generate-lockfile
-          if ! git diff --quiet -- Cargo.lock; then
+          cargo fmt --all
+          if ! git diff --quiet; then
             git config --global --add safe.directory "$GITHUB_WORKSPACE"
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add Cargo.lock
-            git commit -m "Refresh Cargo.lock"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
+            git add --all
+            git commit -m "Apply rustfmt"
+            branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+            git push origin "HEAD:${branch}"
           fi
 
       - name: Validate lockfile and metadata
