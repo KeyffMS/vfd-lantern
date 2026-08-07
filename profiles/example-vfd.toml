@@ -1,0 +1,102 @@
+schema_version = 1
+profile_id = "example.fictional-vfd-1000"
+revision = 1
+vendor = "Example Devices"
+family = "Fictional"
+model = "VFD 1000"
+sources = ["Fictional interoperability fixture"]
+safety_notes = ["Never use fictional data on real equipment"]
+presentation_order = ["status.output_frequency", "status.fault_code", "config.accel_time"]
+restore_order = ["config.accel_time"]
+aliases = { "status.output_frequency" = "status.output_frequency", "status.fault_code" = "status.fault_code" }
+
+[hardware_verification]
+status = "fictional"
+firmware = ["demo-1"]
+
+[protocol]
+allowed_baud_rates = [9600, 19200]
+default_baud_rate = 9600
+allowed_parity = ["none", "even"]
+default_parity = "none"
+data_bits = 8
+stop_bits = 1
+response_timeout_ms = 500
+min_inter_frame_delay_us = 0
+rs485_mode = "adapter_managed"
+
+[[identification_probes]]
+id = "model-word"
+description = "Fictional model word"
+table = "holding_registers"
+address = { notation = "modicon_5_digit", value = 40001 }
+count = 1
+expected_raw = [4660]
+
+[[parameters]]
+id = "status.output_frequency"
+code = "S0.01"
+name = "Output frequency"
+table = "input_registers"
+address = { notation = "modicon_5_digit", value = 30001 }
+encoding = "unsigned16"
+quantity = { kind = "frequency" }
+unit = "hz"
+scale = { multiplier = "1.00", divisor = "100.0", offset = "-0", decimal_places = 2 }
+access = "read_only"
+restore_policy = "manual_only"
+poll_class = "fast"
+
+[[parameters]]
+id = "status.fault_code"
+code = "S0.02"
+name = "Fault code"
+table = "holding_registers"
+address = { notation = "protocol_one_based", value = 2 }
+encoding = "enum16"
+quantity = { kind = "digital_state" }
+unit = "bool"
+access = "read_only"
+restore_policy = "manual_only"
+poll_class = "normal"
+
+[[parameters]]
+id = "config.accel_time"
+code = "P0.01"
+name = "Acceleration time"
+table = "holding_registers"
+address = { notation = "pdu_zero_based", value = 2 }
+encoding = "unsigned16"
+quantity = { kind = "time" }
+unit = "s"
+scale = { multiplier = "1", divisor = "10", offset = "0", decimal_places = 1 }
+access = "writable_when_stopped"
+restore_policy = "normal"
+required_drive_state = "stopped"
+read_back = { kind = "exact_raw" }
+write = { function = "write_single_register", forbidden_raw = [[65535]], verification_attempts = 2, verification_interval_ms = 50, max_verification_window_ms = 500 }
+backup = true
+poll_class = "on_demand"
+
+[[groups]]
+id = "status"
+name = "Status"
+parameters = ["status.output_frequency", "status.fault_code"]
+
+[[groups]]
+id = "configuration"
+name = "Configuration"
+parameters = ["config.accel_time"]
+
+[[faults]]
+id = "active-fault"
+source_parameter = "status.fault_code"
+representation = "scalar_code"
+no_fault_values = [0]
+meanings = { "1" = { name = "Demonstration fault", description = "Fictional fault" } }
+freeze_frame = ["status.output_frequency"]
+
+[[telemetry_presets]]
+id = "overview"
+name = "Overview"
+channels = ["status.output_frequency"]
