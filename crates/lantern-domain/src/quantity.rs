@@ -38,6 +38,14 @@ impl UnitId {
         let id = id.into();
         validate_unit_id(&id)?;
 
+        let is_custom_unit = id.starts_with("custom.");
+        if is_custom_unit && !matches!(quantity, QuantityKind::Custom(_)) {
+            return Err(UnitError::CustomUnitRequiresCustomQuantity(id));
+        }
+        if matches!(quantity, QuantityKind::Custom(_)) && !is_custom_unit {
+            return Err(UnitError::CustomQuantityRequiresCustomUnit(id));
+        }
+
         if let Some(expected) = standard_quantity(&id) {
             if expected != quantity {
                 return Err(UnitError::QuantityMismatch {
@@ -46,7 +54,7 @@ impl UnitId {
                     actual: quantity,
                 });
             }
-        } else if !matches!(quantity, QuantityKind::Custom(_)) && !id.starts_with("custom.") {
+        } else if !is_custom_unit {
             return Err(UnitError::UnknownStandardUnit(id));
         }
 
@@ -124,8 +132,12 @@ pub enum UnitError {
         expected: QuantityKind,
         actual: QuantityKind,
     },
-    #[error("unknown standard unit {0}; custom units require a custom quantity")]
+    #[error("unknown standard unit {0}; custom units use the custom. prefix")]
     UnknownStandardUnit(String),
+    #[error("custom unit {0} requires QuantityKind::Custom")]
+    CustomUnitRequiresCustomQuantity(String),
+    #[error("custom quantity requires a custom. unit identifier, received {0}")]
+    CustomQuantityRequiresCustomUnit(String),
 }
 
 #[cfg(test)]
@@ -145,5 +157,13 @@ mod tests {
         let quantity = QuantityKind::Custom(QuantityId::parse("vendor.flux").expect("quantity"));
         let unit = UnitId::new(quantity.clone(), "custom.flux-unit").expect("custom unit");
         assert_eq!(unit.quantity(), &quantity);
+    }
+
+    #[test]
+    fn rejects_custom_unit_for_standard_quantity() {
+        assert!(matches!(
+            UnitId::new(QuantityKind::Frequency, "custom.vendor-hz"),
+            Err(UnitError::CustomUnitRequiresCustomQuantity(_))
+        ));
     }
 }

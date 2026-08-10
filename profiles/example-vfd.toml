@@ -1,0 +1,97 @@
+schema_version = 1
+profile_id = "example.vfd1000"
+revision = 1
+vendor = "Example Devices"
+family = "Fictional"
+model = "VFD 1000"
+sources = ["Fictional manual revision A"]
+safety_notes = ["Demonstration profile only; not qualified for a real drive"]
+restore_order = ["config.acceleration"]
+
+[hardware_verification]
+firmware = ["demo-1.0"]
+method = "Deterministic PTY simulator only"
+qualification_report_id = "SIM-DEMO-001"
+
+[protocol]
+default_baud_rate = 9600
+allowed_baud_rates = [9600, 19200]
+default_parity = "none"
+allowed_parities = ["none", "even"]
+default_data_bits = 8
+allowed_data_bits = [8]
+default_stop_bits = 1
+allowed_stop_bits = [1]
+response_timeout_ms = 500
+minimum_inter_frame_delay_us = 0
+default_slave_id = 1
+rs485_mode = "adapter_managed"
+
+[[identification.probes]]
+id = "model"
+description = "Fictional model word"
+table = "holding_registers"
+count = 1
+expected_raw = [[4096]]
+address = { notation = "protocol_one_based", value = 1 }
+
+[[parameters]]
+id = "status.output_frequency"
+code = "D1.00"
+name = "Output frequency"
+description = "Current output frequency"
+table = "holding_registers"
+address = { notation = "modicon_5_digit", value = 40002 }
+encoding = "unsigned16"
+quantity = "frequency"
+unit = "hz"
+minimum = "0"
+maximum = "400"
+step = "0.01"
+scale = { multiplier = "1", divisor = "100", offset = "0", decimal_places = 2 }
+
+[[parameters]]
+id = "config.acceleration"
+code = "D0.01"
+name = "Acceleration time"
+description = "Fictional writable parameter used only by tests"
+table = "holding_registers"
+address = { notation = "pdu_zero_based", value = 10 }
+encoding = "unsigned16"
+quantity = "time"
+unit = "s"
+minimum = "0.1"
+maximum = "600"
+step = "0.1"
+forbidden_raw = [[0]]
+access = "writable_when_stopped"
+restore_policy = "normal"
+required_drive_state = "stopped"
+write_function = "write_single_register"
+backup = true
+read_back = { kind = "accepted_raw_set", values = [[100], [101]], documentation_source = "Fictional manual revision A", hil_report_id = "SIM-DEMO-001" }
+scale = { multiplier = "1", divisor = "10", offset = "0", decimal_places = 1 }
+
+[aliases]
+"status.output_frequency" = "status.output_frequency"
+
+[[groups]]
+id = "status"
+name = "Status"
+parameters = ["status.output_frequency", "config.acceleration"]
+
+[fault_source]
+kind = "scalar_code"
+parameter_id = "config.acceleration"
+
+[faults."1"]
+code = "DEMO.01"
+name = "Demonstration fault"
+description = "Fictional fault"
+severity = "warning"
+freeze_frame = ["status.output_frequency"]
+
+[[telemetry_presets]]
+id = "overview"
+name = "Overview"
+parameters = ["status.output_frequency"]

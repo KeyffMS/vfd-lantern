@@ -118,6 +118,7 @@ numeric_id!(
     "Identifier of one logical connection session."
 );
 numeric_id!(BackupId, u128, "Identifier of a configuration backup.");
+numeric_id!(LoggingId, u128, "Identifier of one CSV logging operation.");
 numeric_id!(FaultEventId, u128, "Identifier of a fault timeline event.");
 numeric_id!(
     OperationId,
