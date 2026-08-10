@@ -3,17 +3,22 @@
 #![forbid(unsafe_code)]
 
 mod artifacts;
+mod atomic;
+mod paths;
 mod profile_source;
+mod settings_source;
 
 use lantern_app::{ArtifactStoragePort, ProfileSource, ProfileSourceError};
 
 pub use artifacts::{StorageError, read_bounded, write_new};
+pub use atomic::{AtomicWriteError, atomic_write, create_new_synced};
+pub use paths::{AppPaths, PathError};
 pub use profile_source::{
     FilesystemProfileSource, MAX_PROFILE_FILE_BYTES, MAX_PROFILE_FILES, MAX_PROFILE_SCAN_BYTES,
     ProfileLocations, ProfileScanLimits,
 };
+pub use settings_source::FilesystemSettingsSource;
 
-/// Filesystem-backed application adapter.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FileStorage;
 
