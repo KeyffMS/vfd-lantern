@@ -1,0 +1,25 @@
+name: Export validation source
+
+on:
+  push:
+    branches: [agent/issues-1-9-validation]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact validation commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Create source archive
+        run: |
+          git ls-files -z | tar --null -T - -czf /tmp/vfd-lantern-source.tar.gz
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: issues-1-9-source
+          path: /tmp/vfd-lantern-source.tar.gz
+          if-no-files-found: error
+          retention-days: 1
