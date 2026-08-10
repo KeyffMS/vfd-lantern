@@ -4,11 +4,13 @@
 
 mod ports;
 mod profile_registry;
+mod settings;
 
 use lantern_domain::{ProfileId, SessionId};
 
 pub use ports::*;
 pub use profile_registry::*;
+pub use settings::*;
 
 /// Read-only application state rendered by the terminal frontend.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
