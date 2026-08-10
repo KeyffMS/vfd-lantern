@@ -58,3 +58,16 @@ jobs:
 
       - name: Check architecture boundaries
         run: sh scripts/check-architecture.sh
+
+      - name: Create tested source archive
+        if: always()
+        run: git ls-files -z | tar --null -T - -czf /tmp/vfd-lantern-source.tar.gz
+
+      - name: Upload tested source archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issues-1-9-tested-source
+          path: /tmp/vfd-lantern-source.tar.gz
+          if-no-files-found: error
+          retention-days: 1
