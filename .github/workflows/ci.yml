@@ -61,7 +61,7 @@ jobs:
 
       - name: Create tested source archive
         if: always()
-        run: git ls-files -z | tar --null -T - -czf /tmp/vfd-lantern-source.tar.gz
+        run: tar --exclude=.git --exclude=target -czf /tmp/vfd-lantern-source.tar.gz .
 
       - name: Upload tested source archive
         if: always()
