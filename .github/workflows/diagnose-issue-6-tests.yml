@@ -1,0 +1,46 @@
+name: Diagnose issue 6 tests
+
+on:
+  push:
+    branches: [agent/issues-1-9-work]
+  pull_request:
+    branches: [agent/issues-1-9-stage]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends build-essential ca-certificates git libudev-dev pkg-config rustup
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+      - name: Run tests and capture diagnostics
+        id: test
+        shell: bash
+        run: |
+          set +e
+          cargo test --workspace --all-features --locked -- --nocapture > /tmp/issue-6-tests.log 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-6-test-diagnostics
+          path: /tmp/issue-6-tests.log
+          if-no-files-found: error
+          retention-days: 1
+      - name: Preserve test result
+        if: steps.test.outputs.status != '0'
+        run: exit 1
