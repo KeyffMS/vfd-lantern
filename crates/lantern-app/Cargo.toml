@@ -13,6 +13,7 @@ lantern-domain.workspace = true
 lantern-profile.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true
