@@ -50,11 +50,19 @@ pub enum ProfileCommand {
         #[arg(long)]
         system_dir: Option<PathBuf>,
     },
-    Validate { path: PathBuf },
-    Normalize { path: PathBuf },
+    Validate {
+        path: PathBuf,
+    },
+    Normalize {
+        path: PathBuf,
+    },
     Schema,
-    Inspect { path: PathBuf },
-    Hashes { path: PathBuf },
+    Inspect {
+        path: PathBuf,
+    },
+    Hashes {
+        path: PathBuf,
+    },
     Manifest(ManifestArgs),
 }
 

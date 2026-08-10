@@ -12,8 +12,8 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AtomicWriteError> {
         .parent()
         .ok_or_else(|| AtomicWriteError::InvalidPath(path.to_path_buf()))?;
     fs::create_dir_all(parent).map_err(|error| AtomicWriteError::io(parent, error))?;
-    let mut temporary = NamedTempFile::new_in(parent)
-        .map_err(|error| AtomicWriteError::io(parent, error))?;
+    let mut temporary =
+        NamedTempFile::new_in(parent).map_err(|error| AtomicWriteError::io(parent, error))?;
     temporary
         .as_file_mut()
         .write_all(bytes)

@@ -156,11 +156,10 @@ impl SettingsLoader {
             let text = std::str::from_utf8(&bytes).map_err(|error| SettingsError::Parse {
                 message: error.to_string(),
             })?;
-            let document: SettingsDocumentV1 = toml::from_str(text).map_err(|error| {
-                SettingsError::Parse {
+            let document: SettingsDocumentV1 =
+                toml::from_str(text).map_err(|error| SettingsError::Parse {
                     message: error.to_string(),
-                }
-            })?;
+                })?;
             apply_document(&mut settings, document)?;
         }
 
@@ -286,12 +285,7 @@ fn bounded(
     }
 }
 
-fn bounded_u64(
-    name: &str,
-    value: u64,
-    minimum: u64,
-    maximum: u64,
-) -> Result<u64, SettingsError> {
+fn bounded_u64(name: &str, value: u64, minimum: u64, maximum: u64) -> Result<u64, SettingsError> {
     if (minimum..=maximum).contains(&value) {
         Ok(value)
     } else {
@@ -373,12 +367,9 @@ suggested_device = "/dev/config"
 
     #[test]
     fn missing_file_uses_safe_defaults() {
-        let settings = SettingsLoader::load(
-            &MemorySource(None),
-            CliSettingsOverrides::default(),
-            None,
-        )
-        .expect("defaults");
+        let settings =
+            SettingsLoader::load(&MemorySource(None), CliSettingsOverrides::default(), None)
+                .expect("defaults");
         assert!(!settings.process_writes_enabled);
         assert_eq!(settings.render_fps, 5);
     }

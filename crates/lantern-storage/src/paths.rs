@@ -25,8 +25,8 @@ pub struct AppPaths {
 
 impl AppPaths {
     pub fn resolve(overrides: &PathOverrides) -> Result<Self, PathError> {
-        let project = ProjectDirs::from("pl", "aiteracja", "vfd-lantern")
-            .ok_or(PathError::Unavailable)?;
+        let project =
+            ProjectDirs::from("pl", "aiteracja", "vfd-lantern").ok_or(PathError::Unavailable)?;
         let config_root = project.config_dir().to_path_buf();
         let data_root = overrides
             .data
