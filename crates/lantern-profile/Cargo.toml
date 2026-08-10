@@ -1,6 +1,6 @@
 [package]
 name = "lantern-profile"
-description = "Parsing and validation boundary for VFD device profiles"
+description = "Parsing, validation, canonicalization, and hashing of VFD device profiles"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,15 @@ publish = false
 
 [dependencies]
 lantern-domain.workspace = true
+rust_decimal.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_jcs.workspace = true
+serde_json.workspace = true
+serde_path_to_error.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true
