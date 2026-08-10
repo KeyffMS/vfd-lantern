@@ -1,6 +1,6 @@
 [package]
 name = "lantern-app"
-description = "Application use cases and ports for VFD Lantern"
+description = "Application policy and ports for VFD Lantern"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,8 @@ publish = false
 [dependencies]
 lantern-domain.workspace = true
 lantern-profile.workspace = true
+serde.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true
