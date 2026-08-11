@@ -1,0 +1,53 @@
+name: Build tested issue 7 candidate
+
+on:
+  push:
+    branches: [automation/finish-issues-1-9]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libudev-dev pkg-config python3 rustup
+      - name: Check out automation branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+      - name: Build and validate logical issue 7 commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cp automation/issue7.py /tmp/issue7.py
+          git fetch origin agent/issues-1-9
+          git checkout -B issue7 origin/agent/issues-1-9
+          python3 /tmp/issue7.py
+          cargo generate-lockfile
+          cargo fmt --all
+          cargo metadata --locked --format-version 1 --no-deps >/dev/null
+          cargo build --workspace --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked
+          cargo doc --workspace --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain-baseline.sh
+          git diff --check
+          git config user.name "vfd-lantern-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Implement serial discovery and Linux RS-485 support (#7)"
+          test "$(git rev-list --count origin/main..HEAD)" -eq 7
+          git push --force origin HEAD:agent/issues-1-9-candidate
