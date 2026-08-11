@@ -1,0 +1,29 @@
+name: Export delivery git bundle
+
+on:
+  push:
+    branches: [agent/export-current-issues-1-9]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Build delivery bundle
+        run: |
+          git fetch origin agent/issues-1-9:refs/remotes/origin/agent/issues-1-9
+          git bundle create /tmp/vfd-lantern-delivery.bundle refs/remotes/origin/agent/issues-1-9 refs/heads/main
+          git bundle verify /tmp/vfd-lantern-delivery.bundle
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: vfd-lantern-delivery-bundle
+          path: /tmp/vfd-lantern-delivery.bundle
+          if-no-files-found: error
+          retention-days: 1
