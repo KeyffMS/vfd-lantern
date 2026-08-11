@@ -1,0 +1,27 @@
+name: Export current issues 1-9 source
+
+on:
+  push:
+    branches: [agent/export-current-issues-1-9]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Create deterministic source archive
+        run: |
+          tar --sort=name --mtime='UTC 2026-08-11' --owner=0 --group=0 --numeric-owner \
+            --exclude=.git --exclude=target \
+            -czf /tmp/vfd-lantern-current.tar.gz .
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: vfd-lantern-current-source
+          path: /tmp/vfd-lantern-current.tar.gz
+          if-no-files-found: error
+          retention-days: 1
