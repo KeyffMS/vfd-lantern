@@ -3,6 +3,7 @@ name: Export source snapshot
 on:
   push:
     branches: [agent/issues-1-9-export]
+  pull_request:
 
 permissions:
   contents: read
@@ -11,7 +12,7 @@ jobs:
   export:
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out exact branch
+      - name: Check out exact source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Create deterministic source archive
         run: |
