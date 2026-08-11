@@ -1,0 +1,71 @@
+name: Export pinned Cargo cache
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install exact toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: Fetch complete pinned development graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup default 1.97.1
+          mkdir -p /tmp/vfd-cache/src
+          cat > /tmp/vfd-cache/Cargo.toml <<'EOF'
+          [package]
+          name = "vfd-cache"
+          version = "0.0.0"
+          edition = "2024"
+
+          [dependencies]
+          anyhow = "=1.0.104"
+          thiserror = "=2.0.19"
+          clap = { version = "=4.6.4", features = ["derive"] }
+          ratatui = { version = "=0.30.2", default-features = false, features = ["all-widgets", "crossterm_0_29", "layout-cache", "macros", "underline-color"] }
+          crossterm = { version = "=0.29.0", features = ["event-stream"] }
+          tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "fs", "io-util"] }
+          tokio-util = { version = "=0.7.18", features = ["rt"] }
+          futures-util = "=0.3.32"
+          tokio-modbus = { version = "=0.17.0", default-features = false, features = ["rtu", "rtu-server"] }
+          tokio-serial = "=5.5.0"
+          udev = "=0.9.3"
+          nix = { version = "=0.31.3", features = ["fs", "ioctl", "poll", "term"] }
+          libc = "=0.2.177"
+          serde = { version = "=1.0.229", features = ["derive"] }
+          serde_json = "=1.0.151"
+          toml = "=1.1.3"
+          serde_jcs = "=0.2.0"
+          schemars = "=1.2.2"
+          serde_path_to_error = "=0.1.20"
+          rust_decimal = { version = "=1.42.1", default-features = false }
+          csv = "=1.4.0"
+          time = { version = "=0.3.54", features = ["formatting", "parsing", "serde"] }
+          directories = "=6.0.0"
+          sha2 = "=0.11.0"
+          tracing = "=0.1.44"
+          tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt", "json"] }
+          tracing-appender = "=0.2.5"
+          tempfile = "=3.27.0"
+          proptest = "=1.9.0"
+          insta = { version = "=1.43.2", features = ["json", "redactions"] }
+          criterion = "=0.7.0"
+          rand_chacha = "=0.9.0"
+          EOF
+          printf 'fn main() {}\n' > /tmp/vfd-cache/src/main.rs
+          cargo fetch --manifest-path /tmp/vfd-cache/Cargo.toml
+          tar -C "$HOME/.cargo" -czf /tmp/vfd-cargo-registry.tar.gz registry
+      - name: Upload Cargo cache
+        uses: actions/upload-artifact@v4
+        with:
+          name: vfd-cargo-registry
+          path: /tmp/vfd-cargo-registry.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
