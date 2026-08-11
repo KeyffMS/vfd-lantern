@@ -1,0 +1,64 @@
+name: Complete and validate issues 1-9 v9
+
+on:
+  push:
+    branches: [agent/automation-finish-issues-1-9-v9]
+
+permissions:
+  contents: write
+  actions: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  complete:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates gh git jq libudev-dev pkg-config python3 rustup
+      - name: Check out automation branch and full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 \
+            --profile minimal --component rustfmt --component clippy --component llvm-tools-preview
+          rustup default 1.97.1
+      - name: Execute staged completion
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 automation/build_complete_v8.py
+          chmod +x /tmp/complete_v8.sh
+          bash /tmp/complete_v8.sh
+      - name: Publish failure summary
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tail -n 240 /tmp/issues-1-9-v8.log > /tmp/issues-1-9-v9-tail.log || true
+          {
+            printf '## Końcowa walidacja #1–#9: FAILED (v9)\n\n'
+            printf 'Gałąź dostawcza nie została wypromowana. Końcowy fragment logu:\n\n```text\n'
+            cat /tmp/issues-1-9-v9-tail.log
+            printf '\n```\n'
+          } > /tmp/failure-comment.md
+          gh api "repos/$GITHUB_REPOSITORY/issues/33/comments" \
+            -F body=@/tmp/failure-comment.md || true
+      - name: Upload completion log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issues-1-9-v9-log
+          path: /tmp/issues-1-9-v8.log
+          if-no-files-found: warn
+          retention-days: 2
