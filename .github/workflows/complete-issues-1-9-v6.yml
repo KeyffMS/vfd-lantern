@@ -1,0 +1,235 @@
+name: Complete and validate issues 1-9 v6
+
+on:
+  push:
+    branches: [automation/finish-issues-1-9-v6]
+
+permissions:
+  contents: write
+  actions: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  complete:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates gh git jq libudev-dev pkg-config python3 rustup
+      - name: Check out automation branch and full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 \
+            --profile minimal --component rustfmt --component clippy --component llvm-tools-preview
+          rustup default 1.97.1
+      - name: Build, test and promote nine logical commits
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          exec > >(tee /tmp/issues-1-9-v6.log) 2>&1
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name "vfd-lantern-ci"
+          git config user.email "actions@users.noreply.github.com"
+
+          cp automation/issue7.py /tmp/issue7.py
+          cp automation/patch_issue7_v2.py /tmp/patch_issue7_v2.py
+          cp automation/patch_issue7_v3.py /tmp/patch_issue7_v3.py
+          cp automation/patch_issue7_final.py /tmp/patch_issue7_final.py
+          cp automation/patch_issue7_error_api.py /tmp/patch_issue7_error_api.py
+          cp automation/issue8.py /tmp/issue8.py
+          cp automation/patch_issue8.py /tmp/patch_issue8.py
+          cp automation/patch_issue8_final.py /tmp/patch_issue8_final.py
+          cp automation/patch_issue8_timing.py /tmp/patch_issue8_timing.py
+          cp automation/patch_issue8_visibility_stats.py /tmp/patch_issue8_visibility_stats.py
+          cp automation/issue9.py /tmp/issue9.py
+          cp automation/patch_issue9.py /tmp/patch_issue9.py
+          cp automation/patch_issue9_final.py /tmp/patch_issue9_final.py
+          cp automation/patch_issue9_borrows.py /tmp/patch_issue9_borrows.py
+          cp automation/patch_issue9_completeness.py /tmp/patch_issue9_completeness.py
+          cp automation/audit_fixups.py /tmp/audit_fixups.py
+          cp automation/patch_issue1_machete.py /tmp/patch_issue1_machete.py
+
+          git fetch origin main agent/issues-1-9
+          git checkout -B delivery origin/agent/issues-1-9
+
+          validate_core() {
+            cargo metadata --locked --format-version 1 --no-deps >/dev/null
+            cargo build --workspace --locked
+            cargo fmt --all -- --check
+            cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+            cargo test --workspace --all-features --locked
+            cargo doc --workspace --no-deps --locked
+            sh scripts/check-architecture.sh
+            sh scripts/check-supply-chain-baseline.sh
+            git diff --check
+          }
+
+          echo '=== issue #7 ==='
+          python3 /tmp/issue7.py
+          python3 /tmp/patch_issue7_v2.py
+          python3 /tmp/patch_issue7_v3.py
+          python3 /tmp/patch_issue7_final.py
+          python3 /tmp/patch_issue7_error_api.py
+          cargo generate-lockfile
+          cargo fmt --all
+          validate_core
+          git add -A
+          git commit -m "Implement serial discovery and Linux RS-485 support (#7)"
+          test "$(git rev-list --count origin/main..HEAD)" -eq 7
+
+          echo '=== issue #8 ==='
+          python3 /tmp/issue8.py
+          python3 /tmp/patch_issue8.py
+          python3 /tmp/patch_issue8_final.py
+          python3 /tmp/patch_issue8_timing.py
+          python3 /tmp/patch_issue8_visibility_stats.py
+          cargo generate-lockfile
+          cargo fmt --all
+          validate_core
+          git add -A
+          git commit -m "Implement the single Modbus RTU bus actor (#8)"
+          test "$(git rev-list --count origin/main..HEAD)" -eq 8
+
+          echo '=== issue #9 ==='
+          python3 /tmp/issue9.py
+          python3 /tmp/patch_issue9.py
+          python3 /tmp/patch_issue9_final.py
+          python3 /tmp/patch_issue9_borrows.py
+          python3 /tmp/patch_issue9_completeness.py
+          cargo generate-lockfile
+          cargo fmt --all
+          validate_core
+          git add -A
+          git commit -m "Implement the verified session state machine (#9)"
+          test "$(git rev-list --count origin/main..HEAD)" -eq 9
+
+          echo '=== audited fixup for #1 ==='
+          issue1="$(git log --format='%H %s' origin/main..HEAD | awk '/\(#1\)$/ {print $1; exit}')"
+          python3 /tmp/audit_fixups.py issue1
+          python3 /tmp/patch_issue1_machete.py
+          chmod +x scripts/check-roadmap-contracts.sh
+          git add -A
+          git commit --fixup "$issue1"
+
+          echo '=== audited fixup for #4 ==='
+          issue4="$(git log --format='%H %s' origin/main..HEAD | awk '/\(#4\)$/ {print $1; exit}')"
+          python3 /tmp/audit_fixups.py issue4
+          mkdir -p crates/lantern-profile/tests/golden
+          cargo run --locked -p lantern-profile --example dump_canonical \
+            | python3 -c 'import sys; data=sys.stdin.buffer.read(); sys.stdout.buffer.write(data[:-1] if data.endswith(b"\n") else data)' \
+            > crates/lantern-profile/tests/golden/canonical-profile-v1.json
+          cargo generate-lockfile --manifest-path fuzz/Cargo.toml
+          cargo fmt --all
+          cargo fmt --manifest-path fuzz/Cargo.toml --all
+          cargo check --manifest-path fuzz/Cargo.toml --bins --locked
+          validate_core
+          git add -A
+          git commit --fixup "$issue4"
+
+          echo '=== audited fixup for #2 and actual supply-chain verification ==='
+          issue2="$(git log --format='%H %s' origin/main..HEAD | awk '/\(#2\)$/ {print $1; exit}')"
+          python3 /tmp/audit_fixups.py issue2
+          chmod +x scripts/check-supply-chain-tools.sh
+          cargo install --locked cargo-machete --version 0.8.0
+          cargo install --locked cargo-deny --version 0.18.5
+          cargo install --locked cargo-audit --version 0.21.2
+          cargo install --locked cargo-vet --version 0.10.2
+          cargo machete --fix
+          cargo generate-lockfile
+          if [ ! -f supply-chain/config.toml ]; then
+            cargo vet init
+          fi
+          sh scripts/check-supply-chain-tools.sh
+          validate_core
+          git add -A
+          git commit --fixup "$issue2"
+
+          echo '=== autosquash audited corrections ==='
+          GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash origin/main
+
+          echo '=== final local gate ==='
+          cargo generate-lockfile
+          cargo fmt --all
+          cargo fmt --manifest-path fuzz/Cargo.toml --all
+          validate_core
+          cargo check --manifest-path fuzz/Cargo.toml --bins --locked
+          sh scripts/check-roadmap-contracts.sh
+          sh scripts/check-supply-chain-tools.sh
+
+          test "$(git rev-list --count origin/main..HEAD)" -eq 9
+          if git log --format='%s' origin/main..HEAD | grep -q '^fixup!'; then
+            printf 'fixup commit remained after autosquash\n' >&2
+            exit 1
+          fi
+          for number in 1 2 3 4 5 6 7 8 9; do
+            test "$(git log --format='%s' origin/main..HEAD | grep -Ec "\\(#${number}\\)$")" -eq 1
+          done
+          test -z "$(git status --porcelain)"
+
+          final_sha="$(git rev-parse HEAD)"
+          git push --force origin HEAD:agent/issues-1-9-final-candidate-v6
+
+          wait_for_workflow() {
+            workflow="$1"
+            for _ in $(seq 1 160); do
+              runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$final_sha&event=push&per_page=20")"
+              status="$(printf '%s' "$runs" | jq -r --arg sha "$final_sha" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | last | .status // empty')"
+              conclusion="$(printf '%s' "$runs" | jq -r --arg sha "$final_sha" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | last | .conclusion // empty')"
+              if [ "$status" = completed ]; then
+                test "$conclusion" = success
+                return 0
+              fi
+              sleep 15
+            done
+            printf 'timed out waiting for %s\n' "$workflow" >&2
+            return 1
+          }
+          wait_for_workflow ci.yml
+          wait_for_workflow supply-chain.yml
+
+          git push --force-with-lease=refs/heads/agent/issues-1-9:$(git rev-parse origin/agent/issues-1-9) \
+            origin HEAD:agent/issues-1-9
+
+          commit_table="$(git log --reverse --format='- `%h` %s' origin/main..HEAD)"
+          gh api "repos/$GITHUB_REPOSITORY/issues/33/comments" \
+            -f body="## Końcowa walidacja #1–#9: PASS
+
+Finalny SHA: \`$final_sha\`
+
+$commit_table
+
+Bramki: Debian 13 Trixie amd64/arm64, fmt, Clippy -D warnings, testy, dokumentacja, PTY/udev/RS-485, BusActor, SessionStateMachine, fuzz check, architecture contracts, cargo machete, cargo deny, cargo audit i cargo vet. Gałąź dostawcza zawiera dokładnie dziewięć logicznych commitów i nie zawiera plików automatyzacyjnych."
+      - name: Publish failure summary
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tail -n 160 /tmp/issues-1-9-v6.log > /tmp/issues-1-9-v6-tail.log || true
+          {
+            printf '## Końcowa walidacja #1–#9: FAILED\n\n'
+            printf 'Gałąź dostawcza nie została wypromowana. Końcowy fragment logu:\n\n```text\n'
+            cat /tmp/issues-1-9-v6-tail.log
+            printf '\n```\n'
+          } > /tmp/failure-comment.md
+          gh api "repos/$GITHUB_REPOSITORY/issues/33/comments" \
+            -F body=@/tmp/failure-comment.md || true
+      - name: Upload completion log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issues-1-9-v6-log
+          path: /tmp/issues-1-9-v6.log
+          if-no-files-found: warn
+          retention-days: 2
