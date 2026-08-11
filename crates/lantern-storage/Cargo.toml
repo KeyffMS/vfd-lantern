@@ -12,9 +12,10 @@ publish = false
 lantern-app.workspace = true
 lantern-domain.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
+directories.workspace = true
 tempfile.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
