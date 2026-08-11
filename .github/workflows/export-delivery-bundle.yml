@@ -18,7 +18,7 @@ jobs:
       - name: Build delivery bundle
         run: |
           git fetch origin agent/issues-1-9:refs/remotes/origin/agent/issues-1-9
-          git bundle create /tmp/vfd-lantern-delivery.bundle refs/remotes/origin/agent/issues-1-9 refs/heads/main
+          git bundle create /tmp/vfd-lantern-delivery.bundle refs/remotes/origin/agent/issues-1-9 refs/remotes/origin/main
           git bundle verify /tmp/vfd-lantern-delivery.bundle
       - name: Upload bundle
         uses: actions/upload-artifact@v4
