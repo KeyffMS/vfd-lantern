@@ -1,0 +1,36 @@
+name: Create logical issue 6 commit
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create exact logical commit
+        shell: bash
+        env:
+          CANDIDATE_SHA: 506a5e6b546ad453ac8736d7a5eaa62c4358ecfa
+          PARENT_SHA: d670ab5bbc15b948f728eade1d29375401db9a26
+        run: |
+          set -euo pipefail
+          git fetch origin "$CANDIDATE_SHA" "$PARENT_SHA"
+          tree="$(git rev-parse "${CANDIDATE_SHA}^{tree}")"
+          export GIT_AUTHOR_NAME='VFD Lantern contributors'
+          export GIT_AUTHOR_EMAIL='actions@users.noreply.github.com'
+          export GIT_COMMITTER_NAME='VFD Lantern contributors'
+          export GIT_COMMITTER_EMAIL='actions@users.noreply.github.com'
+          logical="$(printf '%s\n\n%s\n' \
+            'Implement configuration, CLI and XDG paths (#6)' \
+            'Introduce one typed SettingsLoader and ValidatedSettings, bounded XDG paths, atomic file operations, distinct CSV sidecars and runtime checkpoints, and a fail-closed process write gate.' \
+            | git commit-tree "$tree" -p "$PARENT_SHA")"
+          test "$(git rev-parse "${logical}^{tree}")" = "$tree"
+          git push --force origin "$logical:refs/heads/agent/issue6-logical"
