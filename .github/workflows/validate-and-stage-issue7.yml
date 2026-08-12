@@ -1,0 +1,91 @@
+name: Validate and stage issue 7
+
+on:
+  pull_request:
+    branches: [agent/issues-1-9]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.head_ref == 'agent/issue-7-publish'
+    strategy:
+      fail-fast: true
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git gzip libudev-dev pkg-config rustup
+      - name: Check out publishing branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+      - name: Reconstruct exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/issue7-publish/chunk-* | base64 -d | gzip -dc > /tmp/issue7.patch
+          echo '070d0f6b39be1273f1c5a8f1d63b63aa49e3fe97d84ef483e6138e8e0bc9453d  /tmp/issue7.patch' | sha256sum -c -
+          git checkout --detach cb59284396a977f3ac058d01ff919e535f9e0c50
+          git apply --index --whitespace=error-all /tmp/issue7.patch
+          test "$(git write-tree)" = '75e0f87831cd4afc6db6b19276affa10f9f441ca'
+      - name: Run complete issue 7 gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo metadata --locked --format-version 1 >/dev/null
+          cargo build --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain-baseline.sh
+          sh -n scripts/run-rs485-hil.sh
+          git diff --check cb59284396a977f3ac058d01ff919e535f9e0c50
+          for run in 1 2 3; do
+            cargo test -p lantern-transport --all-features --locked --lib --quiet
+            cargo test -p lantern-transport --all-features --locked --lib --quiet -- --test-threads=1
+          done
+
+  stage:
+    if: github.head_ref == 'agent/issue-7-publish'
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Check out publishing branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create the exact logical issue commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/issue7-publish/chunk-* | base64 -d | gzip -dc > /tmp/issue7.patch
+          echo '070d0f6b39be1273f1c5a8f1d63b63aa49e3fe97d84ef483e6138e8e0bc9453d  /tmp/issue7.patch' | sha256sum -c -
+          git checkout --detach cb59284396a977f3ac058d01ff919e535f9e0c50
+          git apply --index --whitespace=error-all /tmp/issue7.patch
+          test "$(git write-tree)" = '75e0f87831cd4afc6db6b19276affa10f9f441ca'
+          git config user.name 'VFD Lantern contributors'
+          git config user.email 'actions@users.noreply.github.com'
+          git commit -m 'Implement serial discovery and Linux RS-485 support (#7)'
+          test "$(git rev-parse HEAD^)" = 'cb59284396a977f3ac058d01ff919e535f9e0c50'
+          test "$(git rev-parse HEAD^{tree})" = '75e0f87831cd4afc6db6b19276affa10f9f441ca'
+          git push --force origin HEAD:refs/heads/agent/issue-7-validated
