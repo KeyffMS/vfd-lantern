@@ -26,6 +26,7 @@ python3 /tmp/patch_issue8_timing.py
 python3 /tmp/patch_issue8_visibility_stats.py
 python3 - <<'PY'
 from pathlib import Path
+import re
 
 backend = Path("crates/lantern-transport/src/modbus_backend.rs")
 text = backend.read_text(encoding="utf-8")
@@ -38,22 +39,21 @@ backend.write_text(text, encoding="utf-8")
 
 actor = Path("crates/lantern-transport/src/bus_actor.rs")
 text = actor.read_text(encoding="utf-8")
-old = """        let utilization_ppm = if elapsed_micros == 0 {
-            0
-        } else {
-            ((self.busy_time.as_micros().saturating_mul(1_000_000) / elapsed_micros).min(1_000_000))
-                as u32
-        };"""
-new = """        let utilization_ppm = self
+pattern = re.compile(
+    r"        let utilization_ppm = if elapsed_micros == 0 \{.*?\n        \};",
+    re.S,
+)
+replacement = """        let utilization_ppm = self
             .busy_time
             .as_micros()
             .saturating_mul(1_000_000)
             .checked_div(elapsed_micros)
             .unwrap_or(0)
             .min(1_000_000) as u32;"""
-if old not in text:
-    raise SystemExit("utilization block not found")
-actor.write_text(text.replace(old, new), encoding="utf-8")
+text, count = pattern.subn(replacement, text, count=1)
+if count != 1:
+    raise SystemExit(f"expected one utilization block, found {count}")
+actor.write_text(text, encoding="utf-8")
 PY
 cargo generate-lockfile
 cargo fmt --all
