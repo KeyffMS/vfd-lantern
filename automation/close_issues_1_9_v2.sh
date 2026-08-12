@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'status=$?; printf "closure failed at line %s: %s (exit %s)\n" "$LINENO" "$BASH_COMMAND" "$status" >&2' ERR
 
 readonly MAIN_SHA="82748172d516cbd53161df58f37d4347fa817dbf"
 readonly DELIVERY_SHA="0d44845630c22efc9675b1fd1b32abceaf75bfe3"
@@ -8,7 +9,6 @@ readonly ISSUE6_SHA="cb59284396a977f3ac058d01ff919e535f9e0c50"
 readonly ISSUE8_SHA="0aa7652c7f9f79b70297a42e5b770c9c146b65f0"
 readonly ISSUE9_SHA="0d44845630c22efc9675b1fd1b32abceaf75bfe3"
 readonly CANDIDATE_BRANCH="agent/issues-1-9-final-candidate"
-readonly AUTOMATION_REF="$(git rev-parse HEAD)"
 readonly TOOL_ROOT="${RUNNER_TEMP:-/tmp}/vfd-lantern-tools"
 readonly TOOL_TARGET="${RUNNER_TEMP:-/tmp}/vfd-lantern-tools-target"
 
@@ -17,6 +17,7 @@ export VFD_LANTERN_TOOL_TARGET_DIR="$TOOL_TARGET"
 export PATH="$TOOL_ROOT/bin:${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 
 git config --global --add safe.directory "$GITHUB_WORKSPACE"
+readonly AUTOMATION_REF="$(git rev-parse HEAD)"
 git config user.name "VFD Lantern contributors"
 git config user.email "actions@users.noreply.github.com"
 
