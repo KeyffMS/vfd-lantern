@@ -1,0 +1,114 @@
+name: Validate and stage issue 9
+
+on:
+  pull_request:
+    branches: [agent/issues-1-9]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-amd64:
+    if: github.head_ref == 'agent/issue-9-publish'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    outputs:
+      issue8_sha: ${{ steps.candidate.outputs.issue8_sha }}
+      final_sha: ${{ steps.candidate.outputs.final_sha }}
+      final_tree: ${{ steps.candidate.outputs.final_tree }}
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libudev-dev pkg-config python3 rustup
+      - name: Check out publishing branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+      - name: Reconstruct and validate issues 8 and 9
+        id: candidate
+        shell: bash
+        run: bash automation/stage_issue9.sh validate
+
+  validate-arm64:
+    if: github.head_ref == 'agent/issue-9-publish'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    outputs:
+      issue8_sha: ${{ steps.candidate.outputs.issue8_sha }}
+      final_sha: ${{ steps.candidate.outputs.final_sha }}
+      final_tree: ${{ steps.candidate.outputs.final_tree }}
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libudev-dev pkg-config python3 rustup
+      - name: Check out publishing branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+      - name: Reconstruct and validate issues 8 and 9
+        id: candidate
+        shell: bash
+        run: bash automation/stage_issue9.sh validate
+
+  stage:
+    if: github.head_ref == 'agent/issue-9-publish'
+    needs: [validate-amd64, validate-arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Compare native candidate identities
+        shell: bash
+        env:
+          AMD64_ISSUE8_SHA: ${{ needs.validate-amd64.outputs.issue8_sha }}
+          ARM64_ISSUE8_SHA: ${{ needs.validate-arm64.outputs.issue8_sha }}
+          AMD64_FINAL_SHA: ${{ needs.validate-amd64.outputs.final_sha }}
+          ARM64_FINAL_SHA: ${{ needs.validate-arm64.outputs.final_sha }}
+          AMD64_FINAL_TREE: ${{ needs.validate-amd64.outputs.final_tree }}
+          ARM64_FINAL_TREE: ${{ needs.validate-arm64.outputs.final_tree }}
+        run: |
+          test -n "$AMD64_FINAL_SHA"
+          test "$AMD64_ISSUE8_SHA" = "$ARM64_ISSUE8_SHA"
+          test "$AMD64_FINAL_SHA" = "$ARM64_FINAL_SHA"
+          test "$AMD64_FINAL_TREE" = "$ARM64_FINAL_TREE"
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libudev-dev pkg-config python3 rustup
+      - name: Check out publishing branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+      - name: Publish exact two-commit lineage
+        shell: bash
+        env:
+          EXPECTED_ISSUE8_SHA: ${{ needs.validate-amd64.outputs.issue8_sha }}
+          EXPECTED_FINAL_SHA: ${{ needs.validate-amd64.outputs.final_sha }}
+          EXPECTED_FINAL_TREE: ${{ needs.validate-amd64.outputs.final_tree }}
+        run: bash automation/stage_issue9.sh stage
