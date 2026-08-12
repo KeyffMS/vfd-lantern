@@ -31,5 +31,31 @@ if find . -type f -name '*.py' -not -path './target/*' | grep -q .; then
     exit 1
 fi
 
+
+if grep -R -n -E 'unsafe[[:space:]]*\{|unsafe[[:space:]]+(fn|impl|trait)' crates --include='*.rs' \
+    | grep -v '^crates/lantern-transport/src/rs485_ioctl.rs:'; then
+    printf 'project-owned unsafe code exists outside the isolated RS-485 ioctl module\n' >&2
+    exit 1
+fi
+
+if grep -n -E 'open_native_async|SerialPortOpener|OpenOptions|File::open|libc::open' \
+    crates/lantern-transport/src/discovery.rs; then
+    printf 'passive discovery contains a serial-device open path\n' >&2
+    exit 1
+fi
+
+for manifest in crates/*/Cargo.toml; do
+    case "$manifest" in
+        crates/lantern-transport/Cargo.toml) ;;
+        *)
+            if grep -Eq '^(udev|tokio-serial|nix)\.workspace' "$manifest"; then
+                printf 'Linux serial dependency escaped the transport adapter: %s\n' "$manifest" >&2
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+
 cargo metadata --locked --no-deps --format-version 1 >/dev/null
 printf 'architecture checks passed for internal graph: %s\n' "$internal"

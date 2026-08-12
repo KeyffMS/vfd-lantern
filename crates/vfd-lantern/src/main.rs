@@ -8,8 +8,7 @@ mod profile_commands;
 use anyhow::{Result, bail};
 use clap::Parser;
 use lantern_app::{
-    ApplicationState, ArtifactStoragePort, CliSettingsOverrides, ReadBusPort, SettingsLoader,
-    ValidatedSettings,
+    ApplicationState, ArtifactStoragePort, CliSettingsOverrides, SettingsLoader, ValidatedSettings,
 };
 use lantern_storage::{AppPaths, FileStorage, FilesystemSettingsSource};
 use lantern_transport::TransportAdapter;

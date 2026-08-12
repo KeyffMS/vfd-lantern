@@ -1,27 +1,20 @@
-//! Hardware transport adapter implementations.
+//! Linux serial discovery, opening, and Modbus transport adapters.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
-use lantern_app::{PortDiscoveryPort, ReadBusPort, WriteBusPort};
+mod discovery;
+mod rs485_ioctl;
+#[cfg_attr(not(test), allow(dead_code))]
+mod serial_open;
 
-/// Placeholder adapter; real serial ownership is introduced by the transport issues.
+pub use discovery::UdevDiscovery;
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TransportAdapter;
 
-impl ReadBusPort for TransportAdapter {
-    fn adapter_name(&self) -> &'static str {
+impl TransportAdapter {
+    #[must_use]
+    pub const fn adapter_name(&self) -> &'static str {
         "serial-modbus"
-    }
-}
-
-impl WriteBusPort for TransportAdapter {
-    fn adapter_name(&self) -> &'static str {
-        "serial-modbus"
-    }
-}
-
-impl PortDiscoveryPort for TransportAdapter {
-    fn known_port_count(&self) -> usize {
-        0
     }
 }

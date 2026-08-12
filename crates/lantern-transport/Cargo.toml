@@ -11,6 +11,13 @@ publish = false
 [dependencies]
 lantern-app.workspace = true
 lantern-domain.workspace = true
+nix.workspace = true
+tokio.workspace = true
+tokio-serial.workspace = true
+udev.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

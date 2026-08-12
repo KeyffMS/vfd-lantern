@@ -4,12 +4,14 @@
 
 mod ports;
 mod profile_registry;
+mod serial;
 mod settings;
 
 use lantern_domain::{ProfileId, SessionId};
 
 pub use ports::*;
 pub use profile_registry::*;
+pub use serial::*;
 pub use settings::*;
 
 /// Read-only application state rendered by the terminal frontend.

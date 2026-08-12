@@ -85,10 +85,6 @@ pub trait WriteBusPort: Send + Sync {
     fn adapter_name(&self) -> &'static str;
 }
 
-pub trait PortDiscoveryPort: Send + Sync {
-    fn known_port_count(&self) -> usize;
-}
-
 pub trait ProfileSourcePort: Send + Sync {
     fn load_profile_sources(&self) -> Result<Vec<ProfileSource>, ProfileSourceError>;
 }

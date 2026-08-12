@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+tokio.workspace = true
 lantern-domain.workspace = true
 lantern-profile.workspace = true
 serde.workspace = true
