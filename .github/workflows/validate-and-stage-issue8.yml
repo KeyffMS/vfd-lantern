@@ -36,6 +36,26 @@ jobs:
       - name: Reconstruct and validate exact issue #8 candidate
         shell: bash
         run: bash automation/stage_issue8.sh validate
+      - name: Export exact candidate sources
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue8-candidate-${{ matrix.runner }}
+          path: |
+            Cargo.toml
+            Cargo.lock
+            crates/lantern-app/Cargo.toml
+            crates/lantern-app/src/bus.rs
+            crates/lantern-app/src/write_coordinator.rs
+            crates/lantern-app/src/ports.rs
+            crates/lantern-app/src/lib.rs
+            crates/lantern-transport/Cargo.toml
+            crates/lantern-transport/src/bus_actor.rs
+            crates/lantern-transport/src/modbus_backend.rs
+            crates/lantern-transport/src/lib.rs
+            crates/lantern-transport/src/serial_open.rs
+          if-no-files-found: error
+          retention-days: 1
 
   stage:
     if: github.head_ref == 'agent/issue-8-publish'
