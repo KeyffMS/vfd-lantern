@@ -1,0 +1,235 @@
+diff --git a/crates/lantern-app/src/bus.rs b/crates/lantern-app/src/bus.rs
+index 91ce0f9..d0622d4 100644
+--- a/crates/lantern-app/src/bus.rs
++++ b/crates/lantern-app/src/bus.rs
+@@ -9,6 +9,8 @@ use lantern_domain::{
+ };
+ use thiserror::Error;
+ 
++use crate::QueueCapacities;
++
+ pub type BusFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, BusError>> + Send + 'a>>;
+ 
+ #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+@@ -22,12 +24,13 @@ pub enum RequestClass {
+ 
+ impl RequestClass {
+     #[must_use]
+-    pub const fn capacity(self) -> usize {
++    pub const fn capacity(self, capacities: QueueCapacities) -> usize {
+         match self {
+-            Self::SafetyOneShot => 16,
+-            Self::Interactive | Self::TelemetryCritical => 64,
+-            Self::Telemetry => 256,
+-            Self::Background => 32,
++            Self::SafetyOneShot => capacities.safety_one_shot,
++            Self::Interactive => capacities.interactive,
++            Self::TelemetryCritical => capacities.telemetry_critical,
++            Self::Telemetry => capacities.telemetry,
++            Self::Background => capacities.background,
+         }
+     }
+ 
+diff --git a/crates/lantern-app/src/settings.rs b/crates/lantern-app/src/settings.rs
+index 14a9736..772fc83 100644
+--- a/crates/lantern-app/src/settings.rs
++++ b/crates/lantern-app/src/settings.rs
+@@ -109,7 +109,7 @@ pub struct CliSettingsOverrides {
+     pub no_color: bool,
+ }
+ 
+-#[derive(Clone, Debug, Eq, PartialEq)]
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+ pub struct QueueCapacities {
+     pub safety_one_shot: usize,
+     pub interactive: usize,
+@@ -118,6 +118,18 @@ pub struct QueueCapacities {
+     pub background: usize,
+ }
+ 
++impl Default for QueueCapacities {
++    fn default() -> Self {
++        Self {
++            safety_one_shot: 16,
++            interactive: 64,
++            telemetry_critical: 64,
++            telemetry: 256,
++            background: 32,
++        }
++    }
++}
++
+ #[derive(Clone, Debug, Eq, PartialEq)]
+ pub struct PollingIntervals {
+     pub telemetry_critical_ms: u64,
+@@ -157,13 +169,7 @@ impl Default for ValidatedSettings {
+             history_samples: 3_600,
+             memory_limit_mib: 128,
+             log_retention_files: 10,
+-            queues: QueueCapacities {
+-                safety_one_shot: 16,
+-                interactive: 64,
+-                telemetry_critical: 64,
+-                telemetry: 256,
+-                background: 32,
+-            },
++            queues: QueueCapacities::default(),
+             polling: PollingIntervals {
+                 telemetry_critical_ms: 250,
+                 telemetry_ms: 1_000,
+diff --git a/crates/lantern-transport/src/bus_actor.rs b/crates/lantern-transport/src/bus_actor.rs
+index 2b0ff5f..0a0317a 100644
+--- a/crates/lantern-transport/src/bus_actor.rs
++++ b/crates/lantern-transport/src/bus_actor.rs
+@@ -5,8 +5,8 @@ use std::{
+ };
+ 
+ use lantern_app::{
+-    BusControlPort, BusError, BusFuture, BusStatisticsSnapshot, PreparedBusWrite, ReadBusPort,
+-    ReadBusRequest, RequestClass, WriteBusPort,
++    BusControlPort, BusError, BusFuture, BusStatisticsSnapshot, PreparedBusWrite, QueueCapacities,
++    ReadBusPort, ReadBusRequest, RequestClass, WriteBusPort,
+ };
+ use lantern_domain::{DataBits, LinkSettings, Parity, RawRegisters, StopBits};
+ use tokio::{
+@@ -56,10 +56,19 @@ impl BusActor {
+     pub fn spawn<B: RtuBackend>(
+         backend: B,
+         config: BusActorConfig,
++    ) -> (BusActorHandle, JoinHandle<()>) {
++        Self::spawn_with_capacities(backend, config, QueueCapacities::default())
++    }
++
++    #[must_use]
++    pub fn spawn_with_capacities<B: RtuBackend>(
++        backend: B,
++        config: BusActorConfig,
++        queue_capacities: QueueCapacities,
+     ) -> (BusActorHandle, JoinHandle<()>) {
+         let cancellation = CancellationToken::new();
+         let statistics = Arc::new(Mutex::new(BusStatistics::default()));
+-        let (senders, receivers) = channels();
++        let (senders, receivers) = channels(queue_capacities);
+         let handle = BusActorHandle {
+             senders,
+             cancellation: cancellation.clone(),
+@@ -171,13 +180,14 @@ struct Receivers {
+     background: mpsc::Receiver<Command>,
+ }
+ 
+-fn channels() -> (Senders, Receivers) {
+-    let (safety, safety_rx) = mpsc::channel(RequestClass::SafetyOneShot.capacity());
+-    let (interactive, interactive_rx) = mpsc::channel(RequestClass::Interactive.capacity());
++fn channels(capacities: QueueCapacities) -> (Senders, Receivers) {
++    let (safety, safety_rx) = mpsc::channel(RequestClass::SafetyOneShot.capacity(capacities));
++    let (interactive, interactive_rx) =
++        mpsc::channel(RequestClass::Interactive.capacity(capacities));
+     let (telemetry_critical, telemetry_critical_rx) =
+-        mpsc::channel(RequestClass::TelemetryCritical.capacity());
+-    let (telemetry, telemetry_rx) = mpsc::channel(RequestClass::Telemetry.capacity());
+-    let (background, background_rx) = mpsc::channel(RequestClass::Background.capacity());
++        mpsc::channel(RequestClass::TelemetryCritical.capacity(capacities));
++    let (telemetry, telemetry_rx) = mpsc::channel(RequestClass::Telemetry.capacity(capacities));
++    let (background, background_rx) = mpsc::channel(RequestClass::Background.capacity(capacities));
+     (
+         Senders {
+             safety,
+@@ -721,8 +731,8 @@ mod tests {
+     };
+ 
+     use lantern_app::{
+-        BusControlPort, BusError, BusRequestContext, PreparedBusWrite, ReadBusPort, ReadBusRequest,
+-        RequestClass, WriteBusPort, WriteCoordinator,
++        BusControlPort, BusError, BusRequestContext, PreparedBusWrite, QueueCapacities,
++        ReadBusPort, ReadBusRequest, RequestClass, WriteBusPort, WriteCoordinator,
+     };
+     use lantern_domain::{
+         BaudRate, DataBits, LinkSettings, ModbusFunction, ModbusTable, Parity, RawRegisters,
+@@ -732,7 +742,7 @@ mod tests {
+ 
+     use crate::modbus_backend::{BackendFuture, RtuBackend};
+ 
+-    use super::{BusActor, BusActorConfig, protocol_t35};
++    use super::{BusActor, BusActorConfig, channels, protocol_t35};
+ 
+     #[derive(Default)]
+     struct FakeBackend {
+@@ -789,6 +799,23 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn configured_queue_capacities_are_used() {
++        let capacities = QueueCapacities {
++            safety_one_shot: 1,
++            interactive: 2,
++            telemetry_critical: 3,
++            telemetry: 4,
++            background: 5,
++        };
++        let (senders, _receivers) = channels(capacities);
++        assert_eq!(senders.safety.max_capacity(), 1);
++        assert_eq!(senders.interactive.max_capacity(), 2);
++        assert_eq!(senders.telemetry_critical.max_capacity(), 3);
++        assert_eq!(senders.telemetry.max_capacity(), 4);
++        assert_eq!(senders.background.max_capacity(), 5);
++    }
++
+     #[test]
+     fn t35_matches_modbus_rules() {
+         assert_eq!(protocol_t35(link(115_200)), Duration::from_micros(1_750));
+diff --git a/crates/lantern-transport/src/lib.rs b/crates/lantern-transport/src/lib.rs
+index 1524384..fb8d3b0 100644
+--- a/crates/lantern-transport/src/lib.rs
++++ b/crates/lantern-transport/src/lib.rs
+@@ -17,16 +17,18 @@ pub use modbus_backend::{RtuBackend, TokioModbusBackend};
+ pub async fn open_serial_bus(
+     request: lantern_app::SerialOpenRequest,
+     profile_minimum_inter_frame_delay: std::time::Duration,
++    queue_capacities: lantern_app::QueueCapacities,
+ ) -> Result<(BusActorHandle, tokio::task::JoinHandle<()>), lantern_app::SerialConnectError> {
+     let link = request.settings;
+     let port = serial_open::SerialPortOpener::open(request).await?;
+     let backend = TokioModbusBackend::new(port, link.slave_id, link.response_timeout);
+-    Ok(BusActor::spawn(
++    Ok(BusActor::spawn_with_capacities(
+         backend,
+         BusActorConfig {
+             link,
+             profile_minimum_inter_frame_delay,
+         },
++        queue_capacities,
+     ))
+ }
+ 
+diff --git a/crates/vfd-lantern/src/main.rs b/crates/vfd-lantern/src/main.rs
+index 9391fc8..b355940 100644
+--- a/crates/vfd-lantern/src/main.rs
++++ b/crates/vfd-lantern/src/main.rs
+@@ -5,10 +5,13 @@
+ mod cli;
+ mod profile_commands;
+ 
++use std::sync::Arc;
++
+ use anyhow::{Result, bail};
+ use clap::Parser;
+ use lantern_app::{
+-    ApplicationState, ArtifactStoragePort, CliSettingsOverrides, SettingsLoader, ValidatedSettings,
++    ApplicationState, ArtifactStoragePort, CliSettingsOverrides, ProfileRegistry, SettingsLoader,
++    ValidatedSettings,
+ };
+ use lantern_storage::{AppPaths, FileStorage, FilesystemSettingsSource};
+ use lantern_transport::TransportAdapter;
+@@ -67,7 +70,10 @@ fn main() -> Result<()> {
+ fn run_tui_bootstrap(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
+     let storage = FileStorage;
+     let transport = TransportAdapter;
+-    let application = ApplicationState::default();
++    let application = ApplicationState::with_registry(
++        Arc::new(ProfileRegistry::default()),
++        settings.process_writes_enabled,
++    );
+     let ui = UiState::default();
+ 
+     println!("VFD Lantern {}", env!("CARGO_PKG_VERSION"));
