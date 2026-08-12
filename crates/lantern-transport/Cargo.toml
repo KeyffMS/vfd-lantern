@@ -8,7 +8,12 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+test-support = ["lantern-app/test-support"]
+
 [dependencies]
+tokio-util.workspace = true
+tokio-modbus.workspace = true
 lantern-app.workspace = true
 lantern-domain.workspace = true
 nix.workspace = true

@@ -77,14 +77,6 @@ pub trait SettingsSourcePort: Send + Sync {
     fn load_settings(&self) -> Result<Option<Vec<u8>>, SettingsSourceError>;
 }
 
-pub trait ReadBusPort: Send + Sync {
-    fn adapter_name(&self) -> &'static str;
-}
-
-pub trait WriteBusPort: Send + Sync {
-    fn adapter_name(&self) -> &'static str;
-}
-
 pub trait ProfileSourcePort: Send + Sync {
     fn load_profile_sources(&self) -> Result<Vec<ProfileSource>, ProfileSourceError>;
 }

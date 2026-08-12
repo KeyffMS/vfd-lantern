@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+test-support = []
+
 [dependencies]
 tokio.workspace = true
 lantern-domain.workspace = true

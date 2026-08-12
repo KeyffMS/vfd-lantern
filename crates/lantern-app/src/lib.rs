@@ -2,17 +2,21 @@
 
 #![forbid(unsafe_code)]
 
+mod bus;
 mod ports;
 mod profile_registry;
 mod serial;
 mod settings;
+mod write_coordinator;
 
 use lantern_domain::{ProfileId, SessionId};
 
+pub use bus::*;
 pub use ports::*;
 pub use profile_registry::*;
 pub use serial::*;
 pub use settings::*;
+pub use write_coordinator::*;
 
 /// Read-only application state rendered by the terminal frontend.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
