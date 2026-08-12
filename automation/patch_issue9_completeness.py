@@ -146,3 +146,24 @@ text = text.replace(
     "    use crate::{AdapterIdentity, AuditHealth, Authorization, BusError, Connectivity, DisarmReason, OperationState};",
 )
 path.write_text(text, encoding="utf-8")
+
+# Keep the crate root as the stable public API surface after adding the new modules.
+path = Path("crates/lantern-app/src/lib.rs")
+text = path.read_text(encoding="utf-8")
+exports = [
+    "pub use application::*;",
+    "pub use bus::*;",
+    "pub use ports::*;",
+    "pub use profile_registry::*;",
+    "pub use serial::*;",
+    "pub use session::*;",
+    "pub use settings::*;",
+    "pub use write_coordinator::*;",
+]
+for export in exports:
+    text = text.replace(export + "\n", "")
+anchor = "mod write_coordinator;\n"
+if anchor not in text:
+    raise SystemExit("lantern-app module block not found")
+text = text.replace(anchor, anchor + "\n" + "\n".join(exports) + "\n", 1)
+path.write_text(text, encoding="utf-8")
