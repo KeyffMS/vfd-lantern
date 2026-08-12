@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "agent/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Debian 13 / Rust 1.97.1 / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            git \
+            libudev-dev \
+            pkg-config \
+            rustup
+
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --component llvm-tools-preview
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
+
+      - name: Validate lockfile and metadata
+        run: cargo metadata --locked --format-version 1 --no-deps >/dev/null
+
+      - name: Build workspace
+        run: cargo build --workspace --all-features --locked
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace --all-features --locked
+
+      - name: Build documentation
+        run: cargo doc --workspace --all-features --no-deps --locked
+
+      - name: Check architecture boundaries
+        run: sh scripts/check-architecture.sh
+
+      - name: Check supply-chain baseline
+        run: sh scripts/check-supply-chain-baseline.sh
+
+  supply-chain:
+    name: Pinned supply-chain tools
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            git \
+            libudev-dev \
+            pkg-config \
+            rustup
+
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+
+      - name: Install and run pinned supply-chain tools
+        run: |
+          export VFD_LANTERN_TOOL_ROOT="$RUNNER_TEMP/vfd-tools"
+          export VFD_LANTERN_TOOL_TARGET_DIR="$RUNNER_TEMP/vfd-tools-target"
+          export PATH="$VFD_LANTERN_TOOL_ROOT/bin:$PATH"
+          lock_before="$(sha256sum Cargo.lock | cut -d ' ' -f 1)"
+          sh scripts/install-pinned-tools.sh
+          test "$(sha256sum Cargo.lock | cut -d ' ' -f 1)" = "$lock_before"
+          sh scripts/check-supply-chain.sh
