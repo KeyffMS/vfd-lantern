@@ -1,0 +1,105 @@
+name: Validate and stage exact issue 8
+
+on:
+  pull_request:
+    branches: [agent/issues-1-9]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.head_ref == 'agent/issue-8-final-publish'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git gzip libudev-dev pkg-config rustup
+      - name: Check out publishing branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+      - name: Reconstruct exact tested tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cat .github/issue8-final/chunk-* | base64 -d | gzip -dc > /tmp/issue8.patch
+          echo 'e73e605f95c3e3c59d63258c6c324c8026f2373c55e56068688a44730704cf48  /tmp/issue8.patch' | sha256sum -c -
+          git checkout --detach 10e49996790cecc0bc92623dba0732d65f2465c7
+          git apply --index --whitespace=error-all /tmp/issue8.patch
+          test "$(git write-tree)" = 'b699a2e3901442b75e7e638385915c9be12217a5'
+      - name: Run full issue 8 gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 >/dev/null
+          cargo build --workspace --all-features --locked
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain-baseline.sh
+          git diff --check 10e49996790cecc0bc92623dba0732d65f2465c7
+          for run in 1 2 3 4 5; do
+            cargo test -p lantern-transport --all-features --locked --lib --quiet
+            cargo test -p lantern-transport --all-features --locked --lib --quiet -- --test-threads=1
+          done
+
+  stage:
+    if: github.head_ref == 'agent/issue-8-final-publish'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends ca-certificates git gzip
+      - name: Check out publishing branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create exact logical issue commit
+        shell: bash
+        env:
+          GIT_AUTHOR_NAME: VFD Lantern contributors
+          GIT_AUTHOR_EMAIL: actions@users.noreply.github.com
+          GIT_COMMITTER_NAME: VFD Lantern contributors
+          GIT_COMMITTER_EMAIL: actions@users.noreply.github.com
+          GIT_AUTHOR_DATE: '2026-08-12T10:15:35Z'
+          GIT_COMMITTER_DATE: '2026-08-12T10:15:35Z'
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cat .github/issue8-final/chunk-* | base64 -d | gzip -dc > /tmp/issue8.patch
+          echo 'e73e605f95c3e3c59d63258c6c324c8026f2373c55e56068688a44730704cf48  /tmp/issue8.patch' | sha256sum -c -
+          git checkout --detach 10e49996790cecc0bc92623dba0732d65f2465c7
+          git apply --index --whitespace=error-all /tmp/issue8.patch
+          test "$(git write-tree)" = 'b699a2e3901442b75e7e638385915c9be12217a5'
+          git commit -m 'Implement the single Modbus RTU bus actor (#8)' \
+            -m 'Add the application-owned read/write capabilities, one bounded and fair RTU actor, strict deadline and retry semantics, t3.5 enforcement, typed outcomes, controlled shutdown, statistics, and deterministic tests.'
+          test "$(git rev-parse HEAD^)" = '10e49996790cecc0bc92623dba0732d65f2465c7'
+          test "$(git rev-parse HEAD^{tree})" = 'b699a2e3901442b75e7e638385915c9be12217a5'
+          test "$(git rev-parse HEAD)" = '47ece0bb0b80f31509bfe922b6923e44997bfb31'
+          git push --force origin HEAD:refs/heads/agent/issue-8-validated-final
