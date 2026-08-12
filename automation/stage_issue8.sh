@@ -14,8 +14,7 @@ for script in \
   patch_issue8.py \
   patch_issue8_final.py \
   patch_issue8_timing.py \
-  patch_issue8_visibility_stats.py \
-  patch_issue8_compile_api.py; do
+  patch_issue8_visibility_stats.py; do
   git show "$AUTOMATION_REF:automation/$script" > "/tmp/$script"
 done
 
@@ -25,7 +24,14 @@ python3 /tmp/patch_issue8.py
 python3 /tmp/patch_issue8_final.py
 python3 /tmp/patch_issue8_timing.py
 python3 /tmp/patch_issue8_visibility_stats.py
-python3 /tmp/patch_issue8_compile_api.py
+python3 - <<'PY'
+from pathlib import Path
+path = Path("crates/lantern-transport/src/modbus_backend.rs")
+text = path.read_text(encoding="utf-8")
+text = text.replace("use crate::OpenedSerialPort;", "use crate::serial_open::OpenedSerialPort;")
+text = text.replace("code: code as u8", "code: u8::from(code)")
+path.write_text(text, encoding="utf-8")
+PY
 cargo generate-lockfile
 cargo fmt --all
 
