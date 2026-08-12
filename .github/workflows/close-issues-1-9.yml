@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: ["agent/issues-1-9"]
     paths:
-      - "automation/close_issues_1_9.sh"
+      - "automation/**"
       - ".github/workflows/close-issues-1-9.yml"
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
       - name: Build, autosquash, validate, and publish candidate branch
         id: candidate
         shell: bash
-        run: bash automation/close_issues_1_9.sh
+        run: bash automation/close_issues_1_9_v2.sh
 
   validate:
     name: Validate exact candidate / ${{ matrix.arch }}
@@ -122,6 +122,10 @@ jobs:
       - name: Run full pinned supply-chain gate
         if: matrix.arch == 'amd64'
         run: |
-          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+          export VFD_LANTERN_TOOL_ROOT="$RUNNER_TEMP/vfd-tools"
+          export VFD_LANTERN_TOOL_TARGET_DIR="$RUNNER_TEMP/vfd-tools-target"
+          export PATH="$VFD_LANTERN_TOOL_ROOT/bin:$PATH"
+          lock_before="$(sha256sum Cargo.lock | cut -d ' ' -f 1)"
           sh scripts/install-pinned-tools.sh
+          test "$(sha256sum Cargo.lock | cut -d ' ' -f 1)" = "$lock_before"
           sh scripts/check-supply-chain.sh
