@@ -145,6 +145,80 @@ text = text.replace(
     "    use crate::{AdapterIdentity, AuditHealth, Authorization, Connectivity, DisarmReason, OperationState};",
     "    use crate::{AdapterIdentity, AuditHealth, Authorization, BusError, Connectivity, DisarmReason, OperationState};",
 )
+
+# Keep the canonical state compact while retaining value semantics inside the reducer.
+text = text.replace("    Active(ActiveSession),", "    Active(Box<ActiveSession>),")
+old = '''                if report.outcome == IdentificationMatch::Match {
+                    if let Some(identity) = verified {
+                        let authorization = if process_writes_enabled {
+                            Authorization::Disarmed {
+                                reason: DisarmReason::Initial,
+                            }
+                        } else {
+                            Authorization::ProcessDisabled
+                        };
+                        return transition(
+                            SessionState::Active(ActiveSession {
+                                session_id,
+                                identity,
+                                port_identity: opened_port,
+                                connectivity: Connectivity::Connected,
+                                authorization,
+                                audit_health: AuditHealth::Healthy,
+                                operation: OperationState::Idle,
+                            }),
+                            Vec::new(),
+                        );
+                    }
+                }
+'''
+new = '''                if report.outcome == IdentificationMatch::Match
+                    && let Some(identity) = verified
+                {
+                    let authorization = if process_writes_enabled {
+                        Authorization::Disarmed {
+                            reason: DisarmReason::Initial,
+                        }
+                    } else {
+                        Authorization::ProcessDisabled
+                    };
+                    return transition(
+                        SessionState::Active(Box::new(ActiveSession {
+                            session_id,
+                            identity,
+                            port_identity: opened_port,
+                            connectivity: Connectivity::Connected,
+                            authorization,
+                            audit_health: AuditHealth::Healthy,
+                            operation: OperationState::Idle,
+                        })),
+                        Vec::new(),
+                    );
+                }
+'''
+if old not in text:
+    raise SystemExit("initial verified identification gate not found")
+text = text.replace(old, new)
+text = text.replace(
+    "            ) => transport_lost(active, cause, now),",
+    "            ) => transport_lost(*active, cause, now),",
+)
+text = text.replace(
+    "                transport_lost(active, SessionFault::PortRemoved, now)",
+    "                transport_lost(*active, SessionFault::PortRemoved, now)",
+)
+text = text.replace(
+    "                reconnect_failed(active, cause, now, process_writes_enabled)",
+    "                reconnect_failed(*active, cause, now, process_writes_enabled)",
+)
+text = text.replace(
+    "    transition(SessionState::Active(active), effects)\n}\n\nfn reconnect_failed(",
+    "    transition(SessionState::Active(Box::new(active)), effects)\n}\n\nfn reconnect_failed(",
+)
+text = text.replace(
+    "        SessionState::Active(active),\n        vec![\n            SessionEffect::ClosePort,",
+    "        SessionState::Active(Box::new(active)),\n        vec![\n            SessionEffect::ClosePort,",
+)
 path.write_text(text, encoding="utf-8")
 
 # Keep the crate root as the stable public API surface after adding the new modules.
