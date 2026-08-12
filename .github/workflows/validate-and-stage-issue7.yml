@@ -12,7 +12,7 @@ jobs:
   validate:
     if: github.head_ref == 'agent/issue-7-publish'
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
@@ -37,6 +37,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           cat .github/issue7-publish/chunk-* | base64 -d | gzip -dc > /tmp/issue7.patch
           echo '070d0f6b39be1273f1c5a8f1d63b63aa49e3fe97d84ef483e6138e8e0bc9453d  /tmp/issue7.patch' | sha256sum -c -
           git checkout --detach cb59284396a977f3ac058d01ff919e535f9e0c50
@@ -78,6 +79,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           cat .github/issue7-publish/chunk-* | base64 -d | gzip -dc > /tmp/issue7.patch
           echo '070d0f6b39be1273f1c5a8f1d63b63aa49e3fe97d84ef483e6138e8e0bc9453d  /tmp/issue7.patch' | sha256sum -c -
           git checkout --detach cb59284396a977f3ac058d01ff919e535f9e0c50
