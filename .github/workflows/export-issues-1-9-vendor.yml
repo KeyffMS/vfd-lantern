@@ -30,6 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git fetch --no-tags origin \
             +refs/heads/agent/issues-1-9:refs/remotes/origin/agent/issues-1-9
           git checkout --detach refs/remotes/origin/agent/issues-1-9
