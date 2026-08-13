@@ -1,0 +1,55 @@
+name: Prepare PR 33 closeout test candidate
+
+on:
+  push:
+    branches:
+      - agent/export-issues-1-9-closeout
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            git \
+            libudev-dev \
+            pkg-config \
+            rustup
+
+      - name: Check out automation branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --component llvm-tools-preview
+          rustup default 1.97.1
+
+      - name: Install pinned supply-chain tools
+        env:
+          CARGO_INSTALL_ROOT: /opt/vfd-lantern-tools
+        run: |
+          cargo install --locked --root "$CARGO_INSTALL_ROOT" --version 0.8.0 cargo-machete
+          cargo install --locked --root "$CARGO_INSTALL_ROOT" --version 0.18.5 cargo-deny
+          cargo install --locked --root "$CARGO_INSTALL_ROOT" --version 0.21.2 cargo-audit
+          cargo install --locked --root "$CARGO_INSTALL_ROOT" --version 0.10.2 cargo-vet
+          echo "$CARGO_INSTALL_ROOT/bin" >> "$GITHUB_PATH"
+
+      - name: Build and validate closeout candidate
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          bash automation/prepare-pr33-closeout-test.sh
