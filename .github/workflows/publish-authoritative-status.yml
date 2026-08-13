@@ -1,0 +1,72 @@
+name: Publish authoritative execution status
+
+on:
+  push:
+    branches:
+      - agent/export-issues-1-9-closeout
+    paths:
+      - .github/workflows/publish-authoritative-status.yml
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  status:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Read state and publish without assumptions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          pr="$(gh api "repos/${repo}/pulls/33")"
+          pr_state="$(jq -r .state <<<"$pr")"
+          pr_draft="$(jq -r .draft <<<"$pr")"
+          pr_merged="$(jq -r '.merged_at // empty' <<<"$pr")"
+          pr_head="$(jq -r .head.sha <<<"$pr")"
+          merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$pr")"
+          main_sha="$(gh api "repos/${repo}/branches/main" --jq .commit.sha)"
+
+          run_state() {
+            workflow="$1"
+            gh api "repos/${repo}/actions/workflows/${workflow}/runs?branch=agent/export-issues-1-9-closeout&event=push&per_page=1" \
+              --jq '.workflow_runs[0] | "\(.status)/\(.conclusion // \"none\") run=\(.id)"' 2>/dev/null || printf 'missing\n'
+          }
+          closeout="$(run_state finalize-pr33-v3.yml)"
+          repair="$(run_state repair-issue20.yml)"
+          audit="$(run_state audit-issue20-contract.yml)"
+
+          if [ -n "$pr_merged" ]; then
+            for n in $(seq 1 9); do
+              state="$(gh issue view "$n" --repo "$repo" --json state --jq .state)"
+              if [ "$state" != CLOSED ]; then
+                gh issue close "$n" --repo "$repo" --reason completed
+              fi
+            done
+            foundation='PASS'
+          else
+            foundation='NOT_CLOSED'
+          fi
+
+          cat > /tmp/roadmap.md <<EOF
+          ## Autorytatywny stan wykonania #1–#9 i #20
+
+          Odczyt bezpośrednio z GitHub API:
+
+          - PR #33: state=\`${pr_state}\`, draft=\`${pr_draft}\`, merged_at=\`${pr_merged:-none}\`;
+          - PR HEAD: \`${pr_head}\`;
+          - merge SHA: \`${merge_sha:-none}\`;
+          - main SHA: \`${main_sha}\`;
+          - fundament #1–#9: **${foundation}**;
+          - workflow domknięcia: \`${closeout}\`;
+          - workflow naprawy #20: \`${repair}\`;
+          - ścisły audyt #20: \`${audit}\`.
+
+          #20 nie jest uznawane za ukończone na podstawie samej kompilacji. Wymagany jest PASS ścisłego audytu potwierdzającego rzeczywisty tokio-modbus RTU server oraz test przez produkcyjny BusActor i SessionStateMachine.
+          EOF
+          gh issue comment 26 --repo "$repo" --body-file /tmp/roadmap.md
+          gh issue comment 20 --repo "$repo" --body-file /tmp/roadmap.md
