@@ -1,0 +1,100 @@
+name: Validate issue 20 delivery
+
+on:
+  push:
+    branches:
+      - agent/issue-20-validation-v1
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  validate:
+    name: Exact delivery / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends build-essential ca-certificates git libudev-dev pkg-config rustup
+      - name: Check out validation trigger
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Check out exact delivery branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main \
+            +refs/heads/agent/issue-20:refs/remotes/origin/agent/issue-20
+          test "$(git rev-list --count origin/main..origin/agent/issue-20)" = 1
+          test "$(git rev-list --count origin/agent/issue-20..origin/main)" = 0
+          git checkout --detach origin/agent/issue-20
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy --component llvm-tools-preview
+          rustup default 1.97.1
+      - name: Strict semantic audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f crates/lantern-sim/tests/rtu_stack.rs
+          grep -q 'tokio_modbus::server' crates/lantern-sim/src/runtime.rs
+          grep -q 'Server::new' crates/lantern-sim/src/runtime.rs
+          grep -q 'serve_until' crates/lantern-sim/src/runtime.rs
+          grep -q 'WireFaultHarness' crates/lantern-sim/src/wire.rs
+          grep -q 'open_serial_bus' crates/lantern-sim/tests/rtu_stack.rs
+          grep -q 'SessionStateMachine' crates/lantern-sim/tests/rtu_stack.rs
+          grep -q 'identify_profile_via_bus' crates/lantern-sim/tests/rtu_stack.rs
+          grep -qi 'golden' crates/lantern-sim/tests/rtu_stack.rs
+          ! grep -R --line-number 'RtuProbeClient' crates/lantern-sim
+          ! grep -R --line-number -E 'WriteBusPort|PreparedBusWrite|WriteCoordinator' crates/lantern-sim/src crates/lantern-sim/tests
+      - name: Full workspace gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 --no-deps >/dev/null
+          cargo fmt --all -- --check
+          cargo build --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked -- --test-threads=1
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain-baseline.sh
+          git diff --check
+
+  report:
+    if: always()
+    needs: validate
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Report exact delivery result
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.validate.result }}
+        run: |
+          set -euo pipefail
+          branch=$(curl --fail-with-body -sS -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' https://api.github.com/repos/KeyffMS/vfd-lantern/branches/agent/issue-20)
+          sha=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"]["sha"])' <<<"$branch")
+          if [ "$RESULT" = success ]; then verdict=PASS; else verdict=FAILED; fi
+          body="## #20 exact delivery audit: $verdict
+
+Delivery SHA: \`$sha\`
+
+Matrix result: \`$RESULT\`
+
+This audit checked the exact one-commit delivery branch on Debian 13 / Rust 1.97.1 / amd64 and arm64 without modifying it."
+          curl --fail-with-body -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' https://api.github.com/repos/KeyffMS/vfd-lantern/issues/20/comments -d "$(python3 -c 'import json,sys; print(json.dumps({"body":sys.stdin.read()}))' <<<"$body")"
