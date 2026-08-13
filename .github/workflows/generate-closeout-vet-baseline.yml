@@ -1,0 +1,61 @@
+name: Generate closeout cargo-vet baseline
+
+on:
+  push:
+    branches:
+      - agent/export-issues-1-9-closeout
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            git \
+            libudev-dev \
+            pkg-config \
+            rustup
+
+      - name: Check out generator branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install pinned Rust toolchain and cargo-vet
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          cargo install --locked --version 0.10.2 cargo-vet
+
+      - name: Generate baseline from exact delivery SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --no-tags origin \
+            +refs/heads/agent/issues-1-9:refs/remotes/origin/agent/issues-1-9
+          git checkout --detach refs/remotes/origin/agent/issues-1-9
+          rm -rf supply-chain
+          cargo vet init
+          cargo vet regenerate exemptions
+          cargo vet check
+          tar -czf vfd-lantern-cargo-vet-baseline.tar.gz supply-chain
+          sha256sum vfd-lantern-cargo-vet-baseline.tar.gz > SHA256SUMS.vet
+
+      - name: Upload generated baseline
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issues-1-9-cargo-vet-baseline
+          path: |
+            vfd-lantern-cargo-vet-baseline.tar.gz
+            SHA256SUMS.vet
+          if-no-files-found: error
+          retention-days: 1
