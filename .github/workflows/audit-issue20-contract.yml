@@ -1,0 +1,121 @@
+name: Audit issue 20 product-path contract
+
+on:
+  push:
+    branches:
+      - agent/export-issues-1-9-closeout
+    paths:
+      - .github/workflows/audit-issue20-contract.yml
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+env:
+  RUST_VERSION: 1.97.1
+
+jobs:
+  audit:
+    name: Strict issue 20 acceptance audit
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates curl git jq libudev-dev pkg-config rustup
+
+      - name: Check out automation source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Resolve candidate without trusting a claimed status
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          for branch in agent/issue-20 agent/issue-20-repaired-candidate agent/issue-20-candidate-v2 agent/issue-20-candidate; do
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+              git fetch --no-tags origin "+refs/heads/${branch}:refs/remotes/origin/audited"
+              git checkout --detach refs/remotes/origin/audited
+              echo "branch=$branch" >> "$GITHUB_OUTPUT"
+              echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo 'No issue 20 candidate branch exists' >&2
+          exit 1
+
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install "$RUST_VERSION" \
+            --profile minimal --component rustfmt --component clippy --component llvm-tools-preview
+          rustup default "$RUST_VERSION"
+
+      - name: Run strict semantic contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-list --count origin/main..HEAD)" -eq 1
+          test "$(git log -1 --format=%s)" = 'Implement the PTY RTU simulator and wire fault harness (#20)'
+          test -f crates/lantern-sim/src/lib.rs
+          test -f scripts/check-simulator-contract.sh
+
+          grep -R --quiet 'openpty' crates/lantern-sim/src
+          grep -R --quiet 'cfmakeraw' crates/lantern-sim/src
+          grep -R --quiet 'WireFaultHarness' crates/lantern-sim/src
+          grep -R --quiet 'SimulatorScenarioV1' crates/lantern-sim/src
+          grep -R --quiet 'ValidatedDeviceProfile' crates/lantern-sim/src/profile_bridge.rs
+          grep -R --quiet 'rand_chacha' crates/lantern-sim/Cargo.toml
+
+          # A mere dependency or type marker is insufficient: the normal slave
+          # path must instantiate the pinned tokio-modbus RTU server.
+          grep -R --line-number -E 'tokio_modbus::server::rtu::Server|server::rtu::Server' \
+            crates/lantern-sim/src crates/lantern-sim/tests
+
+          # Product-path acceptance must exercise both authorities. A private
+          # RtuProbeClient alone does not satisfy issue #20.
+          grep -R --line-number 'BusActor' crates/lantern-sim crates/vfd-lantern/tests crates/lantern-transport/tests
+          grep -R --line-number 'SessionStateMachine' crates/lantern-sim crates/vfd-lantern/tests crates/lantern-app/tests
+
+          grep -R --line-number -E 'BadCrc|Truncated|WrongLength|WrongFunction|WrongSlave|UnexpectedWords|InterByteGap' \
+            crates/lantern-sim/src crates/lantern-sim/tests
+          grep -R --line-number -E 'fingerprint|Fingerprint' crates/lantern-sim/tests
+          grep -R --line-number -E 'disconnect|Disconnect|hangup|Hangup' crates/lantern-sim/tests
+          grep -R --line-number -E 'retry|retries' crates/lantern-sim/tests
+
+          ! grep -R --line-number -E 'pymodbus|pyserial|socat|TcpListener|UdpSocket' crates/lantern-sim
+
+          cargo metadata --locked --format-version 1 >/dev/null
+          cargo build --workspace --all-features --locked
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain-baseline.sh
+          sh scripts/check-simulator-contract.sh
+          git diff --check
+          test -z "$(git status --porcelain)"
+
+      - name: Publish PASS
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.resolve.outputs.branch }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          gh issue comment 20 --repo "$GITHUB_REPOSITORY" --body "Ścisły audyt semantyczny #20: PASS. branch=${BRANCH}, exact SHA=${SHA}. Potwierdzono tokio-modbus RTU server oraz test przez BusActor i SessionStateMachine."
+
+      - name: Publish fail-closed result
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.resolve.outputs.branch }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          gh issue comment 20 --repo "$GITHUB_REPOSITORY" --body "Ścisły audyt semantyczny #20: FAILED. branch=${BRANCH:-none}, SHA=${SHA:-none}. Kandydat nie może zostać uznany za ukończony ani scalony, dopóki normalny slave nie korzysta z tokio-modbus RTU server i test procesu nie przechodzi przez produkcyjny BusActor oraz SessionStateMachine."
