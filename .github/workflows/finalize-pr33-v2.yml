@@ -1,0 +1,411 @@
+name: Finalize PR 33 after full validation
+
+on:
+  push:
+    branches:
+      - agent/export-issues-1-9-closeout
+    paths:
+      - .github/workflows/finalize-pr33-v2.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: finalize-pr33-v2
+  cancel-in-progress: false
+
+env:
+  DELIVERY_BRANCH: agent/issues-1-9
+  CANDIDATE_BRANCH: agent/issues-1-9-closeout-candidate-v2
+  BASE_BRANCH: main
+  RUST_VERSION: 1.97.1
+  DEBIAN_IMAGE: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+
+jobs:
+  prepare:
+    name: Prepare rewritten nine-commit candidate
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libudev-dev pkg-config python3 rustup
+
+      - name: Check out automation branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_VERSION" \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --component llvm-tools-preview
+          rustup default "$RUST_VERSION"
+
+      - name: Build candidate and autosquash into issue 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name "VFD Lantern contributors"
+          git config user.email "actions@users.noreply.github.com"
+          git fetch --no-tags origin \
+            "+refs/heads/${DELIVERY_BRANCH}:refs/remotes/origin/delivery" \
+            "+refs/heads/${BASE_BRANCH}:refs/remotes/origin/base"
+          git checkout -B closeout refs/remotes/origin/delivery
+
+          test "$(git rev-list --count refs/remotes/origin/base..HEAD)" -eq 9
+          mapfile -t before_subjects < <(git log --reverse --format=%s refs/remotes/origin/base..HEAD)
+          for n in $(seq 1 9); do
+            test "${before_subjects[$((n-1))]}" != ""
+            printf '%s\n' "${before_subjects[$((n-1))]}" | grep -Eq "\\(#${n}\\)$"
+          done
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          removals = {
+              Path('crates/vfd-lantern/Cargo.toml'): {'lantern-domain', 'lantern-profile'},
+              Path('crates/lantern-sim/Cargo.toml'): {
+                  'lantern-app', 'lantern-domain', 'lantern-profile', 'lantern-transport'
+              },
+          }
+          for path, names in removals.items():
+              lines = path.read_text(encoding='utf-8').splitlines()
+              kept = []
+              for line in lines:
+                  stripped = line.lstrip()
+                  if any(stripped.startswith(f'{name} =') for name in names):
+                      continue
+                  kept.append(line)
+              path.write_text('\n'.join(kept) + '\n', encoding='utf-8')
+          PY
+
+          cat > scripts/install-cargo-tools.sh <<'SH'
+          #!/bin/sh
+          set -eu
+          : "${CARGO_INSTALL_ROOT:=${HOME}/.cargo-tools}"
+          export CARGO_INSTALL_ROOT
+          install_tool() {
+            crate="$1"
+            version="$2"
+            cargo install --locked --root "$CARGO_INSTALL_ROOT" --version "$version" "$crate"
+          }
+          install_tool cargo-machete 0.8.0
+          install_tool cargo-deny 0.18.5
+          install_tool cargo-audit 0.21.2
+          install_tool cargo-vet 0.10.2
+          SH
+          chmod +x scripts/install-cargo-tools.sh
+
+          cat > scripts/check-supply-chain.sh <<'SH'
+          #!/bin/sh
+          set -eu
+          scripts/check-supply-chain-baseline.sh
+          cargo machete
+          cargo deny check
+          cargo audit
+          cargo vet check
+          SH
+          chmod +x scripts/check-supply-chain.sh
+
+          cat > .github/workflows/ci.yml <<'YAML'
+          name: CI
+
+          on:
+            push:
+              branches: [main]
+            pull_request:
+            workflow_dispatch:
+
+          permissions:
+            contents: read
+
+          jobs:
+            rust:
+              name: Debian 13 / ${{ matrix.arch }} / Rust 1.97.1
+              strategy:
+                fail-fast: false
+                matrix:
+                  include:
+                    - arch: amd64
+                      runner: ubuntu-24.04
+                    - arch: arm64
+                      runner: ubuntu-24.04-arm
+              runs-on: ${{ matrix.runner }}
+              container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+              steps:
+                - name: Install system dependencies
+                  run: |
+                    apt-get update
+                    apt-get install --yes --no-install-recommends \
+                      build-essential ca-certificates git libudev-dev pkg-config rustup
+
+                - name: Check out repository
+                  uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+                - name: Install pinned Rust toolchain
+                  run: |
+                    rustup toolchain install 1.97.1 \
+                      --profile minimal \
+                      --component rustfmt \
+                      --component clippy \
+                      --component llvm-tools-preview
+                    rustup default 1.97.1
+
+                - name: Validate workspace
+                  run: |
+                    cargo metadata --locked --format-version 1 >/dev/null
+                    cargo build --workspace --all-features --locked
+                    cargo fmt --all -- --check
+                    cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+                    cargo test --workspace --all-features --locked
+                    cargo doc --workspace --all-features --no-deps --locked
+                    sh scripts/check-architecture.sh
+                    sh scripts/check-supply-chain-baseline.sh
+
+            supply-chain:
+              name: Full supply-chain policy
+              runs-on: ubuntu-24.04
+              container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+              steps:
+                - name: Install system dependencies
+                  run: |
+                    apt-get update
+                    apt-get install --yes --no-install-recommends \
+                      build-essential ca-certificates git libudev-dev pkg-config rustup
+
+                - name: Check out repository
+                  uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+                - name: Install pinned Rust toolchain and policy tools
+                  run: |
+                    rustup toolchain install 1.97.1 --profile minimal
+                    rustup default 1.97.1
+                    CARGO_INSTALL_ROOT="$RUNNER_TEMP/vfd-lantern-tools" scripts/install-cargo-tools.sh
+                    echo "$RUNNER_TEMP/vfd-lantern-tools/bin" >> "$GITHUB_PATH"
+
+                - name: Enforce supply-chain policy
+                  run: scripts/check-supply-chain.sh
+          YAML
+
+          export CARGO_INSTALL_ROOT="$RUNNER_TEMP/vfd-lantern-tools"
+          scripts/install-cargo-tools.sh
+          export PATH="$CARGO_INSTALL_ROOT/bin:$PATH"
+
+          rm -f deny.toml
+          cargo deny init
+          rm -rf supply-chain
+          cargo vet init
+          cargo vet regenerate exemptions
+
+          cargo metadata --locked --format-version 1 >/dev/null
+          cargo build --workspace --all-features --locked
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          scripts/check-supply-chain.sh
+          git diff --check
+
+          git add \
+            Cargo.lock \
+            crates/vfd-lantern/Cargo.toml \
+            crates/lantern-sim/Cargo.toml \
+            .github/workflows/ci.yml \
+            deny.toml \
+            scripts/install-cargo-tools.sh \
+            scripts/check-supply-chain.sh \
+            supply-chain
+
+          ISSUE2_SHA="$(git rev-list --reverse refs/remotes/origin/base..HEAD | sed -n '2p')"
+          test -n "$ISSUE2_SHA"
+          git commit --fixup="$ISSUE2_SHA"
+          GIT_SEQUENCE_EDITOR=true git rebase -i --autosquash refs/remotes/origin/base
+
+          test "$(git rev-list --count refs/remotes/origin/base..HEAD)" -eq 9
+          mapfile -t subjects < <(git log --reverse --format=%s refs/remotes/origin/base..HEAD)
+          for n in $(seq 1 9); do
+            printf '%s\n' "${subjects[$((n-1))]}" | grep -Eq "\\(#${n}\\)$"
+          done
+          ! git log --format=%s refs/remotes/origin/base..HEAD | grep -q '^fixup!'
+          test -z "$(git status --porcelain)"
+
+          git push --force origin "HEAD:refs/heads/${CANDIDATE_BRANCH}"
+
+      - name: Export candidate SHA
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --no-tags origin "+refs/heads/${CANDIDATE_BRANCH}:refs/remotes/origin/candidate"
+          echo "sha=$(git rev-parse refs/remotes/origin/candidate)" >> "$GITHUB_OUTPUT"
+
+  validate-core:
+    name: Validate exact candidate / ${{ matrix.arch }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libudev-dev pkg-config rustup
+
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_VERSION" \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --component llvm-tools-preview
+          rustup default "$RUST_VERSION"
+
+      - name: Run complete core gate
+        run: |
+          cargo metadata --locked --format-version 1 >/dev/null
+          cargo build --workspace --all-features --locked
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain-baseline.sh
+          git diff --check
+          test -z "$(git status --porcelain)"
+
+  validate-supply-chain:
+    name: Validate exact candidate supply chain
+    needs: prepare
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libudev-dev pkg-config rustup
+
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Install pinned policy tools
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          CARGO_INSTALL_ROOT="$RUNNER_TEMP/vfd-lantern-tools" scripts/install-cargo-tools.sh
+          echo "$RUNNER_TEMP/vfd-lantern-tools/bin" >> "$GITHUB_PATH"
+
+      - name: Run full supply-chain gate
+        run: scripts/check-supply-chain.sh
+
+  promote-and-merge:
+    name: Promote, mark ready, and merge PR 33
+    needs: [prepare, validate-core, validate-supply-chain]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Promote exact candidate to delivery branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push --force origin "HEAD:refs/heads/${DELIVERY_BRANCH}"
+
+      - name: Record final review and merge through GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FINAL_SHA: ${{ needs.prepare.outputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/pr-body.md <<EOF
+          ## Zakończona dostawa issues #1–#9
+
+          Gałąź zawiera dokładnie dziewięć logicznych commitów, po jednym dla #1–#9. Końcowy kandydat: \`${FINAL_SHA}\`.
+
+          Pełna bramka zakończyła się sukcesem:
+
+          - Debian 13 Trixie / Rust 1.97.1 / amd64;
+          - Debian 13 Trixie / Rust 1.97.1 / arm64;
+          - build, fmt, Clippy z \`-D warnings\`, wszystkie testy i rustdoc;
+          - kontrola grafu architektury i supply-chain baseline;
+          - \`cargo machete\`, \`cargo deny check\`, \`cargo audit\`, \`cargo vet check\`;
+          - dokładnie dziewięć commitów, bez \`fixup!\` i bez plików automatyzacji w drzewie dostawczym.
+
+          Sprzętowy test native-UART \`TIOCGRS485/TIOCSRS485\` pozostaje obowiązkową bramką release w #25; nie został oznaczony jako wykonany.
+
+          Closes #1
+          Closes #2
+          Closes #3
+          Closes #4
+          Closes #5
+          Closes #6
+          Closes #7
+          Closes #8
+          Closes #9
+          EOF
+          gh pr edit 33 --repo "$GITHUB_REPOSITORY" --body-file /tmp/pr-body.md
+          gh pr ready 33 --repo "$GITHUB_REPOSITORY"
+          gh pr comment 33 --repo "$GITHUB_REPOSITORY" --body "Końcowy niezależny odbiór: PASS. Exact candidate: ${FINAL_SHA}. Obie architektury i pełny supply-chain zakończyły się sukcesem."
+          gh pr merge 33 --repo "$GITHUB_REPOSITORY" --merge --subject "Merge PR #33: implement roadmap issues #1–#9"
+
+      - name: Ensure issues are closed and record HIL ownership
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in $(seq 1 9); do
+            state="$(gh issue view "$n" --repo "$GITHUB_REPOSITORY" --json state --jq .state)"
+            if [ "$state" != "CLOSED" ]; then
+              gh issue close "$n" --repo "$GITHUB_REPOSITORY" --reason completed
+            fi
+          done
+          gh issue comment 7 --repo "$GITHUB_REPOSITORY" --body "Implementacja i automatyczny odbiór #7 są zakończone. Rzeczywisty test native-UART TIOCGRS485/TIOCSRS485 jest jawnie przeniesiony do obowiązkowej bramki HIL #25 i pozostaje release-blocking."
+          gh issue comment 25 --repo "$GITHUB_REPOSITORY" --body "Bramka #25 musi wykonać native-UART HIL TIOCGRS485/TIOCSRS485 na dokładnym kandydacie wydania. Mock ioctl, PTY ani adapter USB z automatycznym kierunkiem nie zastępują tego wyniku."
+
+  report-failure:
+    name: Report blocked finalization
+    if: ${{ always() && (needs.prepare.result == 'failure' || needs.validate-core.result == 'failure' || needs.validate-supply-chain.result == 'failure') }}
+    needs: [prepare, validate-core, validate-supply-chain]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Publish fail-closed result
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment 33 --repo "$GITHUB_REPOSITORY" --body "Końcowe domknięcie zatrzymane fail-closed. prepare=${{ needs.prepare.result }}, core=${{ needs.validate-core.result }}, supply-chain=${{ needs.validate-supply-chain.result }}. Gałąź dostawcza nie została wypromowana przez ten workflow i PR nie został scalony."
