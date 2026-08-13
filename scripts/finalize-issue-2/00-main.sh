@@ -27,6 +27,11 @@ sed -i \
   -e '/^lantern-transport\.workspace = true$/d' \
   crates/lantern-sim/Cargo.toml
 
+# cargo-audit 0.21.2 cannot parse current RustSec entries carrying CVSS 4.0.
+# Keep the audit gate enabled and update the exact pin to the compatible release.
+sed -i 's/^cargo-audit = "0\.21\.2"$/cargo-audit = "0.22.2"/' tools.lock.toml
+grep -q '^cargo-audit = "0.22.2"$' tools.lock.toml
+
 write_install_script
 write_baseline_script
 write_gate_script
@@ -69,7 +74,8 @@ git add \
   scripts/install-cargo-tools.sh \
   scripts/check-supply-chain-baseline.sh \
   scripts/check-supply-chain.sh \
-  supply-chain
+  supply-chain \
+  tools.lock.toml
 git diff --cached --check
 
 rm -rf issue2-output
