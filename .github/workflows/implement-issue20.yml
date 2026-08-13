@@ -1,0 +1,307 @@
+name: Implement issue 20
+
+on:
+  push:
+    branches:
+      - agent/export-issues-1-9-closeout
+    paths:
+      - .github/workflows/implement-issue20.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  RUST_VERSION: 1.97.1
+  CANDIDATE_BRANCH: agent/issue-20-candidate
+  DELIVERY_BRANCH: agent/issue-20
+
+jobs:
+  prepare:
+    name: Build and pre-validate issue 20
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates curl git jq libudev-dev pkg-config python3 rustup
+
+      - name: Check out automation source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Verify foundation merge and check out main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          merged_at="$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/33" | jq -r '.merged_at // empty')"
+          test -n "$merged_at"
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          git checkout -B issue-20 refs/remotes/origin/main
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_VERSION" \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --component llvm-tools-preview
+          rustup default "$RUST_VERSION"
+
+      - name: Generate, repair, test, and publish candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "VFD Lantern contributors"
+          git config user.email "actions@users.noreply.github.com"
+          cp "${GITHUB_WORKSPACE}/automation/implement_issue20.sh" /tmp/implement_issue20.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('/tmp/implement_issue20.sh')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace('[dependencies]\nclap.workspace = true', '[dependencies]\nanyhow.workspace = true\nclap.workspace = true')
+          text = text.replace('use rust_decimal::Decimal;', 'use rust_decimal::{Decimal, prelude::ToPrimitive};')
+          text = text.replace(
+              'profile.bindings().next().expect("binding").clone()',
+              'profile.bindings().find(|binding| binding.read_only).expect("read-only binding").clone()',
+          )
+          text = text.replace(
+              'let id = profile.first_parameter_id().expect("reference parameter").to_owned();',
+              'let id = profile.bindings().find(|binding| binding.read_only).expect("reference read-only parameter").parameter_id.clone();',
+          )
+
+          replacement = r'''    async fn read_once(
+                  &mut self,
+                  function: u8,
+                  address: u16,
+                  count: u16,
+              ) -> Result<Vec<u16>, ProbeError> {
+                  let mut request = vec![self.slave, function];
+                  request.extend_from_slice(&address.to_be_bytes());
+                  request.extend_from_slice(&count.to_be_bytes());
+                  append_crc(&mut request);
+                  self.port
+                      .write_all(&request)
+                      .await
+                      .map_err(|error| ProbeError::Serial(error.to_string()))?;
+                  self.port
+                      .flush()
+                      .await
+                      .map_err(|error| ProbeError::Serial(error.to_string()))?;
+
+                  let mut header = [0_u8; 3];
+                  timeout(self.timeout, self.port.read_exact(&mut header))
+                      .await
+                      .map_err(|_| ProbeError::Timeout)?
+                      .map_err(|error| ProbeError::Serial(error.to_string()))?;
+                  let remaining = if header[1] == function | 0x80 {
+                      2
+                  } else {
+                      usize::from(header[2]) + 2
+                  };
+                  let mut tail = vec![0_u8; remaining];
+                  timeout(self.timeout, self.port.read_exact(&mut tail))
+                      .await
+                      .map_err(|_| ProbeError::Timeout)?
+                      .map_err(|error| ProbeError::Serial(error.to_string()))?;
+                  let mut response = header.to_vec();
+                  response.extend_from_slice(&tail);
+                  decode_response(self.slave, function, count, &response)
+              }
+          }
+
+          pub fn decode_response'''
+          text, count = re.subn(
+              r'    async fn read_once\(.*?\n    \}\n\}\n\npub fn decode_response',
+              replacement,
+              text,
+              count=1,
+              flags=re.S,
+          )
+          if count != 1:
+              raise SystemExit('Unable to patch dynamic RTU response reader')
+
+          marker = 'cargo metadata --format-version 1 >/dev/null\n'
+          golden = r'''mkdir -p crates/lantern-sim/examples crates/lantern-sim/tests/golden
+          cat > crates/lantern-sim/examples/golden_trace.rs <<'RS'
+          use lantern_sim::Waveform;
+          use rand_chacha::ChaCha20Rng;
+          use rand_core::SeedableRng;
+          use sha2::{Digest, Sha256};
+
+          fn main() {
+              let waveform = Waveform::FixedSine {
+                  midpoint: "30000".to_owned(),
+                  amplitude: "1000".to_owned(),
+                  phase_step: 257,
+              };
+              let mut phase = 0_u16;
+              let mut rng = ChaCha20Rng::from_seed([7_u8; 32]);
+              let mut bytes = Vec::new();
+              for tick in 0..1024 {
+                  let sample = waveform.sample(tick, &mut phase, &mut rng).expect("sample");
+                  bytes.extend_from_slice(&sample.to_be_bytes());
+              }
+              println!("{:x}", Sha256::digest(bytes));
+          }
+          RS
+          cargo run --quiet -p lantern-sim --example golden_trace > crates/lantern-sim/tests/golden/golden-trace.sha256
+          ''' + marker
+          if marker not in text:
+              raise SystemExit('Unable to insert deterministic golden trace generation')
+          text = text.replace(marker, golden, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+          chmod +x /tmp/implement_issue20.sh
+          BASE_REF=origin/main CANDIDATE_BRANCH="$CANDIDATE_BRANCH" /tmp/implement_issue20.sh
+
+      - name: Export exact candidate SHA
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/${CANDIDATE_BRANCH}:refs/remotes/origin/issue20-candidate"
+          echo "sha=$(git rev-parse refs/remotes/origin/issue20-candidate)" >> "$GITHUB_OUTPUT"
+
+  validate:
+    name: Validate issue 20 / ${{ matrix.arch }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libudev-dev pkg-config rustup
+
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Install pinned toolchain
+        run: |
+          rustup toolchain install "$RUST_VERSION" \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --component llvm-tools-preview
+          rustup default "$RUST_VERSION"
+
+      - name: Run complete product and simulator gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 >/dev/null
+          cargo build --workspace --all-features --locked
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain-baseline.sh
+          sh scripts/check-simulator-contract.sh
+          actual="$(cargo run --quiet --locked -p lantern-sim --example golden_trace)"
+          expected="$(cat crates/lantern-sim/tests/golden/golden-trace.sha256)"
+          test "$actual" = "$expected"
+          git diff --check
+          test -z "$(git status --porcelain)"
+
+  validate-supply-chain:
+    name: Validate issue 20 supply chain
+    needs: prepare
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libudev-dev pkg-config rustup
+
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Install policy tools
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          CARGO_INSTALL_ROOT="$RUNNER_TEMP/vfd-lantern-tools" scripts/install-cargo-tools.sh
+          echo "$RUNNER_TEMP/vfd-lantern-tools/bin" >> "$GITHUB_PATH"
+
+      - name: Run full supply-chain gate
+        run: scripts/check-supply-chain.sh
+
+  promote:
+    name: Promote issue 20 and publish draft PR
+    needs: [prepare, validate, validate-supply-chain]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Promote exact commit
+        run: git push --force origin "HEAD:refs/heads/${DELIVERY_BRANCH}"
+
+      - name: Create or update draft PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ needs.prepare.outputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/body.md <<EOF
+          ## Issue #20 — bazowy symulator PTY/RTU
+
+          Exact candidate: \`${CANDIDATE_SHA}\`.
+
+          Wdrożono zamknięty \`SimulatorScenarioV1\`, walidowany profil produktu, PTY w raw mode, deterministyczne źródła sygnałów, wstrzykiwany czas, ChaCha20 z jawnym seedem, serwer Modbus RTU, WireFaultHarness, timeouty/exception/disconnect/fingerprint oraz strukturalne liczniki i ślady ramek.
+
+          Bramka obejmuje Debian 13 amd64 i arm64, identyczny golden trace, build/fmt/Clippy/test/rustdoc, kontrolę architektury, pełny supply-chain i kontrakt braku sieci/Pythona/socat.
+
+          Closes #20
+          EOF
+          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$DELIVERY_BRANCH" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --repo "$GITHUB_REPOSITORY" --title "Implement the PTY RTU simulator and wire fault harness (#20)" --body-file /tmp/body.md
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$DELIVERY_BRANCH" --draft --title "Implement the PTY RTU simulator and wire fault harness (#20)" --body-file /tmp/body.md
+          fi
+          gh issue comment 20 --repo "$GITHUB_REPOSITORY" --body "Kandydat #20 przeszedł pełną bramkę amd64/arm64 i supply-chain. Exact SHA: ${CANDIDATE_SHA}. Opublikowano draft PR z jednym logicznym commitem."
+
+  report-failure:
+    name: Report fail-closed issue 20 result
+    if: ${{ always() && (needs.prepare.result == 'failure' || needs.validate.result == 'failure' || needs.validate-supply-chain.result == 'failure') }}
+    needs: [prepare, validate, validate-supply-chain]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Comment on issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 20 --repo "$GITHUB_REPOSITORY" --body "Implementacja #20 zatrzymana fail-closed: prepare=${{ needs.prepare.result }}, arch=${{ needs.validate.result }}, supply-chain=${{ needs.validate-supply-chain.result }}. Gałąź dostawcza nie została wypromowana przez ten workflow."
