@@ -12,4 +12,7 @@ awk '
         print
     }
 ' scripts/finalize-issue-2/00-main.sh > "$temporary_main"
+sed -i \
+    's|rm -rf supply-chain/config.toml supply-chain/audits.toml supply-chain/imports.lock|rm -rf supply-chain|' \
+    "$temporary_main"
 exec bash "$temporary_main"
