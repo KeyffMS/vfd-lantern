@@ -1,0 +1,190 @@
+name: Finalize issue 20 v2
+
+on:
+  push:
+    branches:
+      - agent/issue-20-work
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: issue20-finalize-v2
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Debian 13 / Rust 1.97.1 / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends build-essential ca-certificates git libudev-dev pkg-config rustup
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-20-work
+          fetch-depth: 0
+      - name: Install pinned Rust
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy --component llvm-tools-preview
+          rustup default 1.97.1
+      - name: Strip temporary automation from candidate view
+        run: |
+          rm -f .github/workflows/assemble-issue20.yml .github/workflows/issue20-autofix.yml .github/workflows/issue20-finalize.yml .github/workflows/issue20-finalize-v2.yml
+      - name: Strict semantic audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f crates/lantern-sim/tests/rtu_stack.rs
+          test -f crates/lantern-sim/src/runtime.rs
+          test -f crates/lantern-sim/src/service.rs
+          test -f crates/lantern-sim/src/wire.rs
+          grep -q 'tokio_modbus::server' crates/lantern-sim/src/runtime.rs
+          grep -q 'Server::new' crates/lantern-sim/src/runtime.rs
+          grep -q 'serve_until' crates/lantern-sim/src/runtime.rs
+          grep -q 'WireFaultHarness' crates/lantern-sim/src/wire.rs
+          grep -q 'nix::pty::openpty' crates/lantern-sim/src/pty.rs
+          grep -q 'open_serial_bus' crates/lantern-sim/tests/rtu_stack.rs
+          grep -q 'SessionStateMachine' crates/lantern-sim/tests/rtu_stack.rs
+          grep -q 'identify_profile_via_bus' crates/lantern-sim/tests/rtu_stack.rs
+          grep -qi 'golden' crates/lantern-sim/tests/rtu_stack.rs
+          ! grep -R --line-number 'RtuProbeClient' crates/lantern-sim
+          ! grep -R --line-number -E 'WriteBusPort|PreparedBusWrite|WriteCoordinator' crates/lantern-sim/src crates/lantern-sim/tests
+          grep -q '^publish = false$' crates/lantern-sim/Cargo.toml
+          grep -q 'deny_unknown_fields' crates/lantern-sim/src/scenario.rs
+          grep -q 'rand_chacha' crates/lantern-sim/Cargo.toml
+      - name: Full workspace gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 --no-deps >/dev/null
+          cargo fmt --all -- --check
+          cargo build --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked -- --test-threads=1
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain-baseline.sh
+          git diff --check
+
+  supply-chain:
+    name: Full supply-chain gate
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends build-essential ca-certificates git libudev-dev pkg-config rustup
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-20-work
+          fetch-depth: 0
+      - name: Install pinned Rust and audit tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          cargo install --locked --version 0.8.0 cargo-machete
+          cargo install --locked --version 0.18.5 cargo-deny
+          cargo install --locked --version 0.21.2 cargo-audit
+          cargo install --locked --version 0.10.2 cargo-vet
+      - name: Audit exact dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f supply-chain/config.toml
+          test -f supply-chain/audits.toml
+          cargo machete
+          cargo deny check
+          cargo audit
+          cargo vet check
+
+  promote:
+    name: Create one logical delivery commit and draft PR
+    needs: [validate, supply-chain]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-20-work
+          fetch-depth: 0
+      - name: Promote verified tree
+        id: promote
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'VFD Lantern contributors'
+          git config user.email 'actions@users.noreply.github.com'
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          rm -f .github/workflows/assemble-issue20.yml .github/workflows/issue20-autofix.yml .github/workflows/issue20-finalize.yml .github/workflows/issue20-finalize-v2.yml
+          git add -A
+          tree=$(git write-tree)
+          test "$tree" != "$(git rev-parse origin/main^{tree})"
+          commit=$(printf '%s\n\n%s\n' \
+            'Implement deterministic PTY/RTU simulator and wire fault harness (#20)' \
+            'Add the development-only tokio-modbus RTU server, raw PTY runtime, deterministic profile-bound scenario model, isolated wire-fault proxy, and production BusActor/SessionStateMachine integration tests.' \
+            | git commit-tree "$tree" -p origin/main)
+          test "$(git rev-list --count origin/main..$commit)" = 1
+          git push --force origin "$commit:refs/heads/agent/issue-20"
+          echo "sha=$commit" >> "$GITHUB_OUTPUT"
+      - name: Create or reuse draft PR and report PASS
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DELIVERY_SHA: ${{ steps.promote.outputs.sha }}
+        run: |
+          set -euo pipefail
+          existing=$(curl --fail-with-body -sS -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' 'https://api.github.com/repos/KeyffMS/vfd-lantern/pulls?state=open&head=KeyffMS:agent/issue-20&base=main')
+          number=$(python3 -c 'import json,sys; x=json.load(sys.stdin); print(x[0]["number"] if x else "")' <<<"$existing")
+          if [ -z "$number" ]; then
+            created=$(curl --fail-with-body -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' https://api.github.com/repos/KeyffMS/vfd-lantern/pulls -d "$(python3 -c 'import json; print(json.dumps({"title":"Implement deterministic PTY/RTU simulator and wire fault harness (#20)","head":"agent/issue-20","base":"main","body":"Closes #20\n\nDeterministic development-only PTY/Modbus RTU simulator validated through the production BusActor and Verified-only SessionStateMachine.","draft":True}))')")")
+            number=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["number"])' <<<"$created")
+          fi
+          body="## #20 finalizer v2: PASS
+
+Delivery SHA: \`$DELIVERY_SHA\`
+
+Draft PR: https://github.com/KeyffMS/vfd-lantern/pull/$number
+
+The exact tree passed Debian 13 / Rust 1.97.1 on amd64 and arm64, strict semantic checks, the full workspace gate, and machete/deny/audit/vet."
+          curl --fail-with-body -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' https://api.github.com/repos/KeyffMS/vfd-lantern/issues/20/comments -d "$(python3 -c 'import json,sys; print(json.dumps({"body":sys.stdin.read()}))' <<<"$body")"
+
+  report-failure:
+    name: Report fail-closed result
+    if: always() && (needs.validate.result != 'success' || needs.supply-chain.result != 'success')
+    needs: [validate, supply-chain]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Report failure
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATE: ${{ needs.validate.result }}
+          SUPPLY: ${{ needs.supply-chain.result }}
+        run: |
+          body="## #20 finalizer v2: FAILED
+
+- build/semantic matrix: \`$VALIDATE\`
+- supply-chain: \`$SUPPLY\`
+
+No delivery commit was promoted."
+          curl --fail-with-body -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' https://api.github.com/repos/KeyffMS/vfd-lantern/issues/20/comments -d "$(python3 -c 'import json,sys; print(json.dumps({"body":sys.stdin.read()}))' <<<"$body")"
