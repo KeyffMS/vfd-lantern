@@ -1,0 +1,114 @@
+name: Assemble issue 20 worktree
+
+on:
+  push:
+    branches:
+      - agent/issue-20-work
+
+permissions:
+  contents: write
+
+jobs:
+  assemble:
+    if: github.event.head_commit.message != 'Assemble issue #20 worktree'
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends ca-certificates git rustup
+      - name: Check out work branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-20-work
+          fetch-depth: 0
+      - name: Install Rust formatter
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          rustup default 1.97.1
+      - name: Assemble crate boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > crates/lantern-sim/Cargo.toml <<'EOF'
+          [package]
+          name = "lantern-sim"
+          description = "Development-only deterministic PTY/Modbus RTU VFD simulator"
+          version.workspace = true
+          edition.workspace = true
+          rust-version.workspace = true
+          license.workspace = true
+          repository.workspace = true
+          publish = false
+
+          [dependencies]
+          lantern-domain.workspace = true
+          lantern-profile.workspace = true
+          lantern-app.workspace = true
+          lantern-transport.workspace = true
+          anyhow.workspace = true
+          clap.workspace = true
+          nix = { workspace = true, features = ["term"] }
+          rand_chacha.workspace = true
+          rust_decimal.workspace = true
+          serde.workspace = true
+          serde_json.workspace = true
+          sha2.workspace = true
+          thiserror.workspace = true
+          tokio.workspace = true
+          tokio-modbus = { workspace = true, features = ["rtu-server"] }
+          tokio-serial.workspace = true
+          tokio-util.workspace = true
+          toml.workspace = true
+
+          [dev-dependencies]
+          tempfile.workspace = true
+
+          [lints]
+          workspace = true
+          EOF
+          cat > crates/lantern-sim/src/lib.rs <<'EOF'
+          //! Development-only deterministic VFD simulator and PTY/RTU test harness.
+
+          #![forbid(unsafe_code)]
+
+          mod error;
+          mod identify;
+          mod pty;
+          mod runtime;
+          mod scenario;
+          mod service;
+          mod wire;
+
+          pub use error::*;
+          pub use identify::*;
+          pub use pty::*;
+          pub use runtime::*;
+          pub use scenario::*;
+          pub use service::*;
+          pub use wire::*;
+
+          #[must_use]
+          pub const fn is_development_only() -> bool {
+              true
+          }
+          EOF
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/check-architecture.sh')
+          text = path.read_text()
+          text = text.replace(
+              'crates/lantern-transport/Cargo.toml) ;;',
+              'crates/lantern-transport/Cargo.toml|crates/lantern-sim/Cargo.toml) ;;',
+          )
+          path.write_text(text)
+          PY
+          rm .github/workflows/assemble-issue20.yml
+          cargo fmt --all
+          git config user.name 'VFD Lantern contributors'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'Assemble issue #20 worktree'
+          git push origin HEAD:agent/issue-20-work
