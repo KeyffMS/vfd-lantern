@@ -48,7 +48,7 @@ jobs:
       - name: Build and validate correction candidate
         env:
           CARGO_INSTALL_ROOT: /tmp/vfd-lantern-cargo-tools
-        run: bash scripts/finalize-issue-2/00-main.sh
+        run: bash scripts/finalize-issue-2/run-portable.sh
 
       - name: Upload tested correction
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
