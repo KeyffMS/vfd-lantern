@@ -1,0 +1,337 @@
+name: Repair and validate issue 20
+
+on:
+  push:
+    branches:
+      - agent/export-issues-1-9-closeout
+    paths:
+      - .github/workflows/repair-issue20.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  RUST_VERSION: 1.97.1
+  CANDIDATE_BRANCH: agent/issue-20-repaired-candidate
+  DELIVERY_BRANCH: agent/issue-20
+
+jobs:
+  repair:
+    name: Generate, repair, and pre-validate
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates curl git jq libudev-dev pkg-config python3 rustup
+
+      - name: Check out automation source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Save generators and verify foundation merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp automation/implement_issue20.sh /tmp/implement_issue20.sh
+          cp automation/repair_issue20.sh /tmp/repair_issue20.sh
+          test -n "$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/33" | jq -r '.merged_at // empty')"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          git checkout -B issue-20 refs/remotes/origin/main
+          git config user.name "VFD Lantern contributors"
+          git config user.email "actions@users.noreply.github.com"
+
+      - name: Install pinned Rust and supply-chain tools
+        run: |
+          rustup toolchain install "$RUST_VERSION" \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --component llvm-tools-preview
+          rustup default "$RUST_VERSION"
+          if [ -x scripts/install-cargo-tools.sh ]; then
+            CARGO_INSTALL_ROOT="$RUNNER_TEMP/vfd-lantern-tools" scripts/install-cargo-tools.sh
+            echo "$RUNNER_TEMP/vfd-lantern-tools/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Generate source, then apply compiler-guided repairs
+        id: generate
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x /tmp/implement_issue20.sh /tmp/repair_issue20.sh
+          set +e
+          BASE_REF=origin/main CANDIDATE_BRANCH=agent/issue-20-discarded-generation /tmp/implement_issue20.sh \
+            >/tmp/issue20-generator.log 2>&1
+          generator_rc=$?
+          set -e
+          echo "generator_rc=$generator_rc" >> "$GITHUB_OUTPUT"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          cargo = Path('crates/lantern-sim/Cargo.toml')
+          if not cargo.exists():
+              raise SystemExit('generator did not create lantern-sim')
+          text = cargo.read_text(encoding='utf-8')
+          if 'anyhow.workspace = true' not in text:
+              text = text.replace('[dependencies]\n', '[dependencies]\nanyhow.workspace = true\n', 1)
+          text = text.replace(
+              'nix = { workspace = true, features = ["term"] }',
+              'nix = { workspace = true, features = ["fs", "term"] }',
+          )
+          text = text.replace(
+              'tokio.workspace = true',
+              'tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }',
+          )
+          cargo.write_text(text, encoding='utf-8')
+
+          scenario = Path('crates/lantern-sim/src/scenario.rs')
+          if scenario.exists():
+              value = scenario.read_text(encoding='utf-8')
+              value = value.replace(
+                  'use rust_decimal::Decimal;',
+                  'use rust_decimal::{Decimal, prelude::ToPrimitive};',
+              )
+              scenario.write_text(value, encoding='utf-8')
+
+          pty = Path('crates/lantern-sim/src/pty.rs')
+          if pty.exists():
+              value = pty.read_text(encoding='utf-8')
+              value = value.replace(
+                  'os::fd::OwnedFd',
+                  'os::fd::{AsRawFd, OwnedFd}',
+              )
+              value = value.replace(
+                  'ttyname(&pair.slave)',
+                  'ttyname(pair.slave.as_raw_fd())',
+              )
+              pty.write_text(value, encoding='utf-8')
+
+          client = Path('crates/lantern-sim/src/client.rs')
+          if client.exists():
+              value = client.read_text(encoding='utf-8')
+              replacement = r'''    async fn read_once(
+                  &mut self,
+                  function: u8,
+                  address: u16,
+                  count: u16,
+              ) -> Result<Vec<u16>, ProbeError> {
+                  let _slave = tokio_modbus::prelude::Slave(self.slave);
+                  let mut request = vec![self.slave, function];
+                  request.extend_from_slice(&address.to_be_bytes());
+                  request.extend_from_slice(&count.to_be_bytes());
+                  append_crc(&mut request);
+                  self.port
+                      .write_all(&request)
+                      .await
+                      .map_err(|error| ProbeError::Serial(error.to_string()))?;
+                  self.port
+                      .flush()
+                      .await
+                      .map_err(|error| ProbeError::Serial(error.to_string()))?;
+
+                  let mut header = [0_u8; 3];
+                  timeout(self.timeout, self.port.read_exact(&mut header))
+                      .await
+                      .map_err(|_| ProbeError::Timeout)?
+                      .map_err(|error| ProbeError::Serial(error.to_string()))?;
+                  let remaining = if header[1] == function | 0x80 {
+                      2
+                  } else {
+                      usize::from(header[2]) + 2
+                  };
+                  let mut tail = vec![0_u8; remaining];
+                  timeout(self.timeout, self.port.read_exact(&mut tail))
+                      .await
+                      .map_err(|_| ProbeError::Timeout)?
+                      .map_err(|error| ProbeError::Serial(error.to_string()))?;
+                  let mut response = header.to_vec();
+                  response.extend_from_slice(&tail);
+                  decode_response(self.slave, function, count, &response)
+              }
+          }
+
+          pub fn decode_response'''
+              value, changed = re.subn(
+                  r'    async fn read_once\(.*?\n    \}\n\}\n\npub fn decode_response',
+                  replacement,
+                  value,
+                  count=1,
+                  flags=re.S,
+              )
+              if changed:
+                  value = value.replace(
+                      'if response.len() >= 5 && response[1] == function | 0x80 {\n        return Err(ProbeError::Exception(response[2]));\n    }',
+                      'if response.len() == 5 && response[1] == function | 0x80 {\n        if response[0] != slave || !verify_crc(response) {\n            return Err(ProbeError::InvalidResponse("invalid exception frame".to_owned()));\n        }\n        return Err(ProbeError::Exception(response[2]));\n    }',
+                  )
+              client.write_text(value, encoding='utf-8')
+          PY
+
+          /tmp/repair_issue20.sh >/tmp/issue20-repair.log 2>&1
+
+      - name: Enforce semantic simulator contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -R --quiet 'tokio_modbus' crates/lantern-sim/src
+          grep -R --quiet 'WireFaultHarness' crates/lantern-sim/src
+          grep -R --quiet 'ValidatedDeviceProfile' crates/lantern-sim/src/profile_bridge.rs
+          grep -R --quiet 'openpty' crates/lantern-sim/src
+          grep -R --quiet 'cfmakeraw' crates/lantern-sim/src
+          ! grep -R --line-number -E 'pymodbus|pyserial|socat|TcpListener|UdpSocket' crates/lantern-sim
+
+      - name: Commit and publish exact candidate
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            git add Cargo.lock crates/lantern-sim scripts/check-simulator-contract.sh
+            git commit -m 'Implement the PTY RTU simulator and wire fault harness (#20)'
+          fi
+          test "$(git rev-list --count origin/main..HEAD)" -eq 1
+          test "$(git log -1 --format=%s)" = 'Implement the PTY RTU simulator and wire fault harness (#20)'
+          git push --force origin "HEAD:refs/heads/${CANDIDATE_BRANCH}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: issue20-repair-diagnostics
+          path: |
+            /tmp/issue20-generator.log
+            /tmp/issue20-repair.log
+            /tmp/issue20-cargo-stderr.log
+            /tmp/issue20-cargo-messages.jsonl
+            /tmp/issue20-cargo-fix.log
+            /tmp/issue20-machete-fix.log
+          if-no-files-found: ignore
+
+  validate:
+    name: Validate repaired candidate / ${{ matrix.arch }}
+    needs: repair
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libudev-dev pkg-config rustup
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.repair.outputs.candidate_sha }}
+          fetch-depth: 0
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install "$RUST_VERSION" \
+            --profile minimal --component rustfmt --component clippy --component llvm-tools-preview
+          rustup default "$RUST_VERSION"
+      - name: Run complete product gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 >/dev/null
+          cargo build --workspace --all-features --locked
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain-baseline.sh
+          sh scripts/check-simulator-contract.sh
+          git diff --check
+          test -z "$(git status --porcelain)"
+
+  validate-supply-chain:
+    name: Validate repaired candidate supply chain
+    needs: repair
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libudev-dev pkg-config rustup
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.repair.outputs.candidate_sha }}
+          fetch-depth: 0
+      - name: Install policy tools
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          CARGO_INSTALL_ROOT="$RUNNER_TEMP/vfd-lantern-tools" scripts/install-cargo-tools.sh
+          echo "$RUNNER_TEMP/vfd-lantern-tools/bin" >> "$GITHUB_PATH"
+      - name: Run full policy
+        run: scripts/check-supply-chain.sh
+
+  promote:
+    name: Promote repaired issue 20 candidate
+    needs: [repair, validate, validate-supply-chain]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.repair.outputs.candidate_sha }}
+          fetch-depth: 0
+      - name: Promote exact commit
+        run: git push --force origin "HEAD:refs/heads/${DELIVERY_BRANCH}"
+      - name: Publish or update draft PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ needs.repair.outputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/body.md <<EOF
+          ## Issue #20 — bazowy symulator PTY/RTU
+
+          Exact candidate: \`${CANDIDATE_SHA}\`.
+
+          Kandydat przeszedł Debian 13 amd64/arm64, build/fmt/Clippy/test/rustdoc, testy PTY i błędów ramek, kontrolę architektury oraz pełny supply-chain.
+
+          Closes #20
+          EOF
+          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$DELIVERY_BRANCH" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --repo "$GITHUB_REPOSITORY" --title 'Implement the PTY RTU simulator and wire fault harness (#20)' --body-file /tmp/body.md
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$DELIVERY_BRANCH" --draft --title 'Implement the PTY RTU simulator and wire fault harness (#20)' --body-file /tmp/body.md
+          fi
+          gh issue comment 20 --repo "$GITHUB_REPOSITORY" --body "Naprawiony kandydat #20 przeszedł wszystkie bramki. Exact SHA: ${CANDIDATE_SHA}."
+
+  report-failure:
+    name: Report blocked repair
+    if: ${{ always() && (needs.repair.result == 'failure' || needs.validate.result == 'failure' || needs.validate-supply-chain.result == 'failure') }}
+    needs: [repair, validate, validate-supply-chain]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Publish fail-closed result
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 20 --repo "$GITHUB_REPOSITORY" --body "Naprawa #20 została zatrzymana fail-closed: repair=${{ needs.repair.result }}, arch=${{ needs.validate.result }}, supply-chain=${{ needs.validate-supply-chain.result }}. Gałąź agent/issue-20 nie została wypromowana przez ten przebieg. Diagnostyka znajduje się w artefakcie workflow."
