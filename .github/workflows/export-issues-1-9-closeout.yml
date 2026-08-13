@@ -1,0 +1,52 @@
+name: Export issues 1-9 closeout source
+
+on:
+  push:
+    branches:
+      - agent/export-issues-1-9-closeout
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out export branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Export exact delivery history and source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main \
+            +refs/heads/agent/issues-1-9:refs/remotes/origin/agent/issues-1-9
+          git rev-parse refs/remotes/origin/main > main-sha.txt
+          git rev-parse refs/remotes/origin/agent/issues-1-9 > delivery-sha.txt
+          git bundle create vfd-lantern-issues-1-9.bundle \
+            refs/remotes/origin/main \
+            refs/remotes/origin/agent/issues-1-9
+          git archive --format=tar.gz \
+            --output=vfd-lantern-issues-1-9-source.tar.gz \
+            refs/remotes/origin/agent/issues-1-9
+          sha256sum \
+            vfd-lantern-issues-1-9.bundle \
+            vfd-lantern-issues-1-9-source.tar.gz \
+            main-sha.txt \
+            delivery-sha.txt > SHA256SUMS
+
+      - name: Upload exact export
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issues-1-9-closeout-export
+          path: |
+            vfd-lantern-issues-1-9.bundle
+            vfd-lantern-issues-1-9-source.tar.gz
+            main-sha.txt
+            delivery-sha.txt
+            SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
