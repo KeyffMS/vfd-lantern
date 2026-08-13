@@ -1,0 +1,24 @@
+[package]
+name = "vfd-lantern"
+description = "Universal VFD diagnostics, monitoring and configuration TUI for Linux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+lantern-domain.workspace = true
+lantern-profile.workspace = true
+lantern-app.workspace = true
+lantern-storage.workspace = true
+lantern-transport.workspace = true
+lantern-tui.workspace = true
+
+[lints]
+workspace = true

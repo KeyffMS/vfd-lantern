@@ -2,17 +2,29 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "agent/**"]
   pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  debian-trixie:
-    name: Debian 13 / stable Rust
-    runs-on: ubuntu-latest
-    container: debian:trixie-slim
+  rust:
+    name: Debian 13 / Rust 1.97.1 / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
 
     steps:
       - name: Install system dependencies
@@ -21,29 +33,45 @@ jobs:
           apt-get install --yes --no-install-recommends \
             build-essential \
             ca-certificates \
-            curl \
             git \
             libudev-dev \
-            pkg-config
+            pkg-config \
+            rustup
 
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Install Rust
-        shell: bash
+      - name: Install pinned Rust toolchain
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain stable
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --component llvm-tools-preview
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
 
-      - name: Install Rust components
-        run: rustup component add clippy rustfmt
+      - name: Validate lockfile and metadata
+        run: cargo metadata --locked --format-version 1 --no-deps >/dev/null
+
+      - name: Build workspace
+        run: cargo build --workspace --locked
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Run tests
-        run: cargo test --all-features
+        run: cargo test --workspace --all-features --locked
+
+      - name: Build documentation
+        run: cargo doc --workspace --no-deps --locked
+
+      - name: Check architecture boundaries
+        run: sh scripts/check-architecture.sh
+
+      - name: Check supply-chain baseline
+        run: sh scripts/check-supply-chain-baseline.sh

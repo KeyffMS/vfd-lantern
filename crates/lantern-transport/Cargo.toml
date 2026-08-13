@@ -1,0 +1,28 @@
+[package]
+name = "lantern-transport"
+description = "Serial and Modbus transport adapters for VFD Lantern"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+test-support = ["lantern-app/test-support"]
+
+[dependencies]
+tokio-util.workspace = true
+tokio-modbus.workspace = true
+lantern-app.workspace = true
+lantern-domain.workspace = true
+nix.workspace = true
+tokio.workspace = true
+tokio-serial.workspace = true
+udev.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "lantern-domain"
+description = "Pure domain model for VFD Lantern"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+rust_decimal.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

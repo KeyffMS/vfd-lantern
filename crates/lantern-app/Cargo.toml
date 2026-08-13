@@ -1,0 +1,23 @@
+[package]
+name = "lantern-app"
+description = "Application policy and ports for VFD Lantern"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+test-support = []
+
+[dependencies]
+tokio.workspace = true
+lantern-domain.workspace = true
+lantern-profile.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true
