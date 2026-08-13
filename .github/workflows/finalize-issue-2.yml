@@ -6,7 +6,7 @@ on:
       - agent/issue-2-finalizer
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: issue-2-supply-chain-finalizer
@@ -45,8 +45,15 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Build, validate and publish one logical correction commit
+      - name: Build and validate correction candidate
         env:
-          DELIVERY_BRANCH: agent/issue-2-supply-chain-correction
           CARGO_INSTALL_ROOT: /tmp/vfd-lantern-cargo-tools
         run: bash scripts/finalize-issue-2/00-main.sh
+
+      - name: Upload tested correction
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-2-supply-chain-correction
+          path: issue2-output
+          if-no-files-found: error
+          retention-days: 3
