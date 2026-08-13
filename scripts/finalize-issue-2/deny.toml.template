@@ -12,7 +12,11 @@ ignore = []
 multiple-versions = "warn"
 wildcards = "deny"
 highlight = "all"
-allow-workspace = true
+
+[bans.workspace-dependencies]
+duplicates = "deny"
+include-path-dependencies = true
+unused = "deny"
 
 [licenses]
 confidence-threshold = 0.93
