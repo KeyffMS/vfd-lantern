@@ -1,0 +1,84 @@
+name: Issue 20 compiler-assisted validation
+
+on:
+  push:
+    branches:
+      - agent/issue-20-work
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  validate:
+    if: github.event.head_commit.message != 'Apply compiler fixes for #20'
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends build-essential ca-certificates git libudev-dev pkg-config rustup
+      - name: Check out work branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-20-work
+          fetch-depth: 0
+      - name: Install pinned Rust
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+      - name: Apply machine-applicable fixes
+        shell: bash
+        run: |
+          set -uo pipefail
+          cargo fix -p lantern-sim --all-targets --allow-dirty --allow-staged --locked || true
+          cargo fmt --all
+          if ! git diff --quiet; then
+            git config user.name 'VFD Lantern contributors'
+            git config user.email 'actions@users.noreply.github.com'
+            git add -A
+            git commit -m 'Apply compiler fixes for #20'
+            git push origin HEAD:agent/issue-20-work
+          fi
+      - name: Validate compiler state
+        id: check
+        shell: bash
+        run: |
+          set +e
+          cargo check -p lantern-sim --all-targets --all-features --locked >issue20-check.log 2>&1
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          if [ "$rc" -ne 0 ]; then
+            tail -n 160 issue20-check.log >issue20-check-tail.log
+          fi
+          exit "$rc"
+      - name: Report compiler failure
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          body=$(python3 - <<'PY'
+          from pathlib import Path
+          text = Path('issue20-check-tail.log').read_text(errors='replace') if Path('issue20-check-tail.log').exists() else 'No compiler log was produced.'
+          print('## #20 compiler gate: FAILED\n\n```text\n' + text[-12000:] + '\n```')
+          PY
+          )
+          curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            https://api.github.com/repos/KeyffMS/vfd-lantern/issues/20/comments \
+            -d "$(python3 -c 'import json,sys; print(json.dumps({"body": sys.stdin.read()}))' <<<"$body")"
+      - name: Report compiler success
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            https://api.github.com/repos/KeyffMS/vfd-lantern/issues/20/comments \
+            -d '{"body":"## #20 compiler gate: PASS\n\n`lantern-sim` compiles for all targets and features on Debian 13 with Rust 1.97.1."}'
