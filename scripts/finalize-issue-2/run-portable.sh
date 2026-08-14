@@ -3,6 +3,11 @@ set -euo pipefail
 
 temporary_main=$(mktemp)
 awk '
+    $0 == "source scripts/finalize-issue-2/10-tools.sh" {
+        print
+        print "source scripts/finalize-issue-2/11-tool-sources.sh"
+        next
+    }
     $0 == "source scripts/finalize-issue-2/20-policy.sh" {
         print "source scripts/finalize-issue-2/21-policy-fix.sh"
         print "write_deny_policy() { cp scripts/finalize-issue-2/deny.toml.template deny.toml; }"
