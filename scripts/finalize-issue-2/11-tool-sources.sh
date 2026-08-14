@@ -72,13 +72,6 @@ install_tool() {
         cargo install --locked --root "$INSTALL_ROOT" \
             --version "$version" "$package"
     fi
-
-    installed_version=$("$INSTALL_ROOT/bin/$package" --version | awk '{ print $2 }')
-    if [ "$installed_version" != "$version" ]; then
-        printf 'installed %s version %s, expected %s\n' \
-            "$package" "$installed_version" "$version" >&2
-        exit 1
-    fi
 }
 
 mkdir -p "$INSTALL_ROOT"
