@@ -6,6 +6,7 @@ awk '
     $0 == "source scripts/finalize-issue-2/10-tools.sh" {
         print
         print "source scripts/finalize-issue-2/11-tool-sources.sh"
+        print "source scripts/finalize-issue-2/12-audit-db.sh"
         next
     }
     $0 == "source scripts/finalize-issue-2/20-policy.sh" {
