@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 write_documentation() {
-    cat > docs/development/toolchain.md <<'EOF'
+    cat > docs/development/toolchain.md <<'DOC'
 # Pinned development toolchain
 
 VFD Lantern targets Debian 13 (Trixie) on amd64 and arm64. Install `rustup` from
@@ -38,37 +38,40 @@ complete gate with:
 sh scripts/check-supply-chain.sh
 ```
 
-It executes `cargo machete`, `cargo deny check`, `cargo audit` and
-`cargo vet check`. The initial locked graph is covered by explicit Cargo Vet
-exemptions, not project audits. A passing check proves policy coverage; it does
-not claim an independent source audit of every dependency. The generated JSON
-report separates audited, imported, exempted and unaudited entries.
+It executes `cargo machete`, `cargo deny check --disable-fetch`, `cargo audit
+--no-fetch` and `cargo vet check`. The initial locked graph is covered by
+explicit Cargo Vet exemptions, not project audits. A passing check proves policy
+coverage; it does not claim an independent source audit of every dependency. The
+generated JSON report separates audited, imported, exempted and unaudited
+entries.
 
 ### RustSec advisory database compatibility
 
-The current RustSec advisory database contains CVSS 4.0 score metadata, while
-the latest published `cargo-audit` version, 0.22.2, does not yet parse those
-score fields. The tool itself is still installed from crates.io in the exact
-version recorded in `tools.lock.toml`.
+The pinned `cargo-deny` 0.18.5 and `cargo-audit` 0.22.2 releases do not parse the
+CVSS 4.0 score metadata now present in the RustSec advisory database. Both tools
+remain installed from crates.io in the exact versions recorded in
+`tools.lock.toml`.
 
 For compatibility, the gate clones the current `RustSec/advisory-db`, records its
-exact commit, and creates a temporary working copy. It may delete only complete
-TOML metadata lines matching:
+exact commit, and creates one temporary working copy at the path configured for
+`cargo-deny`. It may delete only complete TOML metadata lines matching:
 
 ```text
 cvss = "CVSS:4.0/..."
 ```
 
-Before `cargo audit --no-fetch` runs, the gate verifies that the database diff
-contains zero additions and exactly the recorded deletions. Advisory IDs,
-package names, affected-version ranges and advisory bodies are not changed. No
-advisory is ignored. The report records the advisory database commit, the count
-of removed score fields and the SHA-256 of the normalization manifest. This is a
+The gate verifies that the database diff contains zero additions or rewrites and
+exactly the recorded deletions. It then runs `cargo deny check --disable-fetch`
+and `cargo audit --no-fetch` against that same verified copy, so neither command
+can replace it with a fresh unverified checkout. Advisory IDs, package names,
+affected-version ranges and advisory bodies are not changed. No advisory is
+ignored. The report records the advisory database commit, the count of removed
+score fields and the SHA-256 of the normalization manifest. This is a
 parser-compatibility normalization, not advisory suppression.
-EOF
+DOC
 
     mkdir -p supply-chain
-    cat > supply-chain/README.md <<'EOF'
+    cat > supply-chain/README.md <<'DOC'
 # Cargo Vet policy
 
 This directory is the versioned Cargo Vet policy for VFD Lantern.
@@ -84,5 +87,5 @@ The initial locked dependency graph is intentionally covered by exemptions, not
 by a claim that VFD Lantern independently audited every crate. New or updated
 dependencies must add an audit, an approved import, or a narrowly scoped reviewed
 exemption in the same pull request.
-EOF
+DOC
 }

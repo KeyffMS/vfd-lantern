@@ -7,8 +7,9 @@ set -eu
 
 REPORT=${CARGO_VET_REPORT:-target/supply-chain/cargo-vet-summary.json}
 REPORT_DIR=$(dirname "$REPORT")
-RUSTSEC_DATABASE_URL=https://github.com/RustSec/advisory-db.git
-RUSTSEC_DATABASE_DIR=target/supply-chain/rustsec-advisory-db
+RUSTSEC_DATABASE_URL=https://github.com/RustSec/advisory-db
+RUSTSEC_DATABASE_ROOT=target/supply-chain/cargo-deny-advisory-dbs
+RUSTSEC_DATABASE_DIR=$RUSTSEC_DATABASE_ROOT/advisory-db-3157b0e258782691
 NORMALIZATION_MANIFEST=target/supply-chain/rustsec-cvss4-normalization.tsv
 mkdir -p "$REPORT_DIR"
 
@@ -65,6 +66,8 @@ write_report() {
     "normalization_manifest_sha256": $normalization_manifest_sha256_json,
     "normalization_verified": $normalization_verified,
     "compatibility_normalization_only": $compatibility_normalization_only,
+    "cargo_deny_fetch_disabled": true,
+    "cargo_audit_fetch_disabled": true,
     "advisories_ignored": 0
   },
   "cargo_vet_coverage": {
@@ -75,7 +78,7 @@ write_report() {
     "exemptions_are_audits": false
   },
   "command_status": $command_status,
-  "note": "CVSS 4.0 score metadata may be removed from a temporary database copy only after a deletion-only diff check. Advisory IDs, package names, affected-version ranges and advisory bodies remain present. No advisory is ignored."
+  "note": "cargo-deny and cargo-audit consume the same temporary RustSec database copy. CVSS 4.0 score metadata may be removed only after a deletion-only diff check. Advisory IDs, package names, affected-version ranges and advisory bodies remain present. No advisory is ignored."
 }
 JSON
 }
@@ -89,8 +92,8 @@ finish() {
 trap finish EXIT
 
 prepare_rustsec_database() {
-    rm -rf "$RUSTSEC_DATABASE_DIR"
-    mkdir -p "$(dirname "$RUSTSEC_DATABASE_DIR")"
+    rm -rf "$RUSTSEC_DATABASE_ROOT"
+    mkdir -p "$RUSTSEC_DATABASE_ROOT"
     git clone --quiet --depth 1 --no-tags \
         "$RUSTSEC_DATABASE_URL" "$RUSTSEC_DATABASE_DIR"
 
@@ -137,6 +140,7 @@ prepare_rustsec_database() {
 
     cvss4_metadata_lines_removed=$(wc -l < "$NORMALIZATION_MANIFEST" | tr -d ' ')
     expected_counts=target/supply-chain/rustsec-cvss4-expected-counts.tsv
+    actual_counts_unsorted=target/supply-chain/rustsec-cvss4-actual-counts-unsorted.tsv
     actual_counts=target/supply-chain/rustsec-cvss4-actual-counts.tsv
     actual_numstat=target/supply-chain/rustsec-cvss4-numstat.tsv
 
@@ -179,13 +183,15 @@ prepare_rustsec_database() {
 
     git -C "$RUSTSEC_DATABASE_DIR" diff --numstat -- crates > "$actual_numstat"
     if ! awk -F '\t' '
-        $1 != "0" { bad = 1 }
+        $1 != "0" || $2 !~ /^[0-9]+$/ || $3 !~ /^crates\// { bad = 1 }
         { printf "%s\t%s\n", $3, $2 }
         END { exit bad }
-    ' "$actual_numstat" | LC_ALL=C sort > "$actual_counts"; then
-        printf 'RustSec compatibility normalization added or rewrote content\n' >&2
+    ' "$actual_numstat" > "$actual_counts_unsorted"; then
+        printf 'RustSec compatibility normalization added, rewrote or changed unexpected content\n' >&2
+        cat "$actual_numstat" >&2
         exit 1
     fi
+    LC_ALL=C sort "$actual_counts_unsorted" > "$actual_counts"
 
     if ! cmp -s "$expected_counts" "$actual_counts"; then
         printf 'RustSec compatibility normalization changed unexpected files or line counts\n' >&2
@@ -214,9 +220,9 @@ sh scripts/check-supply-chain-baseline.sh
 baseline=pass
 cargo machete
 machete=pass
-cargo deny check
-deny=pass
 prepare_rustsec_database
+cargo deny check --disable-fetch
+deny=pass
 cargo audit --db "$RUSTSEC_DATABASE_DIR" --no-fetch
 audit=pass
 cargo vet check

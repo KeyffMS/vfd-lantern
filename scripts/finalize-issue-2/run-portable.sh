@@ -36,6 +36,7 @@ if declare -f write_install_script | grep -q -- '--git'; then
     exit 1
 fi
 declare -f write_gate_script | grep -q 'prepare_rustsec_database'
+declare -f write_gate_script | grep -q 'cargo deny check --disable-fetch'
 declare -f write_gate_script | grep -q 'cargo audit --db.*--no-fetch'
 
 git config --global --add safe.directory "$WORKSPACE_ROOT"
@@ -50,6 +51,7 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 cp "$FIXTURE_DIR/tools.lock.toml" tools.lock.toml
+grep -q '^cargo-deny = "0.18.5"$' tools.lock.toml
 grep -q '^cargo-audit = "0.22.2"$' tools.lock.toml
 if grep -q '^\[tool_sources\]$' tools.lock.toml \
     || grep -q '^\[tool_revisions\]$' tools.lock.toml; then
@@ -83,9 +85,23 @@ if grep -q -- '--git' scripts/install-cargo-tools.sh; then
     exit 1
 fi
 grep -q 'prepare_rustsec_database' scripts/check-supply-chain.sh
+grep -q '^cargo deny check --disable-fetch$' scripts/check-supply-chain.sh
 grep -q 'cargo audit --db "$RUSTSEC_DATABASE_DIR" --no-fetch' \
     scripts/check-supply-chain.sh
+grep -q '^RUSTSEC_DATABASE_DIR=\$RUSTSEC_DATABASE_ROOT/advisory-db-3157b0e258782691$' \
+    scripts/check-supply-chain.sh
 grep -q 'advisories_ignored": 0' scripts/check-supply-chain.sh
+grep -q '^db-path = "target/supply-chain/cargo-deny-advisory-dbs"$' deny.toml
+grep -q '^db-urls = \["https://github.com/RustSec/advisory-db"\]$' deny.toml
+
+prepare_line=$(grep -n '^prepare_rustsec_database$' scripts/check-supply-chain.sh | cut -d: -f1)
+deny_line=$(grep -n '^cargo deny check --disable-fetch$' scripts/check-supply-chain.sh | cut -d: -f1)
+audit_line=$(grep -n '^cargo audit --db "$RUSTSEC_DATABASE_DIR" --no-fetch$' \
+    scripts/check-supply-chain.sh | cut -d: -f1)
+if [ "$prepare_line" -ge "$deny_line" ] || [ "$deny_line" -ge "$audit_line" ]; then
+    printf 'RustSec database must be prepared before both offline advisory checks\n' >&2
+    exit 1
+fi
 
 export PATH="${CARGO_INSTALL_ROOT:-/tmp/vfd-lantern-cargo-tools}/bin:$PATH"
 sh scripts/install-cargo-tools.sh supply-chain
@@ -119,9 +135,11 @@ grep -q '"cargo_vet": "pass"' "$REPORT"
 grep -q '"exemptions_are_audits": false' "$REPORT"
 grep -q '"normalization_verified": true' "$REPORT"
 grep -q '"compatibility_normalization_only": true' "$REPORT"
+grep -q '"cargo_deny_fetch_disabled": true' "$REPORT"
+grep -q '"cargo_audit_fetch_disabled": true' "$REPORT"
 grep -q '"advisories_ignored": 0' "$REPORT"
 grep -Eq '"commit": "[0-9a-f]{40}"' "$REPORT"
-test -s target/supply-chain/rustsec-cvss4-normalization.tsv
+test -f target/supply-chain/rustsec-cvss4-normalization.tsv
 
 # Stage an explicit allow-listed delivery set. Technical finalizer files are
 # intentionally absent from the candidate commit.
@@ -175,9 +193,9 @@ git diff --cached --binary > issue2-output/issue-2.patch
 while IFS= read -r path; do
     mkdir -p "issue2-output/files/$(dirname "$path")"
     cp "$path" "issue2-output/files/$path"
-done <<EOF
+done <<FILES
 $(git diff --cached --name-only --diff-filter=ACMRT)
-EOF
+FILES
 
 cp "$REPORT" issue2-output/
 cp target/supply-chain/rustsec-cvss4-normalization.tsv issue2-output/

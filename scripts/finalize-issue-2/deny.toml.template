@@ -6,6 +6,8 @@ targets = [
 all-features = true
 
 [advisories]
+db-path = "target/supply-chain/cargo-deny-advisory-dbs"
+db-urls = ["https://github.com/RustSec/advisory-db"]
 ignore = []
 
 [bans]
