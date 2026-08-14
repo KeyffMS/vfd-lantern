@@ -17,7 +17,11 @@ cargo build --workspace --all-features --locked
 cargo test --workspace --all-features --locked
 ```
 
-Direct crate versions are centralized in `[workspace.dependencies]`. Binary tool
+Direct crate versions are centralized in `[workspace.dependencies]`. That table
+is the frozen, issue-approved catalog and may contain dependencies reserved for
+later roadmap consumers before a workspace crate imports them. Cargo Deny
+therefore allows an unused entry in the central catalog; `cargo machete` still
+rejects dependencies declared but unused by an individual crate. Binary tool
 versions are centralized in `tools.lock.toml`. Updates require a dedicated
 change with a refreshed lockfile and the full CI suite.
 
@@ -28,7 +32,7 @@ Install the exact crates.io versions without `curl | sh`:
 ```sh
 CARGO_INSTALL_ROOT="$HOME/.local/share/vfd-lantern/cargo-tools" \
   sh scripts/install-cargo-tools.sh supply-chain
-export PATH="$HOME/.local/share/vfd-lantern/cargo-tools/bin:$PATH"
+export PATH="$HOME/.local/share/vfd-lantern/cargo-tools"/bin:$PATH"
 ```
 
 The installer uses `cargo install --version ... --locked` for every tool. Run the
@@ -78,7 +82,7 @@ This directory is the versioned Cargo Vet policy for VFD Lantern.
 
 Coverage is reported as four distinct categories:
 
-- **audited** — project audits recorded in `audits.toml`;
+- **audited** — project audits recorded in `audits.tom`;
 - **imported** — audits from explicitly trusted sources;
 - **exempted** — reviewed policy exceptions in `config.toml`;
 - **unaudited** — dependencies missing required policy coverage.

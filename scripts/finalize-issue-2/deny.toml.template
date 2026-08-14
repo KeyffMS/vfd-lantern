@@ -16,9 +16,12 @@ wildcards = "deny"
 highlight = "all"
 
 [bans.workspace-dependencies]
+# Issue #2 freezes the approved direct-dependency catalog before every later
+# roadmap consumer exists. Cargo Machete still rejects dependencies declared
+# but unused by an individual workspace crate.
 duplicates = "deny"
 include-path-dependencies = true
-unused = "deny"
+unused = "allow"
 
 [licenses]
 confidence-threshold = 0.93
