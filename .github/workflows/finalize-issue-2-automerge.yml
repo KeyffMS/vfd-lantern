@@ -1,0 +1,207 @@
+name: Guarded merge for issue 2 correction
+
+on:
+  push:
+    branches:
+      - agent/issue-2-finalizer
+    paths:
+      - .github/workflows/finalize-issue-2-automerge.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: guarded-merge-issue-2
+  cancel-in-progress: true
+
+jobs:
+  merge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Verify candidate and merge only after green CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_BRANCH: agent/issue-2-supply-chain-final
+          BASE_BRANCH: main
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          repository = os.environ["REPOSITORY"]
+          owner = repository.split("/", 1)[0]
+          token = os.environ["GH_TOKEN"]
+          head_branch = os.environ["HEAD_BRANCH"]
+          base_branch = os.environ["BASE_BRANCH"]
+          api = f"https://api.github.com/repos/{repository}"
+
+          allowed_exact = {
+              ".github/workflows/ci.yml",
+              "Cargo.lock",
+              "crates/vfd-lantern/Cargo.toml",
+              "crates/lantern-sim/Cargo.toml",
+              "deny.toml",
+              "docs/development/toolchain.md",
+              "scripts/install-cargo-tools.sh",
+              "scripts/check-supply-chain-baseline.sh",
+              "scripts/check-supply-chain.sh",
+              "tools.lock.toml",
+          }
+
+          def allowed(path: str) -> bool:
+              return path in allowed_exact or path.startswith("supply-chain/")
+
+          def request(method: str, url: str, payload=None):
+              data = None
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {token}",
+                  "User-Agent": "vfd-lantern-guarded-merge",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              }
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
+              with urllib.request.urlopen(req, timeout=45) as response:
+                  raw = response.read()
+                  return json.loads(raw) if raw else None
+
+          head_query = urllib.parse.quote(f"{owner}:{head_branch}", safe=":")
+          pr = None
+          for _ in range(60):
+              pulls = request(
+                  "GET",
+                  f"{api}/pulls?state=open&base={base_branch}&head={head_query}&per_page=10",
+              )
+              if len(pulls) == 1:
+                  pr = pulls[0]
+                  break
+              if len(pulls) > 1:
+                  raise SystemExit("more than one open candidate PR exists")
+              time.sleep(10)
+          if pr is None:
+              raise SystemExit("candidate PR did not appear")
+
+          number = pr["number"]
+          if pr["draft"]:
+              raise SystemExit("candidate PR is still a draft")
+          if pr["base"]["ref"] != base_branch or pr["head"]["ref"] != head_branch:
+              raise SystemExit("candidate PR uses an unexpected base or head branch")
+          if "Closes #2" not in (pr.get("body") or ""):
+              raise SystemExit("candidate PR is not linked to issue #2")
+
+          files = []
+          page = 1
+          while True:
+              batch = request("GET", f"{api}/pulls/{number}/files?per_page=100&page={page}")
+              files.extend(batch)
+              if len(batch) < 100:
+                  break
+              page += 1
+          paths = [item["filename"] for item in files]
+          unexpected = sorted(path for path in paths if not allowed(path))
+          if unexpected:
+              raise SystemExit(f"unexpected candidate files: {unexpected}")
+          required = {
+              ".github/workflows/ci.yml",
+              "deny.toml",
+              "docs/development/toolchain.md",
+              "scripts/install-cargo-tools.sh",
+              "scripts/check-supply-chain.sh",
+              "supply-chain/config.toml",
+              "supply-chain/audits.toml",
+              "supply-chain/README.md",
+              "tools.lock.toml",
+          }
+          missing = sorted(required.difference(paths))
+          if missing:
+              raise SystemExit(f"required candidate files are missing: {missing}")
+
+          for _ in range(90):
+              pr = request("GET", f"{api}/pulls/{number}")
+              head_sha = pr["head"]["sha"]
+              base_sha = pr["base"]["sha"]
+              commit = request("GET", f"{api}/commits/{head_sha}")
+              parents = commit.get("parents", [])
+              if len(parents) != 1 or parents[0]["sha"] != base_sha:
+                  raise SystemExit(
+                      "candidate commit is not directly based on the current main commit"
+                  )
+
+              check_runs = request(
+                  "GET",
+                  f"{api}/commits/{head_sha}/check-runs?per_page=100",
+              )["check_runs"]
+              pending = [run for run in check_runs if run["status"] != "completed"]
+              failed = [
+                  run for run in check_runs
+                  if run["status"] == "completed"
+                  and run.get("conclusion") not in {"success", "skipped", "neutral"}
+              ]
+
+              workflow_runs = request(
+                  "GET",
+                  f"{api}/actions/runs?head_sha={head_sha}&per_page=100",
+              )["workflow_runs"]
+              ci_runs = [
+                  run for run in workflow_runs
+                  if run.get("path") == ".github/workflows/ci.yml"
+              ]
+              ci_success = any(
+                  run.get("status") == "completed"
+                  and run.get("conclusion") == "success"
+                  for run in ci_runs
+              )
+              workflows_pending = [
+                  run for run in workflow_runs if run.get("status") != "completed"
+              ]
+              workflows_failed = [
+                  run for run in workflow_runs
+                  if run.get("status") == "completed"
+                  and run.get("conclusion") not in {"success", "skipped", "neutral"}
+              ]
+
+              if failed or workflows_failed:
+                  names = [run.get("name") for run in failed]
+                  workflow_names = [run.get("name") for run in workflows_failed]
+                  raise SystemExit(
+                      f"candidate checks failed: checks={names}, workflows={workflow_names}"
+                  )
+              if (
+                  pr.get("mergeable") is True
+                  and not pending
+                  and not workflows_pending
+                  and ci_success
+              ):
+                  break
+              time.sleep(10)
+          else:
+              raise SystemExit("candidate CI did not become mergeable and green in time")
+
+          result = request(
+              "PUT",
+              f"{api}/pulls/{number}/merge",
+              {
+                  "sha": head_sha,
+                  "merge_method": "squash",
+                  "commit_title": "Harden Rust supply-chain policy and CI (#2)",
+                  "commit_message": "Close issue #2 with the validated supply-chain policy, pinned tooling, and CI evidence gate.",
+              },
+          )
+          if not result.get("merged"):
+              raise SystemExit(f"GitHub refused the guarded merge: {result}")
+          print(json.dumps({"pull_request": number, "merged": True, "sha": result["sha"]}))
+          PY
