@@ -18,13 +18,12 @@ cargo test --workspace --all-features --locked
 ```
 
 Direct crate versions are centralized in `[workspace.dependencies]`. Binary tool
-versions and exceptional tool-source revisions are centralized in
-`tools.lock.toml`. Updates require a dedicated change with a refreshed lockfile
-and the full CI suite.
+versions are centralized in `tools.lock.toml`. Updates require a dedicated
+change with a refreshed lockfile and the full CI suite.
 
 ## Supply-chain gate
 
-Install the pinned supply-chain tools without `curl | sh`:
+Install the exact crates.io versions without `curl | sh`:
 
 ```sh
 CARGO_INSTALL_ROOT="$HOME/.local/share/vfd-lantern/cargo-tools" \
@@ -32,7 +31,8 @@ CARGO_INSTALL_ROOT="$HOME/.local/share/vfd-lantern/cargo-tools" \
 export PATH="$HOME/.local/share/vfd-lantern/cargo-tools/bin:$PATH"
 ```
 
-Run the complete gate:
+The installer uses `cargo install --version ... --locked` for every tool. Run the
+complete gate with:
 
 ```sh
 sh scripts/check-supply-chain.sh
@@ -46,14 +46,14 @@ report separates audited, imported, exempted and unaudited entries.
 
 ### RustSec advisory database compatibility
 
-The current RustSec advisory database contains CVSS 4.0 score metadata. The
-latest published `cargo-audit` version, 0.22.2, does not parse those fields in
-its crates.io build. VFD Lantern therefore builds that same version from the
-official signed RustSec tag commit recorded in `tools.lock.toml`.
+The current RustSec advisory database contains CVSS 4.0 score metadata, while
+the latest published `cargo-audit` version, 0.22.2, does not yet parse those
+score fields. The tool itself is still installed from crates.io in the exact
+version recorded in `tools.lock.toml`.
 
-If the pinned tool still cannot parse a CVSS 4.0 score field, the gate clones the
-current `RustSec/advisory-db`, records its exact commit, and creates a temporary
-working copy. It may delete only complete TOML metadata lines matching:
+For compatibility, the gate clones the current `RustSec/advisory-db`, records its
+exact commit, and creates a temporary working copy. It may delete only complete
+TOML metadata lines matching:
 
 ```text
 cvss = "CVSS:4.0/..."
