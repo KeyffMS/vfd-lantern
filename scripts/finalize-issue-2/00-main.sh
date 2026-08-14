@@ -64,6 +64,11 @@ grep -q '"cargo_deny": "pass"' target/supply-chain/cargo-vet-summary-amd64.json
 grep -q '"cargo_audit": "pass"' target/supply-chain/cargo-vet-summary-amd64.json
 grep -q '"cargo_vet": "pass"' target/supply-chain/cargo-vet-summary-amd64.json
 grep -q '"exemptions_are_audits": false' target/supply-chain/cargo-vet-summary-amd64.json
+grep -q '"normalization_verified": true' target/supply-chain/cargo-vet-summary-amd64.json
+grep -q '"compatibility_normalization_only": true' target/supply-chain/cargo-vet-summary-amd64.json
+grep -q '"advisories_ignored": 0' target/supply-chain/cargo-vet-summary-amd64.json
+grep -Eq '"commit": "[0-9a-f]{40}"' target/supply-chain/cargo-vet-summary-amd64.json
+test -f target/supply-chain/rustsec-cvss4-normalization.tsv
 
 rm -rf scripts/finalize-issue-2
 git add \
@@ -93,10 +98,12 @@ done <<EOF
 $(git diff --cached --name-only --diff-filter=ACMRT)
 EOF
 cp target/supply-chain/cargo-vet-summary-amd64.json issue2-output/
+cp target/supply-chain/rustsec-cvss4-normalization.tsv issue2-output/
 tar -czf issue2-output/candidate-files.tar.gz -C issue2-output/files .
 sha256sum \
   issue2-output/issue-2.patch \
   issue2-output/candidate-files.tar.gz \
   issue2-output/cargo-vet-summary-amd64.json \
+  issue2-output/rustsec-cvss4-normalization.tsv \
   > issue2-output/SHA256SUMS
 printf 'Prepared tested correction for base %s\n' "$base_sha"
