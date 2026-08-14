@@ -18,8 +18,9 @@ cargo test --workspace --all-features --locked
 ```
 
 Direct crate versions are centralized in `[workspace.dependencies]`. Binary tool
-versions are centralized in `tools.lock.toml`. Updates require a dedicated change
-with a refreshed lockfile and the full CI suite.
+versions and exceptional tool-source revisions are centralized in
+`tools.lock.toml`. Updates require a dedicated change with a refreshed lockfile
+and the full CI suite.
 
 ## Supply-chain gate
 
@@ -42,6 +43,28 @@ It executes `cargo machete`, `cargo deny check`, `cargo audit` and
 exemptions, not project audits. A passing check proves policy coverage; it does
 not claim an independent source audit of every dependency. The generated JSON
 report separates audited, imported, exempted and unaudited entries.
+
+### RustSec advisory database compatibility
+
+The current RustSec advisory database contains CVSS 4.0 score metadata. The
+latest published `cargo-audit` version, 0.22.2, does not parse those fields in
+its crates.io build. VFD Lantern therefore builds that same version from the
+official signed RustSec tag commit recorded in `tools.lock.toml`.
+
+If the pinned tool still cannot parse a CVSS 4.0 score field, the gate clones the
+current `RustSec/advisory-db`, records its exact commit, and creates a temporary
+working copy. It may delete only complete TOML metadata lines matching:
+
+```text
+cvss = "CVSS:4.0/..."
+```
+
+Before `cargo audit --no-fetch` runs, the gate verifies that the database diff
+contains zero additions and exactly the recorded deletions. Advisory IDs,
+package names, affected-version ranges and advisory bodies are not changed. No
+advisory is ignored. The report records the advisory database commit, the count
+of removed score fields and the SHA-256 of the normalization manifest. This is a
+parser-compatibility normalization, not advisory suppression.
 EOF
 
     mkdir -p supply-chain
