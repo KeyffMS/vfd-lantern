@@ -1,24 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-temporary_main=$(mktemp)
-awk '
-    $0 == "source scripts/finalize-issue-2/10-tools.sh" {
+FUNCTIONS_COPY=$(mktemp)
+TEMPORARY_MAIN=$(mktemp)
+
+source scripts/finalize-issue-2/10-tools.sh
+source scripts/finalize-issue-2/11-tool-sources.sh
+source scripts/finalize-issue-2/12-audit-db.sh
+source scripts/finalize-issue-2/21-policy-fix.sh
+source scripts/finalize-issue-2/30-docs.sh
+write_deny_policy() {
+    cp scripts/finalize-issue-2/deny.toml.template deny.toml
+}
+
+declare -f \
+    write_install_script \
+    write_baseline_script \
+    write_gate_script \
+    write_deny_policy \
+    insert_after_line \
+    patch_ci_workflow \
+    write_documentation \
+    > "$FUNCTIONS_COPY"
+
+grep -q 'prepare_rustsec_database' "$FUNCTIONS_COPY"
+grep -q 'tool_revisions' "$FUNCTIONS_COPY"
+
+awk -v functions="$FUNCTIONS_COPY" '
+    NR == 2 {
         print
-        print "source scripts/finalize-issue-2/11-tool-sources.sh"
-        print "source scripts/finalize-issue-2/12-audit-db.sh"
+        printf "source %s\n", functions
         next
     }
-    $0 == "source scripts/finalize-issue-2/20-policy.sh" {
-        print "source scripts/finalize-issue-2/21-policy-fix.sh"
-        print "write_deny_policy() { cp scripts/finalize-issue-2/deny.toml.template deny.toml; }"
-        next
-    }
-    {
-        print
-    }
-' scripts/finalize-issue-2/00-main.sh > "$temporary_main"
+    /^source scripts\/finalize-issue-2\// { next }
+    { print }
+' scripts/finalize-issue-2/00-main.sh > "$TEMPORARY_MAIN"
+
 sed -i \
     's|rm -rf supply-chain/config.toml supply-chain/audits.toml supply-chain/imports.lock|rm -rf supply-chain|' \
-    "$temporary_main"
-exec bash "$temporary_main"
+    "$TEMPORARY_MAIN"
+
+# Fail before expensive work if the frozen function set is not the expected one.
+grep -q "source $FUNCTIONS_COPY" "$TEMPORARY_MAIN"
+grep -q '^write_gate_script$' "$TEMPORARY_MAIN"
+
+exec bash "$TEMPORARY_MAIN"
