@@ -1,0 +1,148 @@
+name: Finalize issue 2 supply-chain correction (repair)
+
+on:
+  push:
+    branches:
+      - agent/issue-2-finalizer
+    paths:
+      - .github/workflows/finalize-issue-2-repair.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finalize-issue-2-repair
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    env:
+      CARGO_INSTALL_ROOT: /tmp/vfd-lantern-cargo-tools
+    steps:
+      - name: Install system dependencies
+        shell: sh
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            git \
+            libssl-dev \
+            libudev-dev \
+            pkg-config \
+            python3 \
+            rustup
+
+      - name: Check out automation branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned Rust toolchain
+        shell: sh
+        run: |
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --component llvm-tools-preview
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
+
+      - name: Restore and repair deterministic finalizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=5d1320314560fd00332e60cb275991228c628a13
+          git show "$base:scripts/finalize-issue-2/12-audit-db.sh" \
+            > scripts/finalize-issue-2/12-audit-db.sh
+          git show "$base:scripts/finalize-issue-2/run-portable.sh" \
+            > scripts/finalize-issue-2/run-portable.sh
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/finalize-issue-2/12-audit-db.sh")
+          source = path.read_text(encoding="utf-8")
+          old = '''sh scripts/check-supply-chain-baseline.sh
+          baseline=pass
+          cargo machete
+          machete=pass
+          cargo deny check
+          deny=pass
+          prepare_rustsec_database
+          cargo audit --db "$RUSTSEC_DATABASE_DIR" --no-fetch
+          audit=pass
+          cargo vet check
+          vet=pass
+          printf 'full supply-chain checks passed\\n'
+          '''
+          new = '''run_cargo_deny_with_database() {
+              root_help=$(cargo deny --help 2>&1 || true)
+              check_help=$(cargo deny check --help 2>&1 || true)
+              advisories_help=$(cargo deny check advisories --help 2>&1 || true)
+
+              cargo deny check bans licenses sources
+
+              if printf '%s\\n' "$advisories_help" | grep -q -- '--db-path' \\
+                  && printf '%s\\n' "$advisories_help" | grep -q -- '--disable-fetch'; then
+                  cargo deny check advisories \\
+                      --db-path "$RUSTSEC_DATABASE_DIR" \\
+                      --disable-fetch
+              elif printf '%s\\n' "$check_help" | grep -q -- '--db-path' \\
+                  && printf '%s\\n' "$check_help" | grep -q -- '--disable-fetch'; then
+                  cargo deny check \\
+                      --db-path "$RUSTSEC_DATABASE_DIR" \\
+                      --disable-fetch \\
+                      advisories
+              elif printf '%s\\n' "$root_help" | grep -q -- '--db-path' \\
+                  && printf '%s\\n' "$root_help" | grep -q -- '--disable-fetch'; then
+                  cargo deny \\
+                      --db-path "$RUSTSEC_DATABASE_DIR" \\
+                      --disable-fetch \\
+                      check advisories
+              else
+                  printf 'cargo-deny does not expose the required --db-path/--disable-fetch interface\\n' >&2
+                  exit 1
+              fi
+          }
+
+          sh scripts/check-supply-chain-baseline.sh
+          baseline=pass
+          cargo machete
+          machete=pass
+          prepare_rustsec_database
+          run_cargo_deny_with_database
+          deny=pass
+          cargo audit --db "$RUSTSEC_DATABASE_DIR" --no-fetch
+          audit=pass
+          cargo vet check
+          vet=pass
+          printf 'full supply-chain checks passed\\n'
+          '''
+          if old not in source:
+              raise SystemExit("expected supply-chain execution block was not found")
+          path.write_text(source.replace(old, new, 1), encoding="utf-8")
+          PY
+
+          bash -n scripts/finalize-issue-2/12-audit-db.sh
+          bash -n scripts/finalize-issue-2/run-portable.sh
+          grep -q 'run_cargo_deny_with_database' \
+            scripts/finalize-issue-2/12-audit-db.sh
+
+      - name: Build and validate correction candidate
+        shell: sh
+        run: bash scripts/finalize-issue-2/run-portable.sh
+
+      - name: Upload tested correction
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-2-correction-repair
+          path: issue2-output
+          if-no-files-found: error
+          retention-days: 7
