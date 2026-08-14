@@ -59,8 +59,38 @@ if grep -q '^\[tool_sources\]$' tools.lock.toml \
     exit 1
 fi
 
-# Remove dependencies proven unused by cargo-machete instead of suppressing
-# findings in policy.
+remove_exact_line() {
+    file=$1
+    line=$2
+    temporary="$file.vfd-lantern-cleanup"
+
+    if ! grep -Fxq "$line" "$file"; then
+        printf 'expected unused dependency declaration is missing from %s: %s\n' \
+            "$file" "$line" >&2
+        exit 1
+    fi
+
+    awk -v line="$line" '$0 != line' "$file" > "$temporary"
+    mv "$temporary" "$file"
+}
+
+# Remove dependencies proven unused by cargo-machete and cargo-deny instead of
+# suppressing findings in policy. Workspace-level declarations are removed
+# only after an exact-line assertion so upstream manifest drift fails closed.
+remove_exact_line Cargo.toml 'clap_complete = "=4.6.0"'
+remove_exact_line Cargo.toml 'clap_mangen = "=0.2.29"'
+remove_exact_line Cargo.toml 'ratatui = { version = "=0.30.2", default-features = false, features = ["all-widgets", "crossterm_0_29", "layout-cache", "macros", "underline-color"] }'
+remove_exact_line Cargo.toml 'crossterm = { version = "=0.29.0", features = ["event-stream"] }'
+remove_exact_line Cargo.toml 'futures-util = "=0.3.32"'
+remove_exact_line Cargo.toml 'libc = "=0.2.177"'
+remove_exact_line Cargo.toml 'csv = "=1.4.0"'
+remove_exact_line Cargo.toml 'time = { version = "=0.3.54", features = ["formatting", "parsing", "serde"] }'
+remove_exact_line Cargo.toml 'tracing = "=0.1.44"'
+remove_exact_line Cargo.toml 'tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt", "json"] }'
+remove_exact_line Cargo.toml 'tracing-appender = "=0.2.5"'
+remove_exact_line Cargo.toml 'insta = { version = "=1.43.2", features = ["json", "redactions"] }'
+remove_exact_line Cargo.toml 'criterion = "=0.7.0"'
+
 sed -i \
     -e '/^lantern-domain\.workspace = true$/d' \
     -e '/^lantern-profile\.workspace = true$/d' \
@@ -145,6 +175,7 @@ test -f target/supply-chain/rustsec-cvss4-normalization.tsv
 # intentionally absent from the candidate commit.
 git add \
     .github/workflows/ci.yml \
+    Cargo.toml \
     Cargo.lock \
     crates/vfd-lantern/Cargo.toml \
     crates/lantern-sim/Cargo.toml \
@@ -159,7 +190,7 @@ git add \
 git diff --cached --check
 
 UNEXPECTED=$(git diff --cached --name-only | grep -Ev \
-    '^(\.github/workflows/ci\.yml|Cargo\.lock|crates/vfd-lantern/Cargo\.toml|crates/lantern-sim/Cargo\.toml|deny\.toml|docs/development/toolchain\.md|scripts/install-cargo-tools\.sh|scripts/check-supply-chain-baseline\.sh|scripts/check-supply-chain\.sh|supply-chain/.*|tools\.lock\.toml)$' \
+    '^(\.github/workflows/ci\.yml|Cargo\.toml|Cargo\.lock|crates/vfd-lantern/Cargo\.toml|crates/lantern-sim/Cargo\.toml|deny\.toml|docs/development/toolchain\.md|scripts/install-cargo-tools\.sh|scripts/check-supply-chain-baseline\.sh|scripts/check-supply-chain\.sh|supply-chain/.*|tools\.lock\.toml)$' \
     || true)
 if [ -n "$UNEXPECTED" ]; then
     printf 'unexpected files in issue #2 candidate:\n%s\n' "$UNEXPECTED" >&2
@@ -168,6 +199,7 @@ fi
 
 for required in \
     .github/workflows/ci.yml \
+    Cargo.toml \
     deny.toml \
     docs/development/toolchain.md \
     scripts/install-cargo-tools.sh \
