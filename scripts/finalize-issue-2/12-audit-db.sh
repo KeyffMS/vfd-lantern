@@ -123,6 +123,11 @@ prepare_rustsec_database() {
                 -v manifest="$NORMALIZATION_MANIFEST" \
                 -v unexpected="$unexpected" '
                 index($0, "CVSS:4.0/") {
+                    if ($0 ~ /^[[:space:]]*#/) {
+                        # TOML comments are not parsed metadata. Preserve them
+                        # byte-for-byte and exclude them from normalization.
+                        next
+                    }
                     if ($0 ~ /^[[:space:]]*cvss[[:space:]]*=[[:space:]]*"CVSS:4[.]0\/[^\"]+"[[:space:]]*$/) {
                         printf "%s\t%d\t%s\n", relative, NR, $0 >> manifest
                     } else {
@@ -173,7 +178,11 @@ prepare_rustsec_database() {
     find "$RUSTSEC_DATABASE_DIR/crates" -type f -name 'RUSTSEC-*.md' -print \
         | LC_ALL=C sort \
         | while IFS= read -r file; do
-            grep -Hn 'CVSS:4[.]0/' "$file" || true
+            awk '
+                index($0, "CVSS:4.0/") && $0 !~ /^[[:space:]]*#/ {
+                    printf "%s:%d:%s\n", FILENAME, NR, $0
+                }
+            ' "$file"
         done > "$remaining"
     if [ -s "$remaining" ]; then
         printf 'CVSS 4.0 metadata remained after normalization:\n' >&2
