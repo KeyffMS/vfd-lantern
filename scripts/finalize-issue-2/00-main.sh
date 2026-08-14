@@ -20,8 +20,11 @@ cp "$TEMPLATE_COPY" scripts/finalize-issue-2/deny.toml.template
 cp "$TOOLS_LOCK_COPY" tools.lock.toml
 
 grep -q '^cargo-audit = "0.22.2"$' tools.lock.toml
-grep -q '^cargo-audit = "https://github.com/RustSec/rustsec"$' tools.lock.toml
-grep -q '^cargo-audit = "281452c35cf0870969042374110f099a411bc185"$' tools.lock.toml
+if grep -q '^\[tool_sources\]$' tools.lock.toml \
+    || grep -q '^\[tool_revisions\]$' tools.lock.toml; then
+    printf 'issue #2 requires version-pinned crates.io tool installation\n' >&2
+    exit 1
+fi
 
 sed -i \
   -e '/^lantern-domain\.workspace = true$/d' \
@@ -40,6 +43,12 @@ write_gate_script
 write_deny_policy
 patch_ci_workflow
 write_documentation
+
+grep -q 'cargo install --locked --root.*--version' scripts/install-cargo-tools.sh
+if grep -q -- '--git' scripts/install-cargo-tools.sh; then
+    printf 'generated tool installer contains a git source\n' >&2
+    exit 1
+fi
 
 export PATH="$CARGO_INSTALL_ROOT/bin:$PATH"
 sh scripts/install-cargo-tools.sh supply-chain
