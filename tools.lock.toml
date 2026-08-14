@@ -18,6 +18,9 @@ cargo-dist = "0.30.3"
 cargo-deb = "3.6.2"
 mdbook = "0.4.52"
 
+[tool_sources]
+cargo-audit = "https://github.com/RustSec/rustsec"
+
 [tool_revisions]
 cargo-audit = "281452c35cf0870969042374110f099a411bc185"
 
