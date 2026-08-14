@@ -5,7 +5,9 @@ CARGO_INSTALL_ROOT=${CARGO_INSTALL_ROOT:-/tmp/vfd-lantern-cargo-tools}
 export CARGO_INSTALL_ROOT
 
 TEMPLATE_COPY=$(mktemp)
+TOOLS_LOCK_COPY=$(mktemp)
 cp scripts/finalize-issue-2/deny.toml.template "$TEMPLATE_COPY"
+cp tools.lock.toml "$TOOLS_LOCK_COPY"
 source scripts/finalize-issue-2/10-tools.sh
 source scripts/finalize-issue-2/20-policy.sh
 source scripts/finalize-issue-2/30-docs.sh
@@ -15,6 +17,11 @@ git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
 git checkout --detach refs/remotes/origin/main
 mkdir -p scripts/finalize-issue-2
 cp "$TEMPLATE_COPY" scripts/finalize-issue-2/deny.toml.template
+cp "$TOOLS_LOCK_COPY" tools.lock.toml
+
+grep -q '^cargo-audit = "0.22.2"$' tools.lock.toml
+grep -q '^cargo-audit = "https://github.com/RustSec/rustsec"$' tools.lock.toml
+grep -q '^cargo-audit = "281452c35cf0870969042374110f099a411bc185"$' tools.lock.toml
 
 sed -i \
   -e '/^lantern-domain\.workspace = true$/d' \
@@ -26,11 +33,6 @@ sed -i \
   -e '/^lantern-app\.workspace = true$/d' \
   -e '/^lantern-transport\.workspace = true$/d' \
   crates/lantern-sim/Cargo.toml
-
-# cargo-audit 0.21.2 cannot parse current RustSec entries carrying CVSS 4.0.
-# Keep the audit gate enabled and update the exact pin to the compatible release.
-sed -i 's/^cargo-audit = "0\.21\.2"$/cargo-audit = "0.22.2"/' tools.lock.toml
-grep -q '^cargo-audit = "0.22.2"$' tools.lock.toml
 
 write_install_script
 write_baseline_script
