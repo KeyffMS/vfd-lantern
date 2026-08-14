@@ -5,7 +5,6 @@ FUNCTIONS_COPY=$(mktemp)
 TEMPORARY_MAIN=$(mktemp)
 
 source scripts/finalize-issue-2/10-tools.sh
-source scripts/finalize-issue-2/11-tool-sources.sh
 source scripts/finalize-issue-2/12-audit-db.sh
 source scripts/finalize-issue-2/21-policy-fix.sh
 source scripts/finalize-issue-2/30-docs.sh
@@ -24,7 +23,11 @@ declare -f \
     > "$FUNCTIONS_COPY"
 
 grep -q 'prepare_rustsec_database' "$FUNCTIONS_COPY"
-grep -q 'tool_revisions' "$FUNCTIONS_COPY"
+grep -q 'cargo install --locked --root.*--version' "$FUNCTIONS_COPY"
+if grep -q -- '--git' "$FUNCTIONS_COPY"; then
+    printf 'git-sourced tool installation is not allowed by issue #2\n' >&2
+    exit 1
+fi
 
 awk -v functions="$FUNCTIONS_COPY" '
     NR == 2 {
