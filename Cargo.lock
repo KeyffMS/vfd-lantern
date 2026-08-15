@@ -495,12 +495,6 @@ dependencies = [
 [[package]]
 name = "lantern-sim"
 version = "0.1.0"
-dependencies = [
- "lantern-app",
- "lantern-domain",
- "lantern-profile",
- "lantern-transport",
-]
 
 [[package]]
 name = "lantern-storage"
@@ -1260,8 +1254,6 @@ dependencies = [
  "anyhow",
  "clap",
  "lantern-app",
- "lantern-domain",
- "lantern-profile",
  "lantern-storage",
  "lantern-transport",
  "lantern-tui",
