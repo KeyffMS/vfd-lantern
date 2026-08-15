@@ -1,0 +1,38 @@
+name: Export stage B dependency sources
+
+on:
+  push:
+    branches:
+      - agent/stage-b-source-export
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends ca-certificates git rustup
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install pinned Rust and fetch sources
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          cargo fetch --locked
+          mkdir -p dependency-source
+          cp -a /github/home/.cargo/registry/src/*/tokio-modbus-0.17.0 dependency-source/
+          cp -a /github/home/.cargo/registry/src/*/tokio-serial-5.5.0 dependency-source/
+          cp -a /github/home/.cargo/registry/src/*/nix-0.31.3 dependency-source/
+          tar -czf stage-b-dependencies.tar.gz dependency-source
+      - name: Upload dependency sources
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: stage-b-dependencies
+          path: stage-b-dependencies.tar.gz
+          if-no-files-found: error
+          retention-days: 1
