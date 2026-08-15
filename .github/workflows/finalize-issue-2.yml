@@ -6,7 +6,7 @@ on:
       - agent/issue-2-finalizer
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: issue-2-supply-chain-finalizer
@@ -57,3 +57,33 @@ jobs:
           path: issue2-output
           if-no-files-found: error
           retention-days: 3
+
+      - name: Publish exact tested correction
+        env:
+          DELIVERY_BRANCH: agent/issue-2-supply-chain-correction
+        run: |
+          set -euo pipefail
+
+          BASE_SHA=$(cat issue2-output/base-sha.txt)
+          EXPECTED_TREE=$(cat issue2-output/candidate-tree.txt)
+
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+
+          git fetch --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main" \
+            "+refs/heads/$DELIVERY_BRANCH:refs/remotes/origin/$DELIVERY_BRANCH"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$BASE_SHA"
+          test "$(git rev-parse refs/remotes/origin/$DELIVERY_BRANCH)" = "$BASE_SHA"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Enforce full supply-chain policy (#2)"
+
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          git push \
+            --force-with-lease="refs/heads/$DELIVERY_BRANCH:$BASE_SHA" \
+            origin "HEAD:refs/heads/$DELIVERY_BRANCH"
+
+          printf 'Published commit %s with tested tree %s\n' \
+            "$(git rev-parse HEAD)" "$EXPECTED_TREE"
