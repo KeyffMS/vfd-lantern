@@ -1,0 +1,27 @@
+name: Export stage B legacy attempt
+
+on:
+  push:
+    branches:
+      - agent/stage-b-legacy-export
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Create tracked-source archive
+        run: git archive --format=tar.gz --output=stage-b-legacy.tar.gz HEAD
+      - name: Upload source archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: stage-b-legacy
+          path: stage-b-legacy.tar.gz
+          if-no-files-found: error
+          retention-days: 1
