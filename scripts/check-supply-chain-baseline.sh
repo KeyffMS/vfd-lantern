@@ -1,6 +1,29 @@
 #!/bin/sh
 set -eu
 
+for required in \
+    deny.toml \
+    supply-chain/config.toml \
+    supply-chain/audits.toml \
+    scripts/install-cargo-tools.sh \
+    scripts/check-supply-chain.sh
+do
+    if [ ! -f "$required" ]; then
+        printf 'required supply-chain policy file is missing: %s\n' "$required" >&2
+        exit 1
+    fi
+done
+
+if ! grep -q 'scripts/install-cargo-tools.sh supply-chain' .github/workflows/ci.yml; then
+    printf 'CI does not install the pinned supply-chain tools\n' >&2
+    exit 1
+fi
+
+if ! grep -q 'scripts/check-supply-chain.sh' .github/workflows/ci.yml; then
+    printf 'CI does not execute the full supply-chain gate\n' >&2
+    exit 1
+fi
+
 if grep -R -n -E 'git[[:space:]]*=' --include='Cargo.toml' .; then
     printf 'git dependencies are not permitted\n' >&2
     exit 1

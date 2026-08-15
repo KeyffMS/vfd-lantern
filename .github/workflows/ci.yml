@@ -34,6 +34,7 @@ jobs:
             build-essential \
             ca-certificates \
             git \
+            libssl-dev \
             libudev-dev \
             pkg-config \
             rustup
@@ -52,11 +53,16 @@ jobs:
           rustc --version
           cargo --version
 
+      - name: Install pinned supply-chain tools
+        env:
+          CARGO_INSTALL_ROOT: ${{ runner.temp }}/vfd-lantern-cargo-tools
+        run: sh scripts/install-cargo-tools.sh supply-chain
+
       - name: Validate lockfile and metadata
         run: cargo metadata --locked --format-version 1 --no-deps >/dev/null
 
       - name: Build workspace
-        run: cargo build --workspace --locked
+        run: cargo build --workspace --all-features --locked
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -68,10 +74,23 @@ jobs:
         run: cargo test --workspace --all-features --locked
 
       - name: Build documentation
-        run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --no-deps --locked
 
       - name: Check architecture boundaries
         run: sh scripts/check-architecture.sh
 
-      - name: Check supply-chain baseline
-        run: sh scripts/check-supply-chain-baseline.sh
+      - name: Check supply chain
+        env:
+          CARGO_VET_REPORT: target/supply-chain/cargo-vet-summary-${{ matrix.arch }}.json
+        run: sh scripts/check-supply-chain.sh
+
+      - name: Upload supply-chain report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: supply-chain-${{ matrix.arch }}
+          path: target/supply-chain
+          if-no-files-found: warn
+          retention-days: 14

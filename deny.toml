@@ -1,24 +1,48 @@
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+all-features = true
+
 [advisories]
-version = 2
-yanked = "deny"
+db-path = "target/supply-chain/cargo-deny-advisory-dbs"
+db-urls = ["https://github.com/RustSec/advisory-db"]
+ignore = []
 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
 highlight = "all"
 
+[bans.workspace-dependencies]
+# Issue #2 freezes the approved direct-dependency catalog before every later
+# roadmap consumer exists. Cargo Machete still rejects dependencies declared
+# but unused by an individual workspace crate.
+duplicates = "deny"
+include-path-dependencies = true
+unused = "allow"
+
 [licenses]
-version = 2
 confidence-threshold = 0.93
 allow = [
-  "Apache-2.0",
-  "Apache-2.0 WITH LLVM-exception",
-  "BSD-2-Clause",
-  "BSD-3-Clause",
-  "ISC",
-  "MIT",
-  "Unicode-3.0",
-  "Zlib",
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "OpenSSL",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Unlicense",
+    "Zlib",
 ]
 
 [licenses.private]
@@ -28,3 +52,4 @@ ignore = true
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
