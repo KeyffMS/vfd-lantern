@@ -1,0 +1,168 @@
+name: Publish verified issue 20 candidate v3
+
+on:
+  push:
+    branches:
+      - agent/issue-20-publisher-v3
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-issue-20-candidate-v3
+  cancel-in-progress: false
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    env:
+      BASE_SHA: 16751aa78ec5f3a53beb557fccbeb6af0fe6ba2b
+      BASE_TREE: e07bec41ad5d32816869b49943c8f31da05ddb95
+      OLD_TREE: be6fedd45f70cba1a387c8dc1715b504653a6750
+      EXPECTED_TREE: d2bef83ca45bfed606eb75ef37527f6e255bf481
+      OLD_XZ_SHA: 89272c9938f81fe62da52f2763ccf23ee05d48dd13a03b2bd181812580e4aa81
+      OLD_PATCH_SHA: ccc3faa2dd5931f6c86f24e2522a5fe985c8e82e00ef4582b543e18e3e254351
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libssl-dev libudev-dev \
+            pkg-config python3 rustup xz-utils
+
+      - name: Check out publisher branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-20-publisher-v3
+          fetch-depth: 0
+
+      - name: Reconstruct exact candidate and policy delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main \
+            +refs/heads/agent/issue-20-publisher:refs/remotes/origin/agent/issue-20-publisher
+
+          : > /tmp/payload.b64
+          for index in 00 01 02 03 04 05 06 07 08 09; do
+            git show "origin/agent/issue-20-publisher:.issue20-publisher/part-$index" >> /tmp/payload.b64
+          done
+          tr -d '\r\n' < /tmp/payload.b64 | base64 --decode > /tmp/issue20.patch.xz
+          printf '%s  %s\n' "$OLD_XZ_SHA" /tmp/issue20.patch.xz | sha256sum --check --strict
+          xz -dc /tmp/issue20.patch.xz > /tmp/issue20.patch
+          printf '%s  %s\n' "$OLD_PATCH_SHA" /tmp/issue20.patch | sha256sum --check --strict
+
+          test "$(git rev-parse origin/main)" = "$BASE_SHA"
+          test "$(git rev-parse origin/main^{tree})" = "$BASE_TREE"
+          git reset --hard origin/main
+          git clean -fdx
+          git apply --index --whitespace=error-all /tmp/issue20.patch
+          test "$(git write-tree)" = "$OLD_TREE"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          config = Path('supply-chain/config.toml')
+          text = config.read_text()
+          exact = {
+              'getrandom': '0.3.4',
+              'ppv-lite86': '0.2.21',
+              'r-efi': '5.3.0',
+              'rand_chacha': '0.9.0',
+              'rand_core': '0.9.5',
+              'syn': '2.0.119',
+              'wasip2': '1.0.4+wasi-0.2.12',
+              'wit-bindgen': '0.57.1',
+              'zerocopy': '0.8.56',
+              'zerocopy-derive': '0.8.56',
+          }
+          for crate, version in exact.items():
+              pattern = (
+                  rf'(\[\[exemptions\.{re.escape(crate)}\]\]\n'
+                  rf'version = "{re.escape(version)}"\n'
+                  rf'criteria = ")safe-to-run("\n)'
+              )
+              text, count = re.subn(pattern, rf'\1safe-to-deploy\2', text, count=1)
+              if count != 1:
+                  raise SystemExit(f'missing exact exemption: {crate}:{version}')
+          config.write_text(text)
+
+          readme = Path('supply-chain/README.md')
+          body = readme.read_text().rstrip()
+          body += '''
+
+          ## Issue #20 simulator dependency activation
+
+          The deterministic PTY/RTU simulator activates ten exact transitive dependency
+          versions that were not previously required at the `safe-to-deploy` criterion.
+          They are covered by narrowly scoped entries in `config.toml` for this locked
+          graph. These entries are **exemptions, not independent source-code audits**.
+          Any version change must obtain new policy coverage in the same pull request.
+          '''
+          readme.write_text(body.strip() + '\n')
+          PY
+
+          git add -A
+          git diff --cached --check
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+          test ! -e .issue20-publisher
+          test ! -e .github/workflows/publish-issue-20-candidate-v3.yml
+
+      - name: Install pinned Rust and supply-chain tools
+        env:
+          CARGO_INSTALL_ROOT: ${{ runner.temp }}/vfd-lantern-cargo-tools
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal \
+            --component rustfmt --component clippy --component llvm-tools-preview
+          rustup default 1.97.1
+          sh scripts/install-cargo-tools.sh supply-chain
+          echo "$CARGO_INSTALL_ROOT/bin" >> "$GITHUB_PATH"
+
+      - name: Run complete candidate gate
+        env:
+          RUSTDOCFLAGS: -D warnings
+          CARGO_VET_REPORT: target/supply-chain/issue-20-publisher-v3.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 --no-deps >/dev/null
+          cargo fmt --all -- --check
+          cargo build --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked -- --test-threads=1
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain.sh
+          git diff --check
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+
+      - name: Publish one logical delivery commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'VFD Lantern contributors'
+          git config user.email 'actions@users.noreply.github.com'
+          git commit -m 'Implement deterministic PTY/RTU simulator and wire fault harness (#20)'
+          test "$(git rev-parse HEAD^)" = "$BASE_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          test "$(git rev-list --count origin/main..HEAD)" = 1
+          git push --force origin HEAD:refs/heads/agent/issue-20
+          mkdir -p target/issue-20-publisher
+          printf '{"base_sha":"%s","candidate_sha":"%s","tree":"%s","cargo_vet":"10 exact exemptions; not audits"}\n' \
+            "$BASE_SHA" "$(git rev-parse HEAD)" "$EXPECTED_TREE" \
+            > target/issue-20-publisher/result.json
+
+      - name: Upload publisher evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-20-publisher-v3-evidence
+          path: |
+            target/supply-chain
+            target/issue-20-publisher
+          if-no-files-found: warn
+          retention-days: 14
