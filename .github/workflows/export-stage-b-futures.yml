@@ -28,18 +28,19 @@ jobs:
           rustup toolchain install 1.97.1 --profile minimal
           rustup default 1.97.1
           cargo fetch --locked
+          cargo_home=${CARGO_HOME:-$HOME/.cargo}
           mkdir -p export/cache export/src export/index
-          cp "$CARGO_HOME"/registry/cache/*/futures-core-0.3.34.crate export/cache/
-          cp "$CARGO_HOME"/registry/cache/*/futures-macro-0.3.34.crate export/cache/
-          cp "$CARGO_HOME"/registry/cache/*/futures-sink-0.3.34.crate export/cache/
-          cp "$CARGO_HOME"/registry/cache/*/futures-task-0.3.34.crate export/cache/
-          cp "$CARGO_HOME"/registry/cache/*/futures-util-0.3.34.crate export/cache/
-          cp -a "$CARGO_HOME"/registry/src/*/futures-core-0.3.34 export/src/
-          cp -a "$CARGO_HOME"/registry/src/*/futures-macro-0.3.34 export/src/
-          cp -a "$CARGO_HOME"/registry/src/*/futures-sink-0.3.34 export/src/
-          cp -a "$CARGO_HOME"/registry/src/*/futures-task-0.3.34 export/src/
-          cp -a "$CARGO_HOME"/registry/src/*/futures-util-0.3.34 export/src/
-          index=$(find "$CARGO_HOME/registry/index" -mindepth 1 -maxdepth 1 -type d | head -n1)
+          cp "$cargo_home"/registry/cache/*/futures-core-0.3.34.crate export/cache/
+          cp "$cargo_home"/registry/cache/*/futures-macro-0.3.34.crate export/cache/
+          cp "$cargo_home"/registry/cache/*/futures-sink-0.3.34.crate export/cache/
+          cp "$cargo_home"/registry/cache/*/futures-task-0.3.34.crate export/cache/
+          cp "$cargo_home"/registry/cache/*/futures-util-0.3.34.crate export/cache/
+          cp -a "$cargo_home"/registry/src/*/futures-core-0.3.34 export/src/
+          cp -a "$cargo_home"/registry/src/*/futures-macro-0.3.34 export/src/
+          cp -a "$cargo_home"/registry/src/*/futures-sink-0.3.34 export/src/
+          cp -a "$cargo_home"/registry/src/*/futures-task-0.3.34 export/src/
+          cp -a "$cargo_home"/registry/src/*/futures-util-0.3.34 export/src/
+          index=$(find "$cargo_home/registry/index" -mindepth 1 -maxdepth 1 -type d | head -n1)
           mkdir -p export/index/.cache/fu/tu
           cp "$index/.cache/fu/tu/futures-core" export/index/.cache/fu/tu/
           cp "$index/.cache/fu/tu/futures-macro" export/index/.cache/fu/tu/
