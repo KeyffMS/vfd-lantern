@@ -13,3 +13,11 @@ The initial locked dependency graph is intentionally covered by exemptions, not
 by a claim that VFD Lantern independently audited every crate. New or updated
 dependencies must add an audit, an approved import, or a narrowly scoped reviewed
 exemption in the same pull request.
+
+## Issue #20 simulator dependency activation
+
+The deterministic PTY/RTU simulator activates ten exact transitive dependency
+versions that were not previously required at the `safe-to-deploy` criterion.
+They are covered by narrowly scoped entries in `config.toml` for this locked
+graph. These entries are **exemptions, not independent source-code audits**.
+Any version change must obtain new policy coverage in the same pull request.

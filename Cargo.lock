@@ -495,6 +495,27 @@ dependencies = [
 [[package]]
 name = "lantern-sim"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "lantern-app",
+ "lantern-domain",
+ "lantern-profile",
+ "lantern-transport",
+ "nix 0.31.3",
+ "rand_chacha",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-modbus",
+ "tokio-serial",
+ "tokio-util",
+ "toml",
+]
 
 [[package]]
 name = "lantern-storage"
@@ -1131,6 +1152,7 @@ dependencies = [
  "smallvec",
  "thiserror",
  "tokio",
+ "tokio-serial",
  "tokio-util",
 ]
 

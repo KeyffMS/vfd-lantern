@@ -1,5 +1,7 @@
+#[cfg(feature = "test-support")]
 use lantern_domain::{ModbusFunction, RawRegisters, RegisterBlock, SlaveId};
 
+#[cfg(feature = "test-support")]
 use crate::{BusError, BusRequestContext, PreparedBusWrite};
 
 /// Single authority that may mint transport write capabilities.

@@ -18,6 +18,7 @@ assert_absent lantern-profile 'lantern-app|lantern-storage|lantern-transport|lan
 assert_absent lantern-app 'lantern-storage|lantern-transport|lantern-tui|lantern-sim|vfd-lantern|ratatui|crossterm|udev|nix|libc'
 assert_absent lantern-storage 'lantern-profile|lantern-transport|lantern-tui|lantern-sim|vfd-lantern|ratatui|crossterm|udev'
 assert_absent lantern-transport 'lantern-profile|lantern-storage|lantern-tui|lantern-sim|vfd-lantern|ratatui|crossterm'
+assert_absent lantern-sim 'lantern-storage|lantern-tui|vfd-lantern|ratatui|crossterm|udev'
 assert_absent lantern-tui 'lantern-domain|lantern-profile|lantern-storage|lantern-transport|lantern-sim|vfd-lantern|tokio-modbus|tokio-serial|udev|nix|libc'
 assert_absent vfd-lantern 'lantern-sim'
 
@@ -46,7 +47,7 @@ fi
 
 for manifest in crates/*/Cargo.toml; do
     case "$manifest" in
-        crates/lantern-transport/Cargo.toml) ;;
+        crates/lantern-transport/Cargo.toml|crates/lantern-sim/Cargo.toml) ;;
         *)
             if grep -Eq '^(udev|tokio-serial|nix)\.workspace' "$manifest"; then
                 printf 'Linux serial dependency escaped the transport adapter: %s\n' "$manifest" >&2

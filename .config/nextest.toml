@@ -1,0 +1,10 @@
+[test-groups]
+serial-pty = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(lantern-sim)'
+platform = 'cfg(unix)'
+test-group = 'serial-pty'
+
+[profile.ci]
+fail-fast = false
