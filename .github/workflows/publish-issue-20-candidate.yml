@@ -91,14 +91,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          exec > >(tee /tmp/issue20-gate.log) 2>&1
+          echo '== cargo metadata =='
           cargo metadata --locked --format-version 1 --no-deps >/dev/null
+          echo '== cargo fmt =='
           cargo fmt --all -- --check
+          echo '== cargo build =='
           cargo build --workspace --all-features --locked
+          echo '== cargo clippy =='
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          echo '== cargo test =='
           cargo test --workspace --all-features --locked -- --test-threads=1
+          echo '== cargo doc =='
           cargo doc --workspace --all-features --no-deps --locked
+          echo '== architecture =='
           sh scripts/check-architecture.sh
+          echo '== supply chain =='
           sh scripts/check-supply-chain.sh
+          echo '== git diff =='
           git diff --check
           test "$(git write-tree)" = "$EXPECTED_TREE"
 
@@ -162,6 +172,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: issue-20-publisher-evidence
-          path: target/supply-chain
+          path: |
+            target/supply-chain
+            /tmp/issue20-gate.log
           if-no-files-found: warn
           retention-days: 14
