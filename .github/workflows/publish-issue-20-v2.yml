@@ -1,0 +1,117 @@
+name: Publish verified issue 20 candidate v2
+
+on:
+  push:
+    branches:
+      - agent/issue-20-publisher
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-issue-20-candidate-v2
+  cancel-in-progress: false
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    env:
+      BASE_SHA: 16751aa78ec5f3a53beb557fccbeb6af0fe6ba2b
+      BASE_TREE: e07bec41ad5d32816869b49943c8f31da05ddb95
+      EXPECTED_TREE: 3dd079a6e74b4413f7371d4a0f1a4c922d7aebba
+      PATCH_XZ_SHA256: ea34e955d3ab478ad8a580fcb9e985eb02e851fd3d6d58c4a183043ba46e486a
+      PATCH_SHA256: 849bd97015f80c5d7b27b56083d111f85402d2c7f587dd5b680927300e938800
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libssl-dev libudev-dev \
+            pkg-config rustup xz-utils
+
+      - name: Check out verified payload
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-20-publisher
+          fetch-depth: 0
+
+      - name: Reconstruct and verify candidate tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          test "$(find .issue20-publisher-v2 -maxdepth 1 -type f -name 'part-*' | wc -l)" = 7
+          cat .issue20-publisher-v2/part-* | tr -d '\r\n' | base64 --decode > /tmp/issue20.patch.xz
+          printf '%s  %s\n' "$PATCH_XZ_SHA256" /tmp/issue20.patch.xz | sha256sum --check --strict
+          xz --decompress --stdout /tmp/issue20.patch.xz > /tmp/issue20.patch
+          printf '%s  %s\n' "$PATCH_SHA256" /tmp/issue20.patch | sha256sum --check --strict
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse origin/main)" = "$BASE_SHA"
+          test "$(git rev-parse origin/main^{tree})" = "$BASE_TREE"
+          git reset --hard origin/main
+          git clean -fdx
+          git apply --index --whitespace=error-all /tmp/issue20.patch
+          git diff --cached --check
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+          test ! -e .issue20-publisher-v2
+          test ! -e .github/workflows/publish-issue-20-v2.yml
+
+      - name: Install pinned Rust and supply-chain tools
+        env:
+          CARGO_INSTALL_ROOT: ${{ runner.temp }}/vfd-lantern-cargo-tools
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal \
+            --component rustfmt --component clippy --component llvm-tools-preview
+          rustup default 1.97.1
+          sh scripts/install-cargo-tools.sh supply-chain
+          echo "$CARGO_INSTALL_ROOT/bin" >> "$GITHUB_PATH"
+
+      - name: Run full fail-closed gate
+        env:
+          RUSTDOCFLAGS: -D warnings
+          CARGO_VET_REPORT: target/supply-chain/issue-20-publisher-v2.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee /tmp/issue20-gate-v2.log) 2>&1
+          cargo metadata --locked --format-version 1 --no-deps >/dev/null
+          cargo fmt --all -- --check
+          cargo build --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked -- --test-threads=1
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain.sh
+          git diff --check
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+
+      - name: Publish exactly one logical commit
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'VFD Lantern contributors'
+          git config user.email 'actions@users.noreply.github.com'
+          git commit -m 'Implement deterministic PTY/RTU simulator and wire fault harness (#20)'
+          candidate=$(git rev-parse HEAD)
+          test "$(git rev-parse HEAD^)" = "$BASE_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          test "$(git rev-list --count origin/main..HEAD)" = 1
+          git push --force origin HEAD:refs/heads/agent/issue-20
+          printf 'candidate=%s\n' "$candidate" >> "$GITHUB_OUTPUT"
+          printf 'candidate_sha=%s\ncandidate_tree=%s\n' "$candidate" "$EXPECTED_TREE" \
+            > /tmp/issue20-publish-v2.txt
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-20-publication-v2
+          path: |
+            target/supply-chain
+            /tmp/issue20-gate-v2.log
+            /tmp/issue20-publish-v2.txt
+          if-no-files-found: warn
+          retention-days: 14
