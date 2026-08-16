@@ -1,0 +1,167 @@
+name: Publish verified issue 20 candidate
+
+on:
+  push:
+    branches:
+      - agent/issue-20-publisher
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: publish-issue-20-candidate
+  cancel-in-progress: false
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    env:
+      BASE_SHA: 16751aa78ec5f3a53beb557fccbeb6af0fe6ba2b
+      BASE_TREE: e07bec41ad5d32816869b49943c8f31da05ddb95
+      EXPECTED_TREE: be6fedd45f70cba1a387c8dc1715b504653a6750
+      PATCH_XZ_SHA256: 89272c9938f81fe62da52f2763ccf23ee05d48dd13a03b2bd181812580e4aa81
+      PATCH_SHA256: ccc3faa2dd5931f6c86f24e2522a5fe985c8e82e00ef4582b543e18e3e254351
+      DELIVERY_BRANCH: agent/issue-20
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            curl \
+            git \
+            jq \
+            libssl-dev \
+            libudev-dev \
+            pkg-config \
+            rustup \
+            xz-utils
+
+      - name: Check out publisher payload
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-20-publisher
+          fetch-depth: 0
+
+      - name: Reconstruct exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          test "$(find .issue20-publisher -maxdepth 1 -type f -name 'part-*' | wc -l)" = 10
+          cat .issue20-publisher/part-* | tr -d '\r\n' | base64 --decode > /tmp/issue20.patch.xz
+          printf '%s  %s\n' "$PATCH_XZ_SHA256" /tmp/issue20.patch.xz | sha256sum --check --strict
+          xz --decompress --stdout /tmp/issue20.patch.xz > /tmp/issue20.patch
+          printf '%s  %s\n' "$PATCH_SHA256" /tmp/issue20.patch | sha256sum --check --strict
+
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse origin/main)" = "$BASE_SHA"
+          test "$(git rev-parse origin/main^{tree})" = "$BASE_TREE"
+          git reset --hard origin/main
+          git clean -fdx
+          git apply --index --whitespace=error-all /tmp/issue20.patch
+          git diff --cached --check
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+          test ! -e .issue20-publisher
+          test ! -e .github/workflows/publish-issue-20-candidate.yml
+
+      - name: Install pinned Rust and supply-chain tools
+        env:
+          CARGO_INSTALL_ROOT: ${{ runner.temp }}/vfd-lantern-cargo-tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --component llvm-tools-preview
+          rustup default 1.97.1
+          sh scripts/install-cargo-tools.sh supply-chain
+          echo "$CARGO_INSTALL_ROOT/bin" >> "$GITHUB_PATH"
+
+      - name: Run complete candidate gate
+        env:
+          RUSTDOCFLAGS: -D warnings
+          CARGO_VET_REPORT: target/supply-chain/issue-20-publisher.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 --no-deps >/dev/null
+          cargo fmt --all -- --check
+          cargo build --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked -- --test-threads=1
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain.sh
+          git diff --check
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+
+      - name: Publish one logical commit and create PR
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'VFD Lantern contributors'
+          git config user.email 'actions@users.noreply.github.com'
+          git commit -m 'Implement deterministic PTY/RTU simulator and wire fault harness (#20)'
+          candidate_sha=$(git rev-parse HEAD)
+          test "$(git rev-parse HEAD^)" = "$BASE_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          test "$(git rev-list --count origin/main..HEAD)" = 1
+          git push --force origin "HEAD:refs/heads/$DELIVERY_BRANCH"
+
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          headers=(-H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+          existing=$(curl --fail-with-body --silent --show-error "${headers[@]}" \
+            "$api/pulls?state=open&head=KeyffMS%3Aagent%2Fissue-20&base=main")
+          pr=$(jq -r '.[0].number // empty' <<<"$existing")
+          if [ -z "$pr" ]; then
+            body=$(cat <<EOF
+          ## Zakres
+
+          Implementuje deterministyczny, deweloperski symulator PTY/Modbus RTU oraz oddzielny WireFaultHarness.
+
+          - normalna ścieżka używa \`tokio_modbus::server::rtu::Server\`;
+          - test odbiorczy przechodzi przez produkcyjne \`open_serial_bus → BusActor → SessionStateMachine\`;
+          - PTY pracuje w raw mode i ma test przezroczystości \`0x00–0xff\`;
+          - scenariusze używają wspólnego \`MonotonicClock\`, jawnego seed ChaCha20 i dokładnego \`profile_hash\`;
+          - zapis pozostaje nieosiągalny dla użytkownika;
+          - kandydat ma dokładnie jeden commit względem \`$BASE_SHA\` i tree \`$EXPECTED_TREE\`.
+
+          Closes #20
+          EOF
+            )
+            payload=$(jq -n \
+              --arg title 'Implement deterministic PTY/RTU simulator and wire fault harness (#20)' \
+              --arg head "$DELIVERY_BRANCH" \
+              --arg base main \
+              --arg body "$body" \
+              '{title:$title,head:$head,base:$base,body:$body,draft:false}')
+            created=$(curl --fail-with-body --silent --show-error --request POST "${headers[@]}" \
+              "$api/pulls" --data "$payload")
+            pr=$(jq -r .number <<<"$created")
+          fi
+
+          comment=$(jq -n --arg body "Kandydat #20 został opublikowany fail-closed. SHA: \`$candidate_sha\`; tree: \`$EXPECTED_TREE\`; lokalny pełny gate wydawcy: PASS. Oczekiwanie na standardowy CI PR na amd64 i arm64." '{body:$body}')
+          curl --fail-with-body --silent --show-error --request POST "${headers[@]}" \
+            "$api/issues/20/comments" --data "$comment" >/dev/null
+          echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          printf 'Published candidate %s in PR #%s\n' "$candidate_sha" "$pr"
+
+      - name: Upload publisher evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-20-publisher-evidence
+          path: target/supply-chain
+          if-no-files-found: warn
+          retention-days: 14
