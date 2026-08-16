@@ -1,0 +1,55 @@
+name: Export stage B futures sources
+
+on:
+  push:
+    branches:
+      - agent/stage-b-futures-export
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends ca-certificates git rustup
+      - name: Check out current main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+      - name: Fetch exact locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          cargo fetch --locked
+          mkdir -p export/cache export/src export/index
+          cp "$CARGO_HOME"/registry/cache/*/futures-core-0.3.34.crate export/cache/
+          cp "$CARGO_HOME"/registry/cache/*/futures-macro-0.3.34.crate export/cache/
+          cp "$CARGO_HOME"/registry/cache/*/futures-sink-0.3.34.crate export/cache/
+          cp "$CARGO_HOME"/registry/cache/*/futures-task-0.3.34.crate export/cache/
+          cp "$CARGO_HOME"/registry/cache/*/futures-util-0.3.34.crate export/cache/
+          cp -a "$CARGO_HOME"/registry/src/*/futures-core-0.3.34 export/src/
+          cp -a "$CARGO_HOME"/registry/src/*/futures-macro-0.3.34 export/src/
+          cp -a "$CARGO_HOME"/registry/src/*/futures-sink-0.3.34 export/src/
+          cp -a "$CARGO_HOME"/registry/src/*/futures-task-0.3.34 export/src/
+          cp -a "$CARGO_HOME"/registry/src/*/futures-util-0.3.34 export/src/
+          index=$(find "$CARGO_HOME/registry/index" -mindepth 1 -maxdepth 1 -type d | head -n1)
+          mkdir -p export/index/.cache/fu/tu
+          cp "$index/.cache/fu/tu/futures-core" export/index/.cache/fu/tu/
+          cp "$index/.cache/fu/tu/futures-macro" export/index/.cache/fu/tu/
+          cp "$index/.cache/fu/tu/futures-sink" export/index/.cache/fu/tu/
+          cp "$index/.cache/fu/tu/futures-task" export/index/.cache/fu/tu/
+          cp "$index/.cache/fu/tu/futures-util" export/index/.cache/fu/tu/
+          tar -czf stage-b-futures.tar.gz -C export .
+      - name: Upload exact sources
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: stage-b-futures
+          path: stage-b-futures.tar.gz
+          retention-days: 1
