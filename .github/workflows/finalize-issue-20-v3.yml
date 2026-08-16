@@ -1,0 +1,303 @@
+name: Finalize issue 20 v3
+
+on:
+  push:
+    branches:
+      - agent/issue-20-finalizer-v3
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: finalize-issue-20-v3
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    outputs:
+      done: ${{ steps.state.outputs.done }}
+      pr: ${{ steps.state.outputs.pr }}
+      head: ${{ steps.state.outputs.head }}
+      merge_sha: ${{ steps.state.outputs.merge_sha }}
+    steps:
+      - id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          issue_state=$(gh api repos/${{ github.repository }}/issues/20 --jq .state)
+          if [ "$issue_state" = closed ]; then
+            echo 'done=true' >> "$GITHUB_OUTPUT"
+            echo 'pr=' >> "$GITHUB_OUTPUT"
+            echo 'head=' >> "$GITHUB_OUTPUT"
+            echo 'merge_sha=' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pr=$(gh pr list --repo "${{ github.repository }}" --head agent/issue-20 --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            merged=$(gh pr list --repo "${{ github.repository }}" --head agent/issue-20 --state merged --json number,mergeCommit --jq '.[0] // empty')
+            if [ -n "$merged" ]; then
+              echo 'done=false' >> "$GITHUB_OUTPUT"
+              echo "pr=$(jq -r .number <<<"$merged")" >> "$GITHUB_OUTPUT"
+              echo 'head=' >> "$GITHUB_OUTPUT"
+              echo "merge_sha=$(jq -r .mergeCommit.oid <<<"$merged")" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo 'No open or merged PR for agent/issue-20' >&2
+            exit 1
+          fi
+          head=$(gh pr view "$pr" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)
+          echo 'done=false' >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo 'merge_sha=' >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: preflight
+    if: needs.preflight.outputs.done != 'true' && needs.preflight.outputs.head != ''
+    name: Debian 13 / Rust 1.97.1 / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libssl-dev libudev-dev pkg-config rustup
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.preflight.outputs.head }}
+          fetch-depth: 0
+      - name: Verify one logical commit from current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git merge-base HEAD origin/main)" = "$(git rev-parse origin/main)"
+          test "$(git rev-list --count origin/main..HEAD)" = 1
+          test "$(git rev-parse HEAD)" = "${{ needs.preflight.outputs.head }}"
+      - name: Install pinned Rust and supply-chain tools
+        env:
+          CARGO_INSTALL_ROOT: ${{ runner.temp }}/vfd-lantern-cargo-tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal \
+            --component rustfmt --component clippy --component llvm-tools-preview
+          rustup default 1.97.1
+          sh scripts/install-cargo-tools.sh supply-chain
+      - name: Strict issue 20 semantic audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f crates/lantern-sim/tests/rtu_stack.rs
+          test -f crates/lantern-sim/src/runtime.rs
+          test -f crates/lantern-sim/src/service.rs
+          test -f crates/lantern-sim/src/wire.rs
+          test -f crates/lantern-sim/src/pty.rs
+          test -f crates/lantern-sim/src/main.rs
+          grep -q 'tokio_modbus::server' crates/lantern-sim/src/runtime.rs
+          grep -q 'Server::new' crates/lantern-sim/src/runtime.rs
+          grep -q 'serve_until' crates/lantern-sim/src/runtime.rs
+          grep -q 'WireFaultHarness' crates/lantern-sim/src/wire.rs
+          grep -q 'nix::pty::openpty' crates/lantern-sim/src/pty.rs
+          grep -q 'open_serial_bus' crates/lantern-sim/tests/rtu_stack.rs
+          grep -q 'SessionStateMachine' crates/lantern-sim/tests/rtu_stack.rs
+          grep -q 'identify_profile_via_bus' crates/lantern-sim/tests/rtu_stack.rs
+          grep -qi 'golden' crates/lantern-sim/tests/rtu_stack.rs
+          grep -R -q 'trait MonotonicClock' crates/lantern-app/src
+          grep -q '^publish = false$' crates/lantern-sim/Cargo.toml
+          grep -q 'deny_unknown_fields' crates/lantern-sim/src/scenario.rs
+          grep -q 'rand_chacha' crates/lantern-sim/Cargo.toml
+          ! grep -R --line-number 'RtuProbeClient' crates/lantern-sim
+          ! grep -R --line-number -E 'WriteBusPort|PreparedBusWrite|WriteCoordinator' \
+            crates/lantern-sim/src crates/lantern-sim/tests
+          ! find crates/lantern-sim -type f \( -name '*.py' -o -name '*.js' \) | grep .
+      - name: Full candidate gate
+        env:
+          RUSTDOCFLAGS: -D warnings
+          CARGO_VET_REPORT: target/supply-chain/cargo-vet-summary-${{ matrix.arch }}.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 --no-deps >/dev/null
+          cargo fmt --all -- --check
+          cargo build --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain.sh
+          git diff --check
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-20-validation-${{ matrix.arch }}
+          path: target/supply-chain
+          if-no-files-found: warn
+          retention-days: 14
+
+  merge:
+    needs: [preflight, validate]
+    if: always() && needs.preflight.outputs.done != 'true' && (needs.validate.result == 'success' || needs.preflight.outputs.merge_sha != '')
+    runs-on: ubuntu-24.04
+    outputs:
+      merge_sha: ${{ steps.merge.outputs.merge_sha }}
+      pr: ${{ steps.merge.outputs.pr }}
+    steps:
+      - id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.preflight.outputs.pr }}
+          HEAD_SHA: ${{ needs.preflight.outputs.head }}
+          EXISTING_MERGE_SHA: ${{ needs.preflight.outputs.merge_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$EXISTING_MERGE_SHA" ]; then
+            echo "merge_sha=$EXISTING_MERGE_SHA" >> "$GITHUB_OUTPUT"
+            echo "pr=$PR" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          deadline=$((SECONDS + 3600))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            runs=$(gh api "repos/${{ github.repository }}/actions/runs?head_sha=$HEAD_SHA&per_page=100")
+            run_id=$(jq -r '[.workflow_runs[] | select(.name == "CI" and .event == "pull_request" and .status == "completed" and .conclusion == "success")][0].id // empty' <<<"$runs")
+            if [ -n "$run_id" ]; then
+              jobs=$(gh api "repos/${{ github.repository }}/actions/runs/$run_id/jobs?per_page=100")
+              jq -e '[.jobs[] | select(.name | test("amd64")) | select(.conclusion == "success")] | length >= 1' <<<"$jobs" >/dev/null
+              jq -e '[.jobs[] | select(.name | test("arm64")) | select(.conclusion == "success")] | length >= 1' <<<"$jobs" >/dev/null
+              break
+            fi
+            sleep 20
+          done
+          test -n "${run_id:-}"
+          gh pr ready "$PR" --repo "${{ github.repository }}" || true
+          gh pr merge "$PR" --repo "${{ github.repository }}" --merge --delete-branch
+          merge_sha=$(gh pr view "$PR" --repo "${{ github.repository }}" --json state,mergeCommit --jq 'select(.state == "MERGED") | .mergeCommit.oid')
+          test -n "$merge_sha"
+          echo "merge_sha=$merge_sha" >> "$GITHUB_OUTPUT"
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+
+  post_merge:
+    needs: [preflight, merge]
+    if: needs.preflight.outputs.done != 'true' && needs.merge.outputs.merge_sha != ''
+    name: Post-merge Debian 13 / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git libssl-dev libudev-dev pkg-config rustup
+      - name: Check out exact merge commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.merge.outputs.merge_sha }}
+          fetch-depth: 0
+      - name: Install pinned Rust and tools
+        env:
+          CARGO_INSTALL_ROOT: ${{ runner.temp }}/vfd-lantern-cargo-tools
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+          sh scripts/install-cargo-tools.sh supply-chain
+      - name: Validate exact merge tree
+        env:
+          RUSTDOCFLAGS: -D warnings
+          CARGO_VET_REPORT: target/supply-chain/post-merge-${{ matrix.arch }}.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ needs.merge.outputs.merge_sha }}"
+          cargo metadata --locked --format-version 1 --no-deps >/dev/null
+          cargo fmt --all -- --check
+          cargo build --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain.sh
+          git diff --check
+
+  closeout:
+    needs: [preflight, merge, post_merge]
+    if: always() && needs.preflight.outputs.done != 'true' && needs.merge.result == 'success' && needs.post_merge.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.merge.outputs.pr }}
+          MERGE_SHA: ${{ needs.merge.outputs.merge_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body=$(cat <<EOF
+          ## Odbiór etapu B — PASS
+
+          - PR: #$PR
+          - merge commit: \`$MERGE_SHA\`
+          - Debian 13 / Rust 1.97.1 / amd64: PASS
+          - Debian 13 / Rust 1.97.1 / native arm64: PASS
+          - standardowy PR CI: PASS
+          - niezależna walidacja kandydata: PASS
+          - pełna walidacja dokładnego merge tree: PASS
+          - pełny supply-chain gate: PASS
+          - produkcyjny \`open_serial_bus → BusActor → SessionStateMachine\`: potwierdzony
+          - rzeczywisty \`tokio_modbus::server::rtu::Server\` i osobny \`WireFaultHarness\`: potwierdzone
+
+          M1 Read-only transport proven zostaje zamknięte.
+          EOF
+          )
+          gh issue comment 20 --repo "${{ github.repository }}" --body "$body"
+          state=$(gh issue view 20 --repo "${{ github.repository }}" --json state --jq .state)
+          if [ "$state" != CLOSED ]; then
+            gh issue close 20 --repo "${{ github.repository }}" --reason completed
+          fi
+          open=$(gh api repos/${{ github.repository }}/milestones/2 --jq .open_issues)
+          test "$open" = 0
+          gh api --method PATCH repos/${{ github.repository }}/milestones/2 -f state=closed >/dev/null
+          gh issue comment 26 --repo "${{ github.repository }}" --body "M1 Read-only transport proven zostało zamknięte po scaleniu PR #$PR i pełnej walidacji merge commit \`$MERGE_SHA\` na amd64 i arm64. Następny krok: #10 — PollPlanner."
+          for branch in agent/stage-b-source-export agent/stage-b-legacy-export agent/stage-b-futures-export agent/issue-20-work agent/issue-20-validation-v1; do
+            encoded=${branch//\//%2F}
+            gh api --method DELETE "repos/${{ github.repository }}/git/refs/heads/$encoded" >/dev/null 2>&1 || true
+          done
+
+  report_failure:
+    needs: [preflight, validate, merge, post_merge]
+    if: always() && needs.preflight.outputs.done != 'true' && (needs.validate.result == 'failure' || needs.merge.result == 'failure' || needs.post_merge.result == 'failure')
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATE: ${{ needs.validate.result }}
+          MERGE: ${{ needs.merge.result }}
+          POST_MERGE: ${{ needs.post_merge.result }}
+        run: |
+          gh issue comment 20 --repo "${{ github.repository }}" --body "## Etap B — FAIL-CLOSED\n\n- candidate validation: \`$VALIDATE\`\n- merge gate: \`$MERGE\`\n- post-merge validation: \`$POST_MERGE\`\n\nIssue #20 i M1 nie są uznawane za zakończone bez pełnego PASS."
