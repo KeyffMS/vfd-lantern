@@ -90,6 +90,7 @@ pub struct PreparedBusWrite {
 }
 
 impl PreparedBusWrite {
+    #[cfg_attr(not(feature = "test-support"), allow(dead_code))]
     pub(crate) fn new(
         context: BusRequestContext,
         slave: SlaveId,

@@ -5,14 +5,13 @@ use std::{
 };
 
 use lantern_app::{
-    BusControlPort, BusError, BusFuture, BusStatisticsSnapshot, PreparedBusWrite, ReadBusPort,
-    ReadBusRequest, RequestClass, WriteBusPort,
+    BusControlPort, BusError, BusFuture, BusStatisticsSnapshot, MonotonicClock, PreparedBusWrite,
+    ReadBusPort, ReadBusRequest, RequestClass, TokioMonotonicClock, WriteBusPort,
 };
 use lantern_domain::{DataBits, LinkSettings, Parity, RawRegisters, StopBits};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
-    time::sleep,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -57,13 +56,28 @@ impl BusActor {
         backend: B,
         config: BusActorConfig,
     ) -> (BusActorHandle, JoinHandle<()>) {
+        Self::spawn_with_clock(backend, config, Arc::new(TokioMonotonicClock))
+    }
+
+    /// Starts the actor with the application-owned monotonic clock.
+    ///
+    /// The production composition root uses [`TokioMonotonicClock`]. The
+    /// explicit clock boundary keeps protocol timing and deterministic
+    /// simulation on one source of monotonic time.
+    #[must_use]
+    pub fn spawn_with_clock<B: RtuBackend>(
+        backend: B,
+        config: BusActorConfig,
+        clock: Arc<dyn MonotonicClock>,
+    ) -> (BusActorHandle, JoinHandle<()>) {
         let cancellation = CancellationToken::new();
-        let statistics = Arc::new(Mutex::new(BusStatistics::default()));
+        let statistics = Arc::new(Mutex::new(BusStatistics::new(clock.now())));
         let (senders, receivers) = channels();
         let handle = BusActorHandle {
             senders,
             cancellation: cancellation.clone(),
             statistics: Arc::clone(&statistics),
+            clock: Arc::clone(&clock),
         };
         let task = tokio::spawn(run_actor(
             backend,
@@ -71,6 +85,7 @@ impl BusActor {
             receivers,
             cancellation,
             statistics,
+            clock,
         ));
         (handle, task)
     }
@@ -81,12 +96,14 @@ pub struct BusActorHandle {
     senders: Senders,
     cancellation: CancellationToken,
     statistics: Arc<Mutex<BusStatistics>>,
+    clock: Arc<dyn MonotonicClock>,
 }
 
 impl ReadBusPort for BusActorHandle {
     fn read(&self, request: ReadBusRequest) -> BusFuture<'static, RawRegisters> {
         let sender = self.senders.for_class(request.context.class).clone();
         let stats = Arc::clone(&self.statistics);
+        let clock = Arc::clone(&self.clock);
         Box::pin(async move {
             request.validate()?;
             let (reply, receiver) = oneshot::channel();
@@ -94,7 +111,7 @@ impl ReadBusPort for BusActorHandle {
                 .try_send(Command::Read {
                     request,
                     reply,
-                    queued_at: Instant::now(),
+                    queued_at: clock.now(),
                 })
                 .map_err(|error| match error {
                     mpsc::error::TrySendError::Full(_) => {
@@ -112,13 +129,14 @@ impl WriteBusPort for BusActorHandle {
     fn write(&self, request: PreparedBusWrite) -> BusFuture<'static, ()> {
         let sender = self.senders.for_class(request.context().class).clone();
         let stats = Arc::clone(&self.statistics);
+        let clock = Arc::clone(&self.clock);
         Box::pin(async move {
             let (reply, receiver) = oneshot::channel();
             sender
                 .try_send(Command::Write {
                     request,
                     reply,
-                    queued_at: Instant::now(),
+                    queued_at: clock.now(),
                 })
                 .map_err(|error| match error {
                     mpsc::error::TrySendError::Full(_) => {
@@ -134,7 +152,7 @@ impl WriteBusPort for BusActorHandle {
 
 impl BusControlPort for BusActorHandle {
     fn statistics(&self) -> BusStatisticsSnapshot {
-        lock_stats(&self.statistics).snapshot()
+        lock_stats(&self.statistics).snapshot(self.clock.now())
     }
 
     fn shutdown(&self) {
@@ -326,6 +344,7 @@ async fn run_actor<B: RtuBackend>(
     mut receivers: Receivers,
     cancellation: CancellationToken,
     statistics: Arc<Mutex<BusStatistics>>,
+    clock: Arc<dyn MonotonicClock>,
 ) {
     let mut pending = PendingQueues::default();
     let mut safety_burst = 0_usize;
@@ -351,11 +370,19 @@ async fn run_actor<B: RtuBackend>(
             continue;
         }
         update_depths(&statistics, &pending);
-        let Some(command) = select_next(&mut pending, &mut safety_burst, &mut wrr_index) else {
+        let now = clock.now();
+        let Some(command) = select_next(&mut pending, &mut safety_burst, &mut wrr_index, now)
+        else {
             continue;
         };
-        record_queue_wait(&statistics, command.queued_at().elapsed());
-        if command.deadline() <= Instant::now() {
+        record_queue_wait(
+            &statistics,
+            clock
+                .now()
+                .checked_duration_since(command.queued_at())
+                .unwrap_or(Duration::ZERO),
+        );
+        if command.deadline() <= clock.now() {
             lock_stats(&statistics).timeout_before_send += 1;
             command.finish(BusError::TimeoutBeforeSend);
             continue;
@@ -365,14 +392,33 @@ async fn run_actor<B: RtuBackend>(
         if class == RequestClass::SafetyOneShot && safety_burst == SAFETY_BURST_LIMIT {
             lock_stats(&statistics).safety_bursts += 1;
         }
-        enforce_t35(config.t35(), &mut last_transmission_end, &statistics).await;
+        enforce_t35(
+            config.t35(),
+            &mut last_transmission_end,
+            &statistics,
+            clock.as_ref(),
+        )
+        .await;
         record_dispatch(&statistics, class, function);
-        let started = Instant::now();
+        let started = clock.now();
         match command {
             Command::Read { request, reply, .. } => {
-                let result = execute_read(&mut backend, &request, config.t35(), &statistics).await;
-                last_transmission_end = Some(Instant::now());
-                record_latency(&statistics, started.elapsed());
+                let result = execute_read(
+                    &mut backend,
+                    &request,
+                    config.t35(),
+                    &statistics,
+                    clock.as_ref(),
+                )
+                .await;
+                let finished = clock.now();
+                last_transmission_end = Some(finished);
+                record_latency(
+                    &statistics,
+                    finished
+                        .checked_duration_since(started)
+                        .unwrap_or(Duration::ZERO),
+                );
                 record_outcome(&statistics, &result);
                 let _ = reply.send(result);
             }
@@ -381,11 +427,18 @@ async fn run_actor<B: RtuBackend>(
                 let result = backend.write(&request).await.map_err(|error| match error {
                     BusError::ResponseTimeout
                     | BusError::Io(_)
-                    | BusError::InvalidFrameOrTransport => BusError::OutcomeUnknown,
+                    | BusError::InvalidFrameOrTransport
+                    | BusError::InvalidResponse => BusError::OutcomeUnknown,
                     other => other,
                 });
-                last_transmission_end = Some(Instant::now());
-                record_latency(&statistics, started.elapsed());
+                let finished = clock.now();
+                last_transmission_end = Some(finished);
+                record_latency(
+                    &statistics,
+                    finished
+                        .checked_duration_since(started)
+                        .unwrap_or(Duration::ZERO),
+                );
                 record_outcome(&statistics, &result);
                 let _ = reply.send(result);
             }
@@ -398,6 +451,7 @@ async fn execute_read<B: RtuBackend>(
     request: &ReadBusRequest,
     retry_delay: Duration,
     statistics: &Arc<Mutex<BusStatistics>>,
+    clock: &dyn MonotonicClock,
 ) -> Result<RawRegisters, BusError> {
     lock_stats(statistics).reads_started += 1;
     let mut retries = 0_u8;
@@ -407,7 +461,7 @@ async fn execute_read<B: RtuBackend>(
             Err(error)
                 if error.is_transient_read_error()
                     && retries < 2
-                    && request.context.deadline > Instant::now() =>
+                    && request.context.deadline > clock.now() =>
             {
                 retries += 1;
                 {
@@ -415,7 +469,7 @@ async fn execute_read<B: RtuBackend>(
                     stats.read_retries += 1;
                     stats.t35_delay += retry_delay;
                 }
-                sleep(retry_delay).await;
+                clock.sleep(retry_delay).await;
             }
             Err(error) => return Err(error),
         }
@@ -426,6 +480,7 @@ fn select_next(
     pending: &mut PendingQueues,
     safety_burst: &mut usize,
     wrr_index: &mut usize,
+    now: Instant,
 ) -> Option<Command> {
     if !pending.safety.is_empty() {
         let hard_deadline = pending
@@ -433,7 +488,7 @@ fn select_next(
             .iter()
             .map(Command::deadline)
             .min()
-            .is_some_and(|deadline| deadline <= Instant::now() + Duration::from_millis(5));
+            .is_some_and(|deadline| deadline <= now + Duration::from_millis(5));
         if *safety_burst < SAFETY_BURST_LIMIT || hard_deadline || non_safety_empty(pending) {
             *safety_burst += 1;
             return pending.earliest(RequestClass::SafetyOneShot);
@@ -509,12 +564,16 @@ async fn enforce_t35(
     delay: Duration,
     last_end: &mut Option<Instant>,
     statistics: &Arc<Mutex<BusStatistics>>,
+    clock: &dyn MonotonicClock,
 ) {
     if let Some(last_end) = *last_end {
-        let elapsed = last_end.elapsed();
+        let elapsed = clock
+            .now()
+            .checked_duration_since(last_end)
+            .unwrap_or(Duration::ZERO);
         if elapsed < delay {
             let remaining = delay - elapsed;
-            sleep(remaining).await;
+            clock.sleep(remaining).await;
             lock_stats(statistics).t35_delay += remaining;
         }
     }
@@ -560,10 +619,10 @@ struct BusStatistics {
     last_error: Option<BusError>,
 }
 
-impl Default for BusStatistics {
-    fn default() -> Self {
+impl BusStatistics {
+    fn new(started_at: Instant) -> Self {
         Self {
-            started_at: Instant::now(),
+            started_at,
             reads_started: 0,
             writes_started: 0,
             class_started: [0; 5],
@@ -583,11 +642,12 @@ impl Default for BusStatistics {
             last_error: None,
         }
     }
-}
 
-impl BusStatistics {
-    fn snapshot(&self) -> BusStatisticsSnapshot {
-        let elapsed_micros = self.started_at.elapsed().as_micros();
+    fn snapshot(&self, now: Instant) -> BusStatisticsSnapshot {
+        let elapsed_micros = now
+            .checked_duration_since(self.started_at)
+            .unwrap_or(Duration::ZERO)
+            .as_micros();
         let utilization_ppm = self
             .busy_time
             .as_micros()

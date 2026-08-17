@@ -1,6 +1,6 @@
 [package]
 name = "lantern-sim"
-description = "Development-only VFD simulator harness"
+description = "Development-only deterministic PTY/Modbus RTU VFD simulator"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,27 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+lantern-domain.workspace = true
+lantern-profile.workspace = true
+lantern-app.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+nix = { workspace = true, features = ["term"] }
+rand_chacha.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-modbus = { workspace = true, features = ["rtu-server"] }
+tokio-serial.workspace = true
+tokio-util.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+lantern-transport.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

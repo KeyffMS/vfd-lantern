@@ -18,15 +18,33 @@ pub async fn open_serial_bus(
     request: lantern_app::SerialOpenRequest,
     profile_minimum_inter_frame_delay: std::time::Duration,
 ) -> Result<(BusActorHandle, tokio::task::JoinHandle<()>), lantern_app::SerialConnectError> {
+    open_serial_bus_with_clock(
+        request,
+        profile_minimum_inter_frame_delay,
+        std::sync::Arc::new(lantern_app::TokioMonotonicClock),
+    )
+    .await
+}
+
+/// Opens a serial bus using the application-owned monotonic clock.
+///
+/// This entry point is used by deterministic PTY integration tests. Production
+/// callers use [`open_serial_bus`], which supplies [`lantern_app::TokioMonotonicClock`].
+pub async fn open_serial_bus_with_clock(
+    request: lantern_app::SerialOpenRequest,
+    profile_minimum_inter_frame_delay: std::time::Duration,
+    clock: std::sync::Arc<dyn lantern_app::MonotonicClock>,
+) -> Result<(BusActorHandle, tokio::task::JoinHandle<()>), lantern_app::SerialConnectError> {
     let link = request.settings;
     let port = serial_open::SerialPortOpener::open(request).await?;
     let backend = TokioModbusBackend::new(port, link.slave_id, link.response_timeout);
-    Ok(BusActor::spawn(
+    Ok(BusActor::spawn_with_clock(
         backend,
         BusActorConfig {
             link,
             profile_minimum_inter_frame_delay,
         },
+        clock,
     ))
 }
 
