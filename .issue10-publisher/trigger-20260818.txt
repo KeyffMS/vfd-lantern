@@ -1,0 +1,1 @@
+trigger publish-issue-10-candidate.yml after workflow registration
