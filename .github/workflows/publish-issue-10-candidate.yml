@@ -7,10 +7,11 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: publish-issue-10-candidate
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   validate-and-publish:
@@ -30,11 +31,33 @@ jobs:
           apt-get install --yes --no-install-recommends \
             build-essential \
             ca-certificates \
+            curl \
             git \
+            jq \
             libssl-dev \
             libudev-dev \
             pkg-config \
             rustup
+
+      - name: Record publisher start
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="<!-- issue-10-publisher:start:${GITHUB_RUN_ID} -->
+          ## Publisher #10 uruchomiony
+
+          Przebieg: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          Publisher pozostaje fail-closed: gałąź \`agent/issue-10\` zostanie zmieniona dopiero po pełnym gate Debiana 13 / Rust 1.97.1 i supply-chain."
+          payload=$(jq -n --arg body "$body" '{body:$body}')
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            --request POST \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/10/comments" \
+            --data "$payload" >/dev/null
 
       - name: Check out publisher payload
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -137,6 +160,55 @@ jobs:
           printf 'commits_over_main=1\n' | tee -a /tmp/issue10-identity.txt
           echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
           echo "candidate_tree=$candidate_tree" >> "$GITHUB_OUTPUT"
+
+      - name: Record publisher success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ steps.publish.outputs.candidate_sha }}
+          CANDIDATE_TREE: ${{ steps.publish.outputs.candidate_tree }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="<!-- issue-10-publisher:success:${GITHUB_RUN_ID} -->
+          ## Publisher #10 — PASS
+
+          - przebieg: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          - baza: \`${BASE_SHA}\`
+          - kandydat: \`${CANDIDATE_SHA}\`
+          - tree: \`${CANDIDATE_TREE}\`
+          - commitów względem bazy: **1**
+          - pełny gate publishera: **PASS**
+
+          Kandydat znajduje się na \`agent/issue-10\`. Następną bramką jest standardowy PR CI amd64/arm64."
+          payload=$(jq -n --arg body "$body" '{body:$body}')
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            --request POST \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/10/comments" \
+            --data "$payload" >/dev/null
+
+      - name: Record publisher failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="<!-- issue-10-publisher:failure:${GITHUB_RUN_ID} -->
+          ## Publisher #10 — FAIL-CLOSED
+
+          Przebieg ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} nie przeszedł pełnej bramki. Gałąź dostawcza nie jest uznana za kandydata; #10 pozostaje otwarte."
+          payload=$(jq -n --arg body "$body" '{body:$body}')
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            --request POST \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/10/comments" \
+            --data "$payload" >/dev/null
 
       - name: Upload publisher evidence
         if: always()
