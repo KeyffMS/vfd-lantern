@@ -1,0 +1,155 @@
+name: Publish verified issue 10 candidate
+
+on:
+  push:
+    branches:
+      - agent/issue-10-publisher
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-issue-10-candidate
+  cancel-in-progress: false
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    env:
+      BASE_SHA: 8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf
+      PART_00_BLOB: a68dfc6b7b594d033d84b3b1458dbdb25b986424
+      PART_01_BLOB: 33f75f9d4002ab6955792c088cb7f21b171bd7eb
+      DELIVERY_BRANCH: agent/issue-10
+      CARGO_VET_REPORT: target/supply-chain/issue-10-publisher.json
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            git \
+            libssl-dev \
+            libudev-dev \
+            pkg-config \
+            rustup
+
+      - name: Check out publisher payload
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-10-publisher
+          fetch-depth: 0
+
+      - name: Reconstruct exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+          test "$(find .issue10-publisher -maxdepth 1 -type f -name 'part-*' | wc -l)" = 2
+          test "$(git hash-object .issue10-publisher/part-00)" = "$PART_00_BLOB"
+          test "$(git hash-object .issue10-publisher/part-01)" = "$PART_01_BLOB"
+
+          cat .issue10-publisher/part-* | tr -d '\r\n' | base64 --decode > /tmp/issue10.patch
+          grep -q 'PollPlanner' /tmp/issue10.patch
+          grep -q 'PollExecutor' /tmp/issue10.patch
+          sha256sum /tmp/issue10.patch | tee /tmp/issue10-patch.sha256
+
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse origin/main)" = "$BASE_SHA"
+          git reset --hard origin/main
+          git clean -fdx
+          git apply --index --whitespace=error-all /tmp/issue10.patch
+          git diff --cached --check
+
+          test -f crates/lantern-app/src/poll.rs
+          grep -q 'pub struct PollPlanner' crates/lantern-app/src/poll.rs
+          grep -q 'pub struct PollExecutor' crates/lantern-app/src/poll.rs
+          test "$(git diff --cached --name-only | wc -l)" -le 24
+          test ! -e .issue10-publisher
+          test ! -e .github/workflows/publish-issue-10-candidate.yml
+
+          printf 'base_sha=%s\n' "$BASE_SHA" | tee /tmp/issue10-identity.txt
+          printf 'candidate_tree=%s\n' "$(git write-tree)" | tee -a /tmp/issue10-identity.txt
+          git diff --cached --stat | tee /tmp/issue10-diff-stat.txt
+          git diff --cached --name-status | tee /tmp/issue10-changed-files.txt
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --component llvm-tools-preview
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
+
+      - name: Install pinned supply-chain tools
+        env:
+          CARGO_INSTALL_ROOT: ${{ runner.temp }}/vfd-lantern-cargo-tools
+        run: sh scripts/install-cargo-tools.sh supply-chain
+
+      - name: Run complete candidate gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee /tmp/issue10-gate.log) 2>&1
+
+          cargo metadata --locked --format-version 1 --no-deps >/dev/null
+          cargo fmt --all -- --check
+          cargo build --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked -- --test-threads=1
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain.sh
+          git diff --cached --check
+          git diff --check
+
+          cargo run --release -p lantern-app --example poll_planner_benchmark \
+            | tee /tmp/issue10-benchmark.txt
+
+          grep -q 'parameters=20000' /tmp/issue10-benchmark.txt
+          grep -q 'blocks=160' /tmp/issue10-benchmark.txt
+          grep -q 'rejections=0' /tmp/issue10-benchmark.txt
+          test "$(git rev-parse origin/main)" = "$BASE_SHA"
+
+      - name: Publish one logical commit
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'VFD Lantern contributors'
+          git config user.email 'actions@users.noreply.github.com'
+          git commit -m 'Implement deterministic PollPlanner and bounded bus budget (#10)'
+
+          candidate_sha=$(git rev-parse HEAD)
+          candidate_tree=$(git rev-parse HEAD^{tree})
+          test "$(git rev-parse HEAD^)" = "$BASE_SHA"
+          test "$(git rev-list --count origin/main..HEAD)" = 1
+          test "$candidate_tree" = "$(sed -n 's/^candidate_tree=//p' /tmp/issue10-identity.txt)"
+
+          git push --force origin "HEAD:refs/heads/$DELIVERY_BRANCH"
+          printf 'candidate_sha=%s\n' "$candidate_sha" | tee -a /tmp/issue10-identity.txt
+          printf 'commits_over_main=1\n' | tee -a /tmp/issue10-identity.txt
+          echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+          echo "candidate_tree=$candidate_tree" >> "$GITHUB_OUTPUT"
+
+      - name: Upload publisher evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-10-publisher-evidence
+          path: |
+            /tmp/issue10-identity.txt
+            /tmp/issue10-patch.sha256
+            /tmp/issue10-diff-stat.txt
+            /tmp/issue10-changed-files.txt
+            /tmp/issue10-gate.log
+            /tmp/issue10-benchmark.txt
+            target/supply-chain
+          if-no-files-found: warn
+          retention-days: 14
