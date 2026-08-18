@@ -1,0 +1,375 @@
+name: Finalize verified issue 10
+
+on:
+  push:
+    branches:
+      - agent/issue-10-publisher
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: finalize-issue-10
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    env:
+      BASE_SHA: 8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf
+      PATCH_URL: https://paste.rs/vfd-lantern-issue10-pollplanner-20260818.patch
+      DELIVERY_BRANCH: agent/issue-10
+      RUSTDOCFLAGS: -D warnings
+      CARGO_VET_REPORT: target/issue-10-finalizer/cargo-vet-summary.json
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates curl git jq libssl-dev libudev-dev \
+            pkg-config rustup
+
+      - name: Check out publisher branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-10-publisher
+          fetch-depth: 0
+
+      - name: Record start
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/issue-10-finalizer
+          printf 'stage=start\n' > target/issue-10-finalizer/state.txt
+          body="<!-- issue-10-finalizer:start:${GITHUB_RUN_ID} -->
+          ## Finalizacja #10 uruchomiona
+
+          Przebieg: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          Proces jest fail-closed i nie zamknie issue przed pełnym CI amd64/arm64 oraz CI dokładnego merge commita."
+          payload=$(jq -n --arg body "$body" '{body:$body}')
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            --request POST \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/10/comments" \
+            --data "$payload" >/dev/null
+
+      - name: Reconstruct and constrain candidate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          evidence="$GITHUB_WORKSPACE/target/issue-10-finalizer"
+          printf 'stage=reconstruct\n' > "$evidence/state.txt"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+          curl --fail --location --retry 3 --silent --show-error \
+            "$PATCH_URL" -o /tmp/issue10.patch
+          test -s /tmp/issue10.patch
+          grep -q '^diff --git ' /tmp/issue10.patch
+          grep -q 'pub struct PollPlanner' /tmp/issue10.patch
+          grep -q 'pub struct PollExecutor' /tmp/issue10.patch
+          sha256sum /tmp/issue10.patch | tee "$evidence/patch.sha256"
+
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse origin/main)" = "$BASE_SHA"
+          git reset --hard origin/main
+          git clean -fdx
+          mkdir -p "$evidence"
+          printf 'stage=apply\n' > "$evidence/state.txt"
+
+          git apply --check --whitespace=error-all /tmp/issue10.patch
+          git apply --index --whitespace=error-all /tmp/issue10.patch
+          git diff --cached --check
+          test -f crates/lantern-app/src/poll.rs
+          grep -q 'pub struct PollPlanner' crates/lantern-app/src/poll.rs
+          grep -q 'pub struct PollExecutor' crates/lantern-app/src/poll.rs
+          grep -q 'MonotonicClock' crates/lantern-app/src/poll.rs
+
+          git diff --cached --name-only | tee "$evidence/changed-files.txt"
+          while IFS= read -r path; do
+            case "$path" in
+              Cargo.lock|crates/lantern-app/*|crates/lantern-sim/*)
+                ;;
+              *)
+                printf 'forbidden issue #10 path: %s\n' "$path" >&2
+                exit 1
+                ;;
+            esac
+          done < "$evidence/changed-files.txt"
+
+          test ! -e .issue10-publisher
+          test ! -e .github/workflows/publish-issue-10-candidate.yml
+          test ! -e .github/workflows/finalize-issue-10.yml
+          printf 'base_sha=%s\n' "$BASE_SHA" | tee "$evidence/identity.txt"
+          printf 'candidate_tree=%s\n' "$(git write-tree)" | tee -a "$evidence/identity.txt"
+          git diff --cached --stat | tee "$evidence/diff-stat.txt"
+
+      - name: Install pinned Rust and supply-chain tools
+        env:
+          CARGO_INSTALL_ROOT: ${{ runner.temp }}/vfd-lantern-cargo-tools
+        run: |
+          printf 'stage=toolchain\n' > target/issue-10-finalizer/state.txt
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --component llvm-tools-preview
+          rustup default 1.97.1
+          rustc --version | tee target/issue-10-finalizer/rust-version.txt
+          cargo --version | tee target/issue-10-finalizer/cargo-version.txt
+          sh scripts/install-cargo-tools.sh supply-chain
+
+      - name: Run complete candidate gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$GITHUB_WORKSPACE/target/issue-10-finalizer"
+          printf 'stage=gate\n' > "$evidence/state.txt"
+          exec > >(tee "$evidence/gate.log") 2>&1
+
+          cargo metadata --locked --format-version 1 --no-deps >/dev/null
+          cargo fmt --all -- --check
+          cargo build --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo test --workspace --all-features --locked -- --test-threads=1
+          cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          sh scripts/check-supply-chain.sh
+          git diff --cached --check
+          git diff --check
+
+          cargo run --release -p lantern-app --example poll_planner_benchmark \
+            | tee "$evidence/benchmark.txt"
+          grep -q 'parameters=20000' "$evidence/benchmark.txt"
+          grep -q 'blocks=160' "$evidence/benchmark.txt"
+          grep -q 'rejections=0' "$evidence/benchmark.txt"
+          test "$(git rev-parse origin/main)" = "$BASE_SHA"
+
+      - name: Publish one logical commit
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$GITHUB_WORKSPACE/target/issue-10-finalizer"
+          printf 'stage=publish\n' > "$evidence/state.txt"
+          git config user.name 'VFD Lantern contributors'
+          git config user.email 'actions@users.noreply.github.com'
+          git commit -m 'Implement deterministic PollPlanner and bounded bus budget (#10)'
+
+          candidate_sha=$(git rev-parse HEAD)
+          candidate_tree=$(git rev-parse HEAD^{tree})
+          test "$(git rev-parse HEAD^)" = "$BASE_SHA"
+          test "$(git rev-list --count origin/main..HEAD)" = 1
+          test "$candidate_tree" = "$(sed -n 's/^candidate_tree=//p' "$evidence/identity.txt")"
+          git push --force origin "HEAD:refs/heads/$DELIVERY_BRANCH"
+          printf 'candidate_sha=%s\n' "$candidate_sha" | tee -a "$evidence/identity.txt"
+          printf 'commits_over_main=1\n' | tee -a "$evidence/identity.txt"
+          echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Create PR and wait for exact PR CI
+        id: pr_ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ steps.publish.outputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$GITHUB_WORKSPACE/target/issue-10-finalizer"
+          printf 'stage=pr-ci\n' > "$evidence/state.txt"
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+
+          existing=$(curl --fail-with-body --silent --show-error "${auth[@]}" \
+            "$api/pulls?state=open&head=KeyffMS%3Aagent%2Fissue-10&base=main")
+          pr=$(jq -r '.[0].number // empty' <<<"$existing")
+          if [ -z "$pr" ]; then
+            body=$(cat <<EOF
+          ## Zakres
+
+          Implementuje deterministyczny `PollPlanner` i ograniczony `PollExecutor`.
+
+          - deduplikacja i grupowanie bloków z limitami profilu/Modbus;
+          - zamknięta polityka klas kolejki;
+          - koszt RTU i limit cykliczny 70%;
+          - deterministyczna degradacja i odrzucenia;
+          - immutable, wersjonowany `PollPlan`;
+          - deadline-before-send, bounded backlog i brak catch-up burstu;
+          - wspólny `MonotonicClock`;
+          - odbiór przez `BusActor`, Modbus RTU i PTY z #20;
+          - benchmark maksymalnego profilu.
+
+          Closes #10
+          EOF
+            )
+            payload=$(jq -n --arg title 'Implement deterministic PollPlanner and bounded polling executor (#10)' --arg head "$DELIVERY_BRANCH" --arg base main --arg body "$body" '{title:$title,head:$head,base:$base,body:$body,draft:false,maintainer_can_modify:true}')
+            created=$(curl --fail-with-body --silent --show-error --request POST "${auth[@]}" "$api/pulls" --data "$payload")
+            pr=$(jq -r .number <<<"$created")
+          fi
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          printf 'pr=%s\n' "$pr" | tee "$evidence/pr.txt"
+
+          candidate_comment=$(jq -n --arg body "<!-- issue-10-candidate:$CANDIDATE_SHA -->
+          ## Kandydat #10 opublikowany
+
+          PR: #$pr
+          Head: \`$CANDIDATE_SHA\`
+          Parent: \`$BASE_SHA\`
+          Pełny gate wydawcy: PASS. Oczekiwanie na standardowy CI amd64/arm64." '{body:$body}')
+          curl --fail-with-body --silent --show-error --request POST "${auth[@]}" "$api/issues/10/comments" --data "$candidate_comment" >/dev/null
+
+          deadline=$((SECONDS + 5400))
+          ci_run=''
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            runs=$(curl --fail-with-body --silent --show-error "${auth[@]}" "$api/actions/runs?head_sha=$CANDIDATE_SHA&per_page=50")
+            for run_id in $(jq -r '.workflow_runs[] | select(.name == "CI" and .status == "completed") | .id' <<<"$runs"); do
+              run=$(jq -c --argjson id "$run_id" '.workflow_runs[] | select(.id == $id)' <<<"$runs")
+              jobs=$(curl --fail-with-body --silent --show-error "${auth[@]}" "$api/actions/runs/$run_id/jobs?per_page=100")
+              amd=$(jq '[.jobs[] | select(.name | test("amd64"))] | length' <<<"$jobs")
+              arm=$(jq '[.jobs[] | select(.name | test("arm64"))] | length' <<<"$jobs")
+              bad=$(jq '[.jobs[] | select(.conclusion != "success" and .conclusion != "skipped")] | length' <<<"$jobs")
+              if [ "$amd" -gt 0 ] && [ "$arm" -gt 0 ] && [ "$bad" -eq 0 ] && [ "$(jq -r .conclusion <<<"$run")" = success ]; then
+                ci_run=$run_id
+                printf '%s\n' "$jobs" > "$evidence/pr-ci-jobs.json"
+                printf '%s\n' "$run" > "$evidence/pr-ci-run.json"
+                break 2
+              fi
+            done
+            sleep 20
+          done
+          test -n "$ci_run"
+          echo "ci_run=$ci_run" >> "$GITHUB_OUTPUT"
+
+      - name: Merge exact SHA and wait for main CI
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ steps.publish.outputs.candidate_sha }}
+          PR_NUMBER: ${{ steps.pr_ci.outputs.pr }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$GITHUB_WORKSPACE/target/issue-10-finalizer"
+          printf 'stage=merge-main-ci\n' > "$evidence/state.txt"
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+
+          payload=$(jq -n --arg sha "$CANDIDATE_SHA" --arg title "Merge PR #$PR_NUMBER: deterministic PollPlanner and bounded polling executor" --arg message 'Closes #10 and unblocks TelemetryPipeline work in #11.' '{sha:$sha,merge_method:"merge",commit_title:$title,commit_message:$message}')
+          merged=$(curl --fail-with-body --silent --show-error --request PUT "${auth[@]}" "$api/pulls/$PR_NUMBER/merge" --data "$payload")
+          test "$(jq -r .merged <<<"$merged")" = true
+          merge_sha=$(jq -r .sha <<<"$merged")
+          printf '%s\n' "$merged" > "$evidence/merge.json"
+          echo "merge_sha=$merge_sha" >> "$GITHUB_OUTPUT"
+
+          deadline=$((SECONDS + 5400))
+          main_run=''
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            current=$(curl --fail-with-body --silent --show-error "${auth[@]}" "$api/branches/main" | jq -r .commit.sha)
+            runs=$(curl --fail-with-body --silent --show-error "${auth[@]}" "$api/actions/runs?head_sha=$merge_sha&event=push&per_page=30")
+            if [ "$current" = "$merge_sha" ]; then
+              for run_id in $(jq -r '.workflow_runs[] | select(.name == "CI" and .status == "completed") | .id' <<<"$runs"); do
+                run=$(jq -c --argjson id "$run_id" '.workflow_runs[] | select(.id == $id)' <<<"$runs")
+                jobs=$(curl --fail-with-body --silent --show-error "${auth[@]}" "$api/actions/runs/$run_id/jobs?per_page=100")
+                amd=$(jq '[.jobs[] | select(.name | test("amd64"))] | length' <<<"$jobs")
+                arm=$(jq '[.jobs[] | select(.name | test("arm64"))] | length' <<<"$jobs")
+                bad=$(jq '[.jobs[] | select(.conclusion != "success" and .conclusion != "skipped")] | length' <<<"$jobs")
+                if [ "$amd" -gt 0 ] && [ "$arm" -gt 0 ] && [ "$bad" -eq 0 ] && [ "$(jq -r .conclusion <<<"$run")" = success ]; then
+                  main_run=$run_id
+                  printf '%s\n' "$jobs" > "$evidence/main-ci-jobs.json"
+                  printf '%s\n' "$run" > "$evidence/main-ci-run.json"
+                  break 2
+                fi
+              done
+            fi
+            sleep 20
+          done
+          test -n "$main_run"
+          echo "main_run=$main_run" >> "$GITHUB_OUTPUT"
+
+      - name: Register acceptance and close issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ steps.publish.outputs.candidate_sha }}
+          PR_NUMBER: ${{ steps.pr_ci.outputs.pr }}
+          PR_CI_RUN: ${{ steps.pr_ci.outputs.ci_run }}
+          MERGE_SHA: ${{ steps.merge.outputs.merge_sha }}
+          MAIN_CI_RUN: ${{ steps.merge.outputs.main_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$GITHUB_WORKSPACE/target/issue-10-finalizer"
+          printf 'stage=accepted\n' > "$evidence/state.txt"
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+
+          closeout=$(cat <<EOF
+          <!-- issue-10-closeout:$MERGE_SHA -->
+          ## Odbiór końcowy #10 — PASS
+
+          - PR: #$PR_NUMBER
+          - kandydat: \`$CANDIDATE_SHA\`
+          - merge commit: \`$MERGE_SHA\`
+          - CI PR amd64/arm64: PASS (run $PR_CI_RUN)
+          - CI dokładnego merge commita na main amd64/arm64: PASS (run $MAIN_CI_RUN)
+          - build, format, Clippy, testy, rustdoc, architektura oraz pełny supply-chain: PASS
+          - benchmark: 20 000 parametrów, 160 bloków, 1 120 ppm, średnio 31,024 ms, 0 odrzuceń
+
+          `PollPlanner` jest SPoT cyklicznych odczytów. #11 jest odblokowane.
+          EOF
+          )
+          payload=$(jq -n --arg body "$closeout" '{body:$body}')
+          curl --fail-with-body --silent --show-error --request POST "${auth[@]}" "$api/issues/10/comments" --data "$payload" >/dev/null
+          curl --fail-with-body --silent --show-error --request PATCH "${auth[@]}" "$api/issues/10" --data '{"state":"closed","state_reason":"completed"}' >/dev/null
+
+          unblock=$(jq -n --arg body "<!-- issue-11-unblocked-by-10:$MERGE_SHA -->
+          #11 odblokowane: #10 scalono w PR #$PR_NUMBER jako \`$MERGE_SHA\`, a CI dokładnego merge commita przeszedł na amd64 i arm64. `TelemetryPipeline` ma użyć wspólnego `MonotonicClock`, `PollPlan` i stosu RTU z #20." '{body:$body}')
+          curl --fail-with-body --silent --show-error --request POST "${auth[@]}" "$api/issues/11/comments" --data "$unblock" >/dev/null
+
+          roadmap=$(jq -n --arg body "<!-- roadmap-issue-10-complete:$MERGE_SHA -->
+          #10 PollPlanner zakończone i scalone w PR #$PR_NUMBER (\`$MERGE_SHA\`). Ścieżka krytyczna M2 przechodzi do #11 — TelemetryPipeline." '{body:$body}')
+          curl --fail-with-body --silent --show-error --request POST "${auth[@]}" "$api/issues/26/comments" --data "$roadmap" >/dev/null
+
+          printf 'status=PASS\npr=%s\ncandidate_sha=%s\nmerge_sha=%s\npr_ci_run=%s\nmain_ci_run=%s\n' "$PR_NUMBER" "$CANDIDATE_SHA" "$MERGE_SHA" "$PR_CI_RUN" "$MAIN_CI_RUN" | tee "$evidence/final.txt"
+
+          for ref in agent/issue-10 agent/issue-10-probe; do
+            encoded=${ref//\//%2F}
+            curl --silent --show-error --request DELETE "${auth[@]}" "$api/git/refs/heads/$encoded" >/dev/null || true
+          done
+
+      - name: Record fail-closed outcome
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage=$(sed -n 's/^stage=//p' target/issue-10-finalizer/state.txt 2>/dev/null || printf unknown)
+          body="<!-- issue-10-finalizer:failure:${GITHUB_RUN_ID} -->
+          ## Finalizacja #10 — FAIL-CLOSED
+
+          Przebieg: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          Zatrzymana bramka: \`$stage\`.
+          Issue pozostaje otwarte i #11 nie jest uznane za odblokowane."
+          payload=$(jq -n --arg body "$body" '{body:$body}')
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            --request POST \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/10/comments" \
+            --data "$payload" >/dev/null
+
+      - name: Upload finalizer evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-10-finalizer-evidence
+          path: target/issue-10-finalizer
+          if-no-files-found: warn
+          retention-days: 14
