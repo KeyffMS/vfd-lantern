@@ -1,0 +1,1 @@
+Issue #10 publisher payload is reconstructed only from the four versioned part-* blobs and a generated manifest. No external patch host is used.
