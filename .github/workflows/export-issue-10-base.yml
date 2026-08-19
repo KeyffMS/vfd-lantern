@@ -6,7 +6,11 @@ on:
       - agent/issue-10-base-export
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: export-issue-10-base-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   export:
@@ -15,26 +19,65 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: agent/issue-10-base-export
           fetch-depth: 0
 
-      - name: Export exact main tree
+      - name: Materialize exact main archive in versioned chunks
         shell: bash
         run: |
           set -euo pipefail
           base=8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf
-          test "$(git rev-parse "$base^{tree}")" = d2bef83ca45bfed606eb75ef37527f6e255bf481
-          git archive --format=tar.gz --prefix=vfd-lantern-main/ \
-            --output=/tmp/issue-10-base.tar.gz "$base"
-          printf 'commit=%s\n' "$base" > /tmp/issue-10-base-identity.txt
-          printf 'tree=%s\n' "$(git rev-parse "$base^{tree}")" >> /tmp/issue-10-base-identity.txt
-          sha256sum /tmp/issue-10-base.tar.gz >> /tmp/issue-10-base-identity.txt
+          tree=d2bef83ca45bfed606eb75ef37527f6e255bf481
+          git config user.name 'VFD Lantern automation'
+          git config user.email 'actions@users.noreply.github.com'
+          test "$(git rev-parse "$base^{tree}")" = "$tree"
 
-      - name: Upload exact base
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: issue-10-exact-base
-          path: |
-            /tmp/issue-10-base.tar.gz
-            /tmp/issue-10-base-identity.txt
-          if-no-files-found: error
-          retention-days: 14
+          tmp=$(mktemp -d)
+          git archive --format=tar.gz --prefix=vfd-lantern-main/ \
+            --output="$tmp/base.tar.gz" "$base"
+          archive_sha=$(sha256sum "$tmp/base.tar.gz" | cut -d' ' -f1)
+          base64 --wrap=0 "$tmp/base.tar.gz" | fold -w 40000 | split -d -a 3 - "$tmp/part-"
+
+          rm -rf .issue10-base
+          mkdir -p .issue10-base
+          cp "$tmp"/part-* .issue10-base/
+
+          python3 - "$base" "$tree" "$archive_sha" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
+          base, tree, archive_sha = sys.argv[1:]
+          root = pathlib.Path('.issue10-base')
+          parts = []
+          for path in sorted(root.glob('part-*')):
+              data = path.read_bytes()
+              blob = subprocess.check_output(['git', 'hash-object', str(path)], text=True).strip()
+              parts.append({
+                  'path': path.as_posix(),
+                  'bytes': len(data),
+                  'sha256': hashlib.sha256(data).hexdigest(),
+                  'git_blob_sha': blob,
+              })
+          manifest = {
+              'schema': 'vfd-lantern-source-archive-v1',
+              'base_sha': base,
+              'base_tree_sha': tree,
+              'archive_encoding': 'base64-split-lines',
+              'archive_sha256': archive_sha,
+              'parts': parts,
+          }
+          (root / 'manifest.json').write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+          git add .issue10-base
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'Version exact main source archive for issue 10 recovery'
+          git push origin HEAD:agent/issue-10-base-export
