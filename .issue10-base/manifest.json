@@ -1,0 +1,15 @@
+{
+  "archive_encoding": "base64-split-lines",
+  "archive_sha256": "55f5d52fced14bb10764f8e1e8afd55acd9ce8ade54e94bb87e6ba945eca4bd6",
+  "base_sha": "8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf",
+  "base_tree_sha": "d2bef83ca45bfed606eb75ef37527f6e255bf481",
+  "parts": [
+    {
+      "bytes": 162420,
+      "git_blob_sha": "49ce96f6c8b4b595e0ea8223923870c04f6b2476",
+      "path": ".issue10-base/part-000",
+      "sha256": "c4566434304c07aa196137d262e1c07f6fa5d1ac8a341ef7f78c66312307cc52"
+    }
+  ],
+  "schema": "vfd-lantern-source-archive-v1"
+}
