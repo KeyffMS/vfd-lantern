@@ -1,0 +1,58 @@
+name: Export exact main source for issue 10
+
+on:
+  push:
+    branches:
+      - agent/issue-10-publisher
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf
+          fetch-depth: 1
+
+      - name: Archive exact tracked tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf
+          git archive --format=tar.gz --output=/tmp/vfd-lantern-main-8473bc93.tar.gz HEAD
+          sha256sum /tmp/vfd-lantern-main-8473bc93.tar.gz > /tmp/SHA256SUMS
+          printf 'commit=%s\ntree=%s\n' "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" > /tmp/IDENTITY
+
+      - name: Upload exact source
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-10-exact-main-source
+          path: |
+            /tmp/vfd-lantern-main-8473bc93.tar.gz
+            /tmp/SHA256SUMS
+            /tmp/IDENTITY
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Record export run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="<!-- issue-10-main-export:${GITHUB_RUN_ID} -->
+          Exact main source export: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          Commit: \`8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf\`."
+          payload=$(jq -n --arg body "$body" '{body:$body}')
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            --request POST \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/10/comments" \
+            --data "$payload" >/dev/null
