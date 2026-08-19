@@ -1,0 +1,63 @@
+name: Download exact issue 10 base
+
+on:
+  push:
+    branches:
+      - agent/issue-10-base-export
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Export exact main tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf
+          tree=d2bef83ca45bfed606eb75ef37527f6e255bf481
+          test "$(git rev-parse "$base^{tree}")" = "$tree"
+          git archive --format=tar.gz --prefix=vfd-lantern-main/ \
+            --output=/tmp/issue-10-base.tar.gz "$base"
+          printf 'commit=%s\n' "$base" > /tmp/issue-10-base-identity.txt
+          printf 'tree=%s\n' "$tree" >> /tmp/issue-10-base-identity.txt
+          sha256sum /tmp/issue-10-base.tar.gz >> /tmp/issue-10-base-identity.txt
+
+      - name: Upload exact base
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-10-exact-base
+          path: |
+            /tmp/issue-10-base.tar.gz
+            /tmp/issue-10-base-identity.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Register export run in issue 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="<!-- issue-10-base-export:${GITHUB_RUN_ID} -->
+          ## Exact base export for #10
+
+          Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          Commit: \`8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf\`
+          Tree: \`d2bef83ca45bfed606eb75ef37527f6e255bf481\`"
+          payload=$(python3 -c 'import json,os; print(json.dumps({"body": os.environ["BODY"]}))' BODY="$body")
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            --request POST \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/10/comments" \
+            --data "$payload" >/dev/null
