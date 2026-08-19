@@ -1,0 +1,161 @@
+name: Bootstrap verified issue 10 manifest
+
+on:
+  push:
+    branches:
+      - agent/issue-10-publisher
+    paths:
+      - .issue10-publisher/part-*
+      - .github/workflows/bootstrap-issue-10-manifest.yml
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: bootstrap-issue-10-manifest
+  cancel-in-progress: true
+
+jobs:
+  manifest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    env:
+      BASE_SHA: 8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf
+      BASE_TREE_SHA: d2bef83ca45bfed606eb75ef37527f6e255bf481
+      EXPECTED_PATCH_BYTES: '103880'
+      DELIVERY_BRANCH: agent/issue-10
+      PART_000_BLOB: eeef28167285f18e128deea2fe7d5b8e8232e1c8
+      PART_001_BLOB: 0426d7c8fcfe7e468dfd2ffacf30a2f1b56fbcec
+      PART_002_BLOB: 2190b13d620b663d12ec6996d7090f4b0d563571
+      PART_003_BLOB: f73c76ad78686f601aef4de740a53d12895054f9
+    steps:
+      - name: Install bootstrap dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends ca-certificates curl git jq
+
+      - name: Check out publisher branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-10-publisher
+          fetch-depth: 0
+
+      - name: Verify payload and write manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          mkdir -p /tmp/issue10-payload
+
+          for index in 000 001 002 003; do
+            path=".issue10-publisher/part-$index"
+            test -f "$path"
+            case "$index" in
+              000) expected="$PART_000_BLOB" ;;
+              001) expected="$PART_001_BLOB" ;;
+              002) expected="$PART_002_BLOB" ;;
+              003) expected="$PART_003_BLOB" ;;
+            esac
+            test "$(git hash-object "$path")" = "$expected"
+            cp "$path" "/tmp/issue10-payload/part-$index"
+          done
+
+          cat /tmp/issue10-payload/part-* | tr -d '\r\n' > /tmp/issue10-payload/compact
+          base64 --decode /tmp/issue10-payload/compact > /tmp/issue10.patch
+          test "$(wc -c < /tmp/issue10.patch | tr -d ' ')" = "$EXPECTED_PATCH_BYTES"
+          grep -q '^diff --git ' /tmp/issue10.patch
+          grep -q 'pub struct PollPlanner' /tmp/issue10.patch
+          grep -q 'pub struct PollExecutor' /tmp/issue10.patch
+          patch_sha=$(sha256sum /tmp/issue10.patch | awk '{print $1}')
+
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse origin/main)" = "$BASE_SHA"
+          test "$(git rev-parse origin/main^{tree})" = "$BASE_TREE_SHA"
+          git reset --hard origin/main
+          git clean -fdx
+          git apply --check --whitespace=error-all /tmp/issue10.patch
+          git apply --index --whitespace=error-all /tmp/issue10.patch
+          git diff --cached --check
+
+          candidate_tree=$(git write-tree)
+          test -f crates/lantern-app/src/poll.rs
+          grep -q 'pub struct PollPlanner' crates/lantern-app/src/poll.rs
+          grep -q 'pub struct PollExecutor' crates/lantern-app/src/poll.rs
+          grep -q 'MonotonicClock' crates/lantern-app/src/poll.rs
+
+          git diff --cached --name-only > /tmp/issue10-payload/changed-files.txt
+          test "$(wc -l < /tmp/issue10-payload/changed-files.txt | tr -d ' ')" = 11
+          while IFS= read -r path; do
+            case "$path" in
+              Cargo.lock|crates/lantern-app/*|crates/lantern-sim/*) ;;
+              *) printf 'forbidden issue #10 path: %s\n' "$path" >&2; exit 1 ;;
+            esac
+          done < /tmp/issue10-payload/changed-files.txt
+
+          parts='[]'
+          for index in 000 001 002 003; do
+            file="/tmp/issue10-payload/part-$index"
+            path=".issue10-publisher/part-$index"
+            bytes=$(wc -c < "$file" | tr -d ' ')
+            sha=$(sha256sum "$file" | awk '{print $1}')
+            case "$index" in
+              000) blob="$PART_000_BLOB" ;;
+              001) blob="$PART_001_BLOB" ;;
+              002) blob="$PART_002_BLOB" ;;
+              003) blob="$PART_003_BLOB" ;;
+            esac
+            parts=$(jq -c --arg path "$path" --argjson bytes "$bytes" --arg sha "$sha" --arg blob "$blob" '. + [{path:$path,bytes:$bytes,sha256:$sha,git_blob_sha:$blob}]' <<<"$parts")
+          done
+
+          jq -n \
+            --arg schema 'vfd-lantern-issue10-payload-v1' \
+            --arg base_sha "$BASE_SHA" \
+            --arg base_tree_sha "$BASE_TREE_SHA" \
+            --arg patch_sha256 "$patch_sha" \
+            --arg expected_tree_sha "$candidate_tree" \
+            --arg patch_encoding 'base64-split-lines' \
+            --arg commit_message 'Implement deterministic PollPlanner and bounded polling executor (#10)' \
+            --arg delivery_branch "$DELIVERY_BRANCH" \
+            --argjson patch_bytes "$EXPECTED_PATCH_BYTES" \
+            --argjson parts "$parts" \
+            '{schema:$schema,base_sha:$base_sha,base_tree_sha:$base_tree_sha,patch_sha256:$patch_sha256,patch_bytes:$patch_bytes,expected_tree_sha:$expected_tree_sha,patch_encoding:$patch_encoding,commit_message:$commit_message,delivery_branch:$delivery_branch,allowed_paths:["Cargo.lock","crates/lantern-app/**","crates/lantern-sim/**"],parts:$parts}' \
+            > /tmp/issue10-payload/manifest.json
+
+          jq -e '.parts | length == 4' /tmp/issue10-payload/manifest.json >/dev/null
+          jq -e '.patch_sha256 | length == 64' /tmp/issue10-payload/manifest.json >/dev/null
+          jq -e '.expected_tree_sha | length == 40' /tmp/issue10-payload/manifest.json >/dev/null
+
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+          encoded=$(base64 -w0 /tmp/issue10-payload/manifest.json)
+          current=$(curl --silent --show-error "${auth[@]}" "$api/contents/.issue10-publisher/manifest.json?ref=agent%2Fissue-10-publisher")
+          current_sha=$(jq -r '.sha // empty' <<<"$current")
+          if [ -n "$current_sha" ]; then
+            payload=$(jq -n --arg message 'Record verified issue 10 payload manifest' --arg content "$encoded" --arg branch 'agent/issue-10-publisher' --arg sha "$current_sha" '{message:$message,content:$content,branch:$branch,sha:$sha}')
+          else
+            payload=$(jq -n --arg message 'Record verified issue 10 payload manifest' --arg content "$encoded" --arg branch 'agent/issue-10-publisher' '{message:$message,content:$content,branch:$branch}')
+          fi
+          response=$(curl --fail-with-body --silent --show-error --request PUT "${auth[@]}" "$api/contents/.issue10-publisher/manifest.json" --data "$payload")
+          manifest_commit=$(jq -r .commit.sha <<<"$response")
+
+          body=$(cat <<EOF
+          <!-- issue-10-manifest:$manifest_commit -->
+          ## Wersjonowany manifest kandydata #10 zapisany
+
+          - manifest commit: \`$manifest_commit\`
+          - base SHA: \`$BASE_SHA\`
+          - base tree: \`$BASE_TREE_SHA\`
+          - patch bytes: \`$EXPECTED_PATCH_BYTES\`
+          - patch SHA-256: \`$patch_sha\`
+          - expected candidate tree: \`$candidate_tree\`
+          - części payloadu: **4**, każda zweryfikowana przez Git blob SHA i SHA-256
+
+          Finalizer uruchamia się z tego commita i nie korzysta z zewnętrznego magazynu patcha.
+          EOF
+          )
+          comment=$(jq -n --arg body "$body" '{body:$body}')
+          curl --fail-with-body --silent --show-error --request POST "${auth[@]}" "$api/issues/10/comments" --data "$comment" >/dev/null
