@@ -1,0 +1,1 @@
+Run the manifest-based fail-closed finalizer for issue #10.
