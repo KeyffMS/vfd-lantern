@@ -6,8 +6,11 @@ on:
       - agent/issue-10-base-export
 
 permissions:
-  contents: read
-  issues: write
+  contents: write
+
+concurrency:
+  group: download-issue-10-base-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   export:
@@ -16,6 +19,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: agent/issue-10-base-export
           fetch-depth: 0
 
       - name: Export exact main tree
@@ -41,23 +45,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Register export run in issue 10
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Persist first downloadable run id
         shell: bash
         run: |
           set -euo pipefail
-          body="<!-- issue-10-base-export:${GITHUB_RUN_ID} -->
-          ## Exact base export for #10
-
-          Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-          Commit: \`8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf\`
-          Tree: \`d2bef83ca45bfed606eb75ef37527f6e255bf481\`"
-          payload=$(BODY="$body" python3 -c 'import json,os; print(json.dumps({"body": os.environ["BODY"]}))')
-          curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            --request POST \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/10/comments" \
-            --data "$payload" >/dev/null
+          if [ -f .issue10-base/download-run-id.txt ]; then
+            exit 0
+          fi
+          git config user.name 'VFD Lantern automation'
+          git config user.email 'actions@users.noreply.github.com'
+          printf '%s\n' "$GITHUB_RUN_ID" > .issue10-base/download-run-id.txt
+          git add .issue10-base/download-run-id.txt
+          git commit -m 'Record exact base export run for issue 10'
+          git push origin HEAD:agent/issue-10-base-export
