@@ -1,0 +1,40 @@
+name: Export exact issue 10 base
+
+on:
+  push:
+    branches:
+      - agent/issue-10-base-export
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Export exact main tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf
+          test "$(git rev-parse "$base^{tree}")" = d2bef83ca45bfed606eb75ef37527f6e255bf481
+          git archive --format=tar.gz --prefix=vfd-lantern-main/ \
+            --output=/tmp/issue-10-base.tar.gz "$base"
+          printf 'commit=%s\n' "$base" > /tmp/issue-10-base-identity.txt
+          printf 'tree=%s\n' "$(git rev-parse "$base^{tree}")" >> /tmp/issue-10-base-identity.txt
+          sha256sum /tmp/issue-10-base.tar.gz >> /tmp/issue-10-base-identity.txt
+
+      - name: Upload exact base
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-10-exact-base
+          path: |
+            /tmp/issue-10-base.tar.gz
+            /tmp/issue-10-base-identity.txt
+          if-no-files-found: error
+          retention-days: 14
