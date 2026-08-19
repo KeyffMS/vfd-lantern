@@ -53,7 +53,7 @@ jobs:
           Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
           Commit: \`8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf\`
           Tree: \`d2bef83ca45bfed606eb75ef37527f6e255bf481\`"
-          payload=$(python3 -c 'import json,os; print(json.dumps({"body": os.environ["BODY"]}))' BODY="$body")
+          payload=$(BODY="$body" python3 -c 'import json,os; print(json.dumps({"body": os.environ["BODY"]}))')
           curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H 'Accept: application/vnd.github+json' \
