@@ -1,0 +1,1 @@
+Run the verified, manifest-bound issue #10 publisher from commit b3001b45d55fedef919b3f4961f8bcb98bb84144.
