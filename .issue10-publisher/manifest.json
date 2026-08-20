@@ -1,0 +1,47 @@
+{
+  "allowed_paths": [
+    "Cargo.lock",
+    "crates/lantern-app/**",
+    "crates/lantern-sim/**",
+    "crates/lantern-transport/**"
+  ],
+  "base_sha": "8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf",
+  "base_tree_sha": "d2bef83ca45bfed606eb75ef37527f6e255bf481",
+  "changed_paths": [
+    "Cargo.lock",
+    "crates/lantern-app/Cargo.toml",
+    "crates/lantern-app/examples/poll_planner_benchmark.rs",
+    "crates/lantern-app/src/bus.rs",
+    "crates/lantern-app/src/lib.rs",
+    "crates/lantern-app/src/poll.rs",
+    "crates/lantern-app/src/write_coordinator.rs",
+    "crates/lantern-sim/src/identify.rs",
+    "crates/lantern-sim/tests/rtu_stack.rs",
+    "crates/lantern-transport/src/bus_actor.rs",
+    "crates/lantern-transport/src/modbus_backend.rs"
+  ],
+  "commit_message": "Implement deterministic PollPlanner and bounded polling executor (#10)",
+  "compressed_bytes": 19320,
+  "compressed_sha256": "5568fd30acffed9a2542fd78b0bfb3d4df8c674d088a3bb999fdd31d8504710e",
+  "expected_changed_file_count": 11,
+  "expected_tree_sha": "06bd73171bdab8aca8df8269c2241e7c25458859",
+  "issue": 10,
+  "parts": [
+    {
+      "bytes": 16000,
+      "git_blob_sha": "2190b13d620b663d12ec6996d7090f4b0d563571",
+      "path": ".issue10-publisher/part-000",
+      "sha256": "ebbb094c0e09278daf31a1f981f0fac17c64b4ccf7542b8d0c43f406671d89f5"
+    },
+    {
+      "bytes": 9760,
+      "git_blob_sha": "0426d7c8fcfe7e468dfd2ffacf30a2f1b56fbcec",
+      "path": ".issue10-publisher/part-001",
+      "sha256": "f9d47cb1d7722d0f539a6e402e2d2b0321535e16dca37e69360f5c0c64c65731"
+    }
+  ],
+  "patch_bytes": 103880,
+  "patch_sha256": "ecb696da45c5b841236e4aac1b9d1693513cb3da8112fcfc3336ae17dcc1ef11",
+  "payload_encoding": "concatenated-base64-of-gzip",
+  "schema": "vfd-lantern-issue-payload-v1"
+}
