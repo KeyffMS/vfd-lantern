@@ -7,10 +7,11 @@ use std::{
 };
 
 use lantern_app::{
-    AdapterIdentity, BusControlPort, BusError, BusRequestContext, Connectivity,
-    ManualMonotonicClock, MonotonicClock, ReadBusPort, ReadBusRequest, RequestClass,
+    AdapterIdentity, BusControlPort, BusError, BusRequestContext, Connectivity, FrequencyClass,
+    ManualMonotonicClock, MonotonicClock, PollCadences, PollExecutionOutcome, PollExecutor,
+    PollPlanner, PollPlannerConfig, ReadBusPort, ReadBusRequest, ReadSubscription, RequestClass,
     Rs485DirectionConfig, SerialOpenRequest, SessionEffect, SessionFault, SessionInput,
-    SessionState, SessionStateMachine,
+    SessionState, SessionStateMachine, SubscriberId, SubscriptionReason, TokioMonotonicClock,
 };
 use lantern_domain::{
     DeviceFingerprint, IdentificationMatch, ModbusFunction, ModbusTable, ParameterId, RequestId,
@@ -115,19 +116,27 @@ fn parameter_read(
         ModbusTable::HoldingRegisters => ModbusFunction::ReadHoldingRegisters,
         ModbusTable::InputRegisters => ModbusFunction::ReadInputRegisters,
     };
-    ReadBusRequest {
-        context: BusRequestContext {
-            request_id: RequestId::new(request_id),
-            session_id,
-            class,
-            deadline,
-            operation_id: None,
+    ReadBusRequest::one_shot(
+        match class {
+            RequestClass::Interactive => BusRequestContext::interactive(
+                RequestId::new(request_id),
+                session_id,
+                deadline,
+                None,
+            ),
+            RequestClass::Background => BusRequestContext::background(
+                RequestId::new(request_id),
+                session_id,
+                deadline,
+                None,
+            ),
+            _ => panic!("test helper supports only public one-shot classes"),
         },
-        slave: profile.protocol().default_link().slave_id,
+        profile.protocol().default_link().slave_id,
         function,
-        block: parameter.block(),
-        periodic: false,
-    }
+        parameter.block(),
+    )
+    .expect("valid one-shot read")
 }
 
 fn normal_parameter_read(
@@ -282,6 +291,98 @@ fn assert_identification_rejected(
     );
     assert!(matches!(session.state(), SessionState::Disconnected { .. }));
     assert!(session.session_id().is_none());
+}
+
+#[tokio::test]
+async fn poll_planner_executor_reads_through_verified_production_pty_stack() {
+    let profile = load_example_profile();
+    let scenario = loaded_scenario(
+        &profile,
+        r#"[[read_behaviors]]
+start_request = 2
+count = 1
+kind = "delay"
+milliseconds = 70
+"#,
+    );
+    let stack =
+        RunningStack::start(Arc::clone(&profile), scenario, Duration::from_millis(120)).await;
+    let session_id = SessionId::new(70);
+    let identification = identify(&stack, &profile, session_id, FINGERPRINT_ONE).await;
+    let session = activate_session(stack.runtime.client_path(), session_id, identification);
+    assert!(matches!(session.state(), SessionState::Active(_)));
+
+    let cadence = PollCadences::new(
+        Duration::from_millis(50),
+        Duration::from_millis(100),
+        Duration::from_secs(1),
+    )
+    .expect("cadence");
+    let config = PollPlannerConfig::new(
+        cadence,
+        profile.protocol().default_link(),
+        Duration::from_millis(10),
+        Duration::from_millis(2),
+        700_000,
+    )
+    .expect("planner config");
+    let subscriber = SubscriberId::parse("verified-pty-integration").expect("subscriber");
+    let subscriptions = [
+        ReadSubscription::new(
+            ParameterId::parse("status.output_frequency").expect("frequency ID"),
+            FrequencyClass::Normal,
+            subscriber.clone(),
+            SubscriptionReason::Dashboard,
+            true,
+            Duration::from_secs(1),
+        )
+        .expect("frequency subscription"),
+        ReadSubscription::new(
+            ParameterId::parse("config.acceleration").expect("acceleration ID"),
+            FrequencyClass::Normal,
+            subscriber,
+            SubscriptionReason::Dashboard,
+            false,
+            Duration::from_secs(1),
+        )
+        .expect("acceleration subscription"),
+    ];
+    let plan = Arc::new(
+        PollPlanner::new()
+            .build(&profile, subscriptions, config, Instant::now())
+            .expect("poll plan"),
+    );
+    assert_eq!(plan.blocks().len(), 2);
+    assert!(plan.utilization_ppm() <= 700_000);
+
+    let bus: Arc<dyn ReadBusPort> = Arc::new(stack.bus.clone());
+    let clock: Arc<dyn MonotonicClock> = Arc::new(TokioMonotonicClock);
+    let (handle, mut results, task) =
+        PollExecutor::spawn(bus, clock, session_id, plan, 4).expect("poll executor");
+
+    let first = tokio::time::timeout(Duration::from_secs(2), results.recv())
+        .await
+        .expect("first polling result timeout")
+        .expect("first polling result");
+    let second = tokio::time::timeout(Duration::from_secs(2), results.recv())
+        .await
+        .expect("second polling result timeout")
+        .expect("second polling result");
+    let values = [first, second]
+        .into_iter()
+        .map(|result| match result.outcome() {
+            PollExecutionOutcome::Read(Ok(raw)) => raw.as_slice().to_vec(),
+            outcome => panic!("unexpected polling outcome: {outcome:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert!(values.contains(&vec![5_000]));
+    assert!(values.contains(&vec![100]));
+    assert_eq!(stack.bus.statistics().writes_started, 0);
+    assert_eq!(handle.statistics().requests_completed, 2);
+
+    handle.shutdown();
+    task.await.expect("poll executor");
+    stack.stop().await;
 }
 
 #[tokio::test]

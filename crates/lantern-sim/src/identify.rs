@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use lantern_app::{
-    BusError, BusRequestContext, MonotonicClock, ReadBusPort, ReadBusRequest, RequestClass,
-    TokioMonotonicClock, VerifiedSessionIdentity,
+    BusError, BusRequestContext, MonotonicClock, ReadBusPort, ReadBusRequest, TokioMonotonicClock,
+    VerifiedSessionIdentity,
 };
 use lantern_domain::{
     DeviceFingerprint, IdentificationMatch, IdentificationProbeResult, IdentificationReport,
@@ -50,19 +50,12 @@ pub async fn identify_profile_via_bus_with_clock(
         };
         let request_id = RequestId::new(u64::try_from(index).unwrap_or(u64::MAX) + 1);
         let raw = bus
-            .read(ReadBusRequest {
-                context: BusRequestContext {
-                    request_id,
-                    session_id,
-                    class: RequestClass::Interactive,
-                    deadline: clock.now() + timeout,
-                    operation_id: None,
-                },
-                slave: profile.protocol().default_link().slave_id,
+            .read(ReadBusRequest::one_shot(
+                BusRequestContext::interactive(request_id, session_id, clock.now() + timeout, None),
+                profile.protocol().default_link().slave_id,
                 function,
-                block: probe.block,
-                periodic: false,
-            })
+                probe.block,
+            )?)
             .await?;
         let matched = probe.expected_raw.iter().any(|expected| expected == &raw);
         results.push(IdentificationProbeResult {

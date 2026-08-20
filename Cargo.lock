@@ -461,6 +461,7 @@ version = "0.1.0"
 dependencies = [
  "lantern-domain",
  "lantern-profile",
+ "proptest",
  "serde",
  "thiserror",
  "tokio",

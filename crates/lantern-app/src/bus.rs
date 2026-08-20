@@ -37,32 +37,224 @@ impl RequestClass {
     }
 }
 
+/// Immutable request metadata with application-owned queue-class construction.
+///
+/// External consumers can create explicit interactive or background one-shot
+/// requests. Periodic queue classes and `SafetyOneShot` are sealed inside
+/// `lantern-app`, so a TUI, CSV writer, or other producer cannot self-promote.
+///
+/// ```compile_fail
+/// use lantern_app::{BusRequestContext, RequestClass};
+/// # use lantern_domain::{RequestId, SessionId};
+/// # use std::time::Instant;
+/// let _ = BusRequestContext {
+///     request_id: RequestId::new(1),
+///     session_id: SessionId::new(1),
+///     class: RequestClass::SafetyOneShot,
+///     deadline: Instant::now(),
+///     operation_id: None,
+/// };
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BusRequestContext {
-    pub request_id: RequestId,
-    pub session_id: SessionId,
-    pub class: RequestClass,
-    pub deadline: Instant,
-    pub operation_id: Option<OperationId>,
+    request_id: RequestId,
+    session_id: SessionId,
+    class: RequestClass,
+    deadline: Instant,
+    operation_id: Option<OperationId>,
 }
 
+impl BusRequestContext {
+    /// Creates an explicit user-initiated one-shot context.
+    #[must_use]
+    pub const fn interactive(
+        request_id: RequestId,
+        session_id: SessionId,
+        deadline: Instant,
+        operation_id: Option<OperationId>,
+    ) -> Self {
+        Self::new(
+            request_id,
+            session_id,
+            RequestClass::Interactive,
+            deadline,
+            operation_id,
+        )
+    }
+
+    /// Creates a low-priority application one-shot context.
+    #[must_use]
+    pub const fn background(
+        request_id: RequestId,
+        session_id: SessionId,
+        deadline: Instant,
+        operation_id: Option<OperationId>,
+    ) -> Self {
+        Self::new(
+            request_id,
+            session_id,
+            RequestClass::Background,
+            deadline,
+            operation_id,
+        )
+    }
+
+    pub(crate) const fn periodic(
+        request_id: RequestId,
+        session_id: SessionId,
+        class: RequestClass,
+        deadline: Instant,
+    ) -> Result<Self, BusError> {
+        if !class.is_periodic_allowed() || matches!(class, RequestClass::Interactive) {
+            return Err(BusError::InvalidRequest(
+                "periodic context requires an application polling class",
+            ));
+        }
+        Ok(Self::new(request_id, session_id, class, deadline, None))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) const fn safety_one_shot(
+        request_id: RequestId,
+        session_id: SessionId,
+        deadline: Instant,
+        operation_id: Option<OperationId>,
+    ) -> Self {
+        Self::new(
+            request_id,
+            session_id,
+            RequestClass::SafetyOneShot,
+            deadline,
+            operation_id,
+        )
+    }
+
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn test_only(
+        request_id: RequestId,
+        session_id: SessionId,
+        class: RequestClass,
+        deadline: Instant,
+        operation_id: Option<OperationId>,
+    ) -> Self {
+        Self::new(request_id, session_id, class, deadline, operation_id)
+    }
+
+    const fn new(
+        request_id: RequestId,
+        session_id: SessionId,
+        class: RequestClass,
+        deadline: Instant,
+        operation_id: Option<OperationId>,
+    ) -> Self {
+        Self {
+            request_id,
+            session_id,
+            class,
+            deadline,
+            operation_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn request_id(self) -> RequestId {
+        self.request_id
+    }
+
+    #[must_use]
+    pub const fn session_id(self) -> SessionId {
+        self.session_id
+    }
+
+    #[must_use]
+    pub const fn class(self) -> RequestClass {
+        self.class
+    }
+
+    #[must_use]
+    pub const fn deadline(self) -> Instant {
+        self.deadline
+    }
+
+    #[must_use]
+    pub const fn operation_id(self) -> Option<OperationId> {
+        self.operation_id
+    }
+}
+
+/// Read request whose periodic construction is sealed inside `lantern-app`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadBusRequest {
-    pub context: BusRequestContext,
-    pub slave: SlaveId,
-    pub function: ModbusFunction,
-    pub block: RegisterBlock,
-    pub periodic: bool,
+    context: BusRequestContext,
+    slave: SlaveId,
+    function: ModbusFunction,
+    block: RegisterBlock,
+    periodic: bool,
 }
 
 impl ReadBusRequest {
+    pub fn one_shot(
+        context: BusRequestContext,
+        slave: SlaveId,
+        function: ModbusFunction,
+        block: RegisterBlock,
+    ) -> Result<Self, BusError> {
+        let request = Self {
+            context,
+            slave,
+            function,
+            block,
+            periodic: false,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub(crate) fn periodic(
+        context: BusRequestContext,
+        slave: SlaveId,
+        function: ModbusFunction,
+        block: RegisterBlock,
+    ) -> Result<Self, BusError> {
+        let request = Self {
+            context,
+            slave,
+            function,
+            block,
+            periodic: true,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn test_only(
+        context: BusRequestContext,
+        slave: SlaveId,
+        function: ModbusFunction,
+        block: RegisterBlock,
+        periodic: bool,
+    ) -> Self {
+        Self {
+            context,
+            slave,
+            function,
+            block,
+            periodic,
+        }
+    }
+
     pub fn validate(&self) -> Result<(), BusError> {
         if self.function.is_write() {
             return Err(BusError::InvalidRequest(
                 "read request uses a write function",
             ));
         }
-        if self.periodic && !self.context.class.is_periodic_allowed() {
+        if self.periodic && !self.context.class().is_periodic_allowed() {
             return Err(BusError::InvalidRequest(
                 "periodic request cannot use SafetyOneShot",
             ));
@@ -71,6 +263,31 @@ impl ReadBusRequest {
             .validate_table(self.block.table())
             .and_then(|()| self.function.validate_count(self.block.count()))
             .map_err(|_| BusError::InvalidRequest("invalid Modbus read block"))
+    }
+
+    #[must_use]
+    pub const fn context(&self) -> BusRequestContext {
+        self.context
+    }
+
+    #[must_use]
+    pub const fn slave(&self) -> SlaveId {
+        self.slave
+    }
+
+    #[must_use]
+    pub const fn function(&self) -> ModbusFunction {
+        self.function
+    }
+
+    #[must_use]
+    pub const fn block(&self) -> RegisterBlock {
+        self.block
+    }
+
+    #[must_use]
+    pub const fn is_periodic(&self) -> bool {
+        self.periodic
     }
 }
 

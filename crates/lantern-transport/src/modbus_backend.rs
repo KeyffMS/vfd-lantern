@@ -51,26 +51,26 @@ impl TokioModbusBackend {
 impl RtuBackend for TokioModbusBackend {
     fn read<'a>(&'a mut self, request: &'a ReadBusRequest) -> BackendFuture<'a, RawRegisters> {
         Box::pin(async move {
-            self.context.set_slave(Slave(request.slave.get()));
-            let expected = usize::from(request.block.count().get());
-            let response = match request.function {
+            self.context.set_slave(Slave(request.slave().get()));
+            let expected = usize::from(request.block().count().get());
+            let response = match request.function() {
                 ModbusFunction::ReadHoldingRegisters => {
                     self.call(Request::ReadHoldingRegisters(
-                        request.block.start().get(),
-                        request.block.count().get(),
+                        request.block().start().get(),
+                        request.block().count().get(),
                     ))
                     .await?
                 }
                 ModbusFunction::ReadInputRegisters => {
                     self.call(Request::ReadInputRegisters(
-                        request.block.start().get(),
-                        request.block.count().get(),
+                        request.block().start().get(),
+                        request.block().count().get(),
                     ))
                     .await?
                 }
                 _ => return Err(BusError::InvalidRequest("backend received a write as read")),
             };
-            let words = match (request.function, response) {
+            let words = match (request.function(), response) {
                 (ModbusFunction::ReadHoldingRegisters, Response::ReadHoldingRegisters(words))
                 | (ModbusFunction::ReadInputRegisters, Response::ReadInputRegisters(words))
                     if words.len() == expected =>
