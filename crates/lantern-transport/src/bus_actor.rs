@@ -101,7 +101,7 @@ pub struct BusActorHandle {
 
 impl ReadBusPort for BusActorHandle {
     fn read(&self, request: ReadBusRequest) -> BusFuture<'static, RawRegisters> {
-        let sender = self.senders.for_class(request.context.class).clone();
+        let sender = self.senders.for_class(request.context().class()).clone();
         let stats = Arc::clone(&self.statistics);
         let clock = Arc::clone(&self.clock);
         Box::pin(async move {
@@ -127,7 +127,7 @@ impl ReadBusPort for BusActorHandle {
 
 impl WriteBusPort for BusActorHandle {
     fn write(&self, request: PreparedBusWrite) -> BusFuture<'static, ()> {
-        let sender = self.senders.for_class(request.context().class).clone();
+        let sender = self.senders.for_class(request.context().class()).clone();
         let stats = Arc::clone(&self.statistics);
         let clock = Arc::clone(&self.clock);
         Box::pin(async move {
@@ -230,22 +230,22 @@ enum Command {
 impl Command {
     fn class(&self) -> RequestClass {
         match self {
-            Self::Read { request, .. } => request.context.class,
-            Self::Write { request, .. } => request.context().class,
+            Self::Read { request, .. } => request.context().class(),
+            Self::Write { request, .. } => request.context().class(),
         }
     }
 
     fn deadline(&self) -> Instant {
         match self {
-            Self::Read { request, .. } => request.context.deadline,
-            Self::Write { request, .. } => request.context().deadline,
+            Self::Read { request, .. } => request.context().deadline(),
+            Self::Write { request, .. } => request.context().deadline(),
         }
     }
 
     fn operation_id(&self) -> Option<lantern_domain::OperationId> {
         match self {
-            Self::Read { request, .. } => request.context.operation_id,
-            Self::Write { request, .. } => request.context().operation_id,
+            Self::Read { request, .. } => request.context().operation_id(),
+            Self::Write { request, .. } => request.context().operation_id(),
         }
     }
 
@@ -257,7 +257,7 @@ impl Command {
 
     fn function(&self) -> lantern_domain::ModbusFunction {
         match self {
-            Self::Read { request, .. } => request.function,
+            Self::Read { request, .. } => request.function(),
             Self::Write { request, .. } => request.function(),
         }
     }
@@ -461,7 +461,7 @@ async fn execute_read<B: RtuBackend>(
             Err(error)
                 if error.is_transient_read_error()
                     && retries < 2
-                    && request.context.deadline > clock.now() =>
+                    && request.context().deadline() > clock.now() =>
             {
                 retries += 1;
                 {
@@ -828,25 +828,25 @@ mod tests {
     }
 
     fn read_request(class: RequestClass) -> ReadBusRequest {
-        ReadBusRequest {
-            context: BusRequestContext {
-                request_id: RequestId::new(1),
-                session_id: SessionId::new(1),
+        ReadBusRequest::test_only(
+            BusRequestContext::test_only(
+                RequestId::new(1),
+                SessionId::new(1),
                 class,
-                deadline: Instant::now() + Duration::from_secs(1),
-                operation_id: None,
-            },
-            slave: SlaveId::new(1).expect("slave"),
-            function: ModbusFunction::ReadHoldingRegisters,
-            block: RegisterBlock::new(
+                Instant::now() + Duration::from_secs(1),
+                None,
+            ),
+            SlaveId::new(1).expect("valid slave"),
+            ModbusFunction::ReadHoldingRegisters,
+            RegisterBlock::new(
                 ModbusTable::HoldingRegisters,
                 RegisterAddress::new(0),
                 RegisterCount::new(1).expect("count"),
                 ModbusFunction::ReadHoldingRegisters,
             )
             .expect("block"),
-            periodic: false,
-        }
+            false,
+        )
     }
 
     #[test]
@@ -905,13 +905,13 @@ mod tests {
         .expect("block");
         let request = WriteCoordinator::test_only()
             .prepare_transport_write(
-                BusRequestContext {
-                    request_id: RequestId::new(2),
-                    session_id: SessionId::new(1),
-                    class: RequestClass::SafetyOneShot,
-                    deadline: Instant::now() + Duration::from_secs(1),
-                    operation_id: None,
-                },
+                BusRequestContext::test_only(
+                    RequestId::new(2),
+                    SessionId::new(1),
+                    RequestClass::SafetyOneShot,
+                    Instant::now() + Duration::from_secs(1),
+                    None,
+                ),
                 SlaveId::new(1).expect("slave"),
                 ModbusFunction::WriteSingleRegister,
                 block,
@@ -928,7 +928,13 @@ mod tests {
     #[test]
     fn periodic_safety_request_is_rejected() {
         let mut request = read_request(RequestClass::SafetyOneShot);
-        request.periodic = true;
+        request = ReadBusRequest::test_only(
+            request.context(),
+            request.slave(),
+            request.function(),
+            request.block(),
+            true,
+        );
         assert!(matches!(
             request.validate(),
             Err(BusError::InvalidRequest(_))

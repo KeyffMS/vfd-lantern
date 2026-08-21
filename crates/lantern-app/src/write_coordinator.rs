@@ -42,7 +42,7 @@ mod tests {
         RequestId, SessionId, SlaveId,
     };
 
-    use crate::{BusRequestContext, RequestClass};
+    use crate::BusRequestContext;
 
     use super::WriteCoordinator;
 
@@ -57,13 +57,12 @@ mod tests {
         .expect("block");
         let request = WriteCoordinator::test_only()
             .prepare_transport_write(
-                BusRequestContext {
-                    request_id: RequestId::new(1),
-                    session_id: SessionId::new(1),
-                    class: RequestClass::SafetyOneShot,
-                    deadline: Instant::now() + Duration::from_secs(1),
-                    operation_id: None,
-                },
+                BusRequestContext::safety_one_shot(
+                    RequestId::new(1),
+                    SessionId::new(1),
+                    Instant::now() + Duration::from_secs(1),
+                    None,
+                ),
                 SlaveId::new(1).expect("slave"),
                 ModbusFunction::WriteSingleRegister,
                 block,
