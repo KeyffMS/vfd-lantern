@@ -1,0 +1,161 @@
+name: Install complete verified issue 10 payload v2
+
+on:
+  push:
+    branches:
+      - agent/issue-10-publisher
+    paths:
+      - .github/workflows/install-issue-10-payload-v2.yml
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: install-issue-10-payload-v2
+  cancel-in-progress: false
+
+jobs:
+  install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BASE_SHA: 8473bc93e95dfe8ddcb815c2ff7d7f1c521a9bcf
+      BASE_TREE_SHA: d2bef83ca45bfed606eb75ef37527f6e255bf481
+      EXPECTED_PATCH_BYTES: '103880'
+      PART_000_BLOB: eeef28167285f18e128deea2fe7d5b8e8232e1c8
+      PART_001_BLOB: 0426d7c8fcfe7e468dfd2ffacf30a2f1b56fbcec
+      PART_002_BLOB: 2190b13d620b663d12ec6996d7090f4b0d563571
+      PART_003_BLOB: f73c76ad78686f601aef4de740a53d12895054f9
+    steps:
+      - name: Check out publisher branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-10-publisher
+          fetch-depth: 0
+
+      - name: Verify, reconstruct and install immutable payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+          work=/tmp/issue10-payload-v2
+          mkdir -p "$work"
+
+          parent_sha=$(git rev-parse HEAD)
+          parent_tree=$(git rev-parse HEAD^{tree})
+          parts='[]'
+          : > "$work/payload.txt"
+
+          for index in 000 001 002 003; do
+            case "$index" in
+              000) blob="$PART_000_BLOB" ;;
+              001) blob="$PART_001_BLOB" ;;
+              002) blob="$PART_002_BLOB" ;;
+              003) blob="$PART_003_BLOB" ;;
+            esac
+
+            response=$(curl --fail-with-body --silent --show-error "${auth[@]}" "$api/git/blobs/$blob")
+            jq -r .content <<<"$response" | tr -d '\r\n' | base64 --decode > "$work/part-$index"
+            test "$(git hash-object "$work/part-$index")" = "$blob"
+            cat "$work/part-$index" >> "$work/payload.txt"
+
+            bytes=$(wc -c < "$work/part-$index" | tr -d ' ')
+            sha256=$(sha256sum "$work/part-$index" | awk '{print $1}')
+            path=".issue10-publisher/part-$index"
+            parts=$(jq -c --arg path "$path" --argjson bytes "$bytes" --arg sha256 "$sha256" --arg blob "$blob" '. + [{path:$path,bytes:$bytes,sha256:$sha256,git_blob_sha:$blob}]' <<<"$parts")
+          done
+
+          tr -d '\r\n' < "$work/payload.txt" > "$work/payload.compact"
+          base64 --decode "$work/payload.compact" > "$work/issue10.patch"
+          test "$(wc -c < "$work/issue10.patch" | tr -d ' ')" = "$EXPECTED_PATCH_BYTES"
+          grep -q '^diff --git ' "$work/issue10.patch"
+          grep -q 'pub struct PollPlanner' "$work/issue10.patch"
+          grep -q 'pub struct PollExecutor' "$work/issue10.patch"
+          patch_sha256=$(sha256sum "$work/issue10.patch" | awk '{print $1}')
+
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse origin/main)" = "$BASE_SHA"
+          test "$(git rev-parse origin/main^{tree})" = "$BASE_TREE_SHA"
+          git reset --hard origin/main
+          git clean -fdx
+          git apply --check --whitespace=error-all "$work/issue10.patch"
+          git apply --index --whitespace=error-all "$work/issue10.patch"
+          git diff --cached --check
+
+          test -f crates/lantern-app/src/poll.rs
+          grep -q 'pub struct PollPlanner' crates/lantern-app/src/poll.rs
+          grep -q 'pub struct PollExecutor' crates/lantern-app/src/poll.rs
+          grep -q 'MonotonicClock' crates/lantern-app/src/poll.rs
+
+          git diff --cached --name-only > "$work/changed-files.txt"
+          test "$(wc -l < "$work/changed-files.txt" | tr -d ' ')" = 11
+          while IFS= read -r path; do
+            case "$path" in
+              Cargo.lock|crates/lantern-app/*|crates/lantern-sim/*) ;;
+              *) printf 'forbidden issue #10 path: %s\n' "$path" >&2; exit 1 ;;
+            esac
+          done < "$work/changed-files.txt"
+
+          candidate_tree=$(git write-tree)
+          jq -n \
+            --arg schema 'vfd-lantern-issue10-payload-v1' \
+            --arg base_sha "$BASE_SHA" \
+            --arg base_tree_sha "$BASE_TREE_SHA" \
+            --arg patch_sha256 "$patch_sha256" \
+            --arg expected_tree_sha "$candidate_tree" \
+            --arg patch_encoding 'base64-split-lines' \
+            --arg commit_message 'Implement deterministic PollPlanner and bounded polling executor (#10)' \
+            --arg delivery_branch 'agent/issue-10' \
+            --argjson patch_bytes "$EXPECTED_PATCH_BYTES" \
+            --argjson parts "$parts" \
+            '{schema:$schema,base_sha:$base_sha,base_tree_sha:$base_tree_sha,patch_sha256:$patch_sha256,patch_bytes:$patch_bytes,expected_tree_sha:$expected_tree_sha,patch_encoding:$patch_encoding,commit_message:$commit_message,delivery_branch:$delivery_branch,allowed_paths:["Cargo.lock","crates/lantern-app/**","crates/lantern-sim/**"],parts:$parts}' \
+            > "$work/manifest.json"
+
+          manifest_base64=$(base64 -w0 "$work/manifest.json")
+          manifest_response=$(curl --fail-with-body --silent --show-error --request POST "${auth[@]}" "$api/git/blobs" --data "$(jq -n --arg content "$manifest_base64" '{content:$content,encoding:"base64"}')")
+          manifest_blob=$(jq -r .sha <<<"$manifest_response")
+
+          tree_payload=$(jq -n \
+            --arg base "$parent_tree" \
+            --arg p0 "$PART_000_BLOB" \
+            --arg p1 "$PART_001_BLOB" \
+            --arg p2 "$PART_002_BLOB" \
+            --arg p3 "$PART_003_BLOB" \
+            --arg manifest "$manifest_blob" \
+            '{base_tree:$base,tree:[
+              {path:".issue10-publisher/part-000",mode:"100644",type:"blob",sha:$p0},
+              {path:".issue10-publisher/part-001",mode:"100644",type:"blob",sha:$p1},
+              {path:".issue10-publisher/part-002",mode:"100644",type:"blob",sha:$p2},
+              {path:".issue10-publisher/part-003",mode:"100644",type:"blob",sha:$p3},
+              {path:".issue10-publisher/manifest.json",mode:"100644",type:"blob",sha:$manifest}
+            ]}')
+          tree_response=$(curl --fail-with-body --silent --show-error --request POST "${auth[@]}" "$api/git/trees" --data "$tree_payload")
+          new_tree=$(jq -r .sha <<<"$tree_response")
+          commit_payload=$(jq -n --arg message 'Install verified issue 10 payload manifest' --arg tree "$new_tree" --arg parent "$parent_sha" '{message:$message,tree:$tree,parents:[$parent]}')
+          commit_response=$(curl --fail-with-body --silent --show-error --request POST "${auth[@]}" "$api/git/commits" --data "$commit_payload")
+          new_commit=$(jq -r .sha <<<"$commit_response")
+          ref_payload=$(jq -n --arg sha "$new_commit" '{sha:$sha,force:false}')
+          curl --fail-with-body --silent --show-error --request PATCH "${auth[@]}" "$api/git/refs/heads/agent/issue-10-publisher" --data "$ref_payload" >/dev/null
+
+          body=$(cat <<EOF
+          <!-- issue-10-manifest:$new_commit -->
+          ## Kompletny wersjonowany payload #10 zainstalowany
+
+          - payload commit: \`$new_commit\`
+          - base SHA: \`$BASE_SHA\`
+          - base tree: \`$BASE_TREE_SHA\`
+          - patch bytes: \`$EXPECTED_PATCH_BYTES\`
+          - patch SHA-256: \`$patch_sha256\`
+          - expected candidate tree: \`$candidate_tree\`
+          - części payloadu: **4**, każda zweryfikowana przez Git blob SHA i SHA-256
+          - zmienionych plików kandydata: **11**
+
+          Kandydat jest gotowy do finalizera fail-closed.
+          EOF
+          )
+          curl --fail-with-body --silent --show-error --request POST "${auth[@]}" "$api/issues/10/comments" --data "$(jq -n --arg body "$body" '{body:$body}')" >/dev/null
