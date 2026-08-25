@@ -909,7 +909,10 @@ mod tests {
             }
             tokio::task::yield_now().await;
         }
-        assert!(clock.sleep_calls() > 0, "actor did not enter the expected sleep");
+        assert!(
+            clock.sleep_calls() > 0,
+            "actor did not enter the expected sleep"
+        );
     }
 
     #[test]
