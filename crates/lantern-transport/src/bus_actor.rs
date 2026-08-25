@@ -399,6 +399,11 @@ async fn run_actor<B: RtuBackend>(
             clock.as_ref(),
         )
         .await;
+        if command.deadline() <= clock.now() {
+            lock_stats(&statistics).timeout_before_send += 1;
+            command.finish(BusError::TimeoutBeforeSend);
+            continue;
+        }
         record_dispatch(&statistics, class, function);
         let started = clock.now();
         match command {
@@ -454,22 +459,26 @@ async fn execute_read<B: RtuBackend>(
     clock: &dyn MonotonicClock,
 ) -> Result<RawRegisters, BusError> {
     lock_stats(statistics).reads_started += 1;
+    let deadline = request.context().deadline();
     let mut retries = 0_u8;
     loop {
         match backend.read(request).await {
             Ok(value) => return Ok(value),
-            Err(error)
-                if error.is_transient_read_error()
-                    && retries < 2
-                    && request.context().deadline() > clock.now() =>
-            {
-                retries += 1;
-                {
-                    let mut stats = lock_stats(statistics);
-                    stats.read_retries += 1;
-                    stats.t35_delay += retry_delay;
+            Err(error) if error.is_transient_read_error() && retries < 2 => {
+                let now = clock.now();
+                let Some(retry_at) = now.checked_add(retry_delay) else {
+                    return Err(error);
+                };
+                if retry_at >= deadline {
+                    return Err(error);
                 }
+                lock_stats(statistics).t35_delay += retry_delay;
                 clock.sleep(retry_delay).await;
+                if deadline <= clock.now() {
+                    return Err(error);
+                }
+                retries += 1;
+                lock_stats(statistics).read_retries += 1;
             }
             Err(error) => return Err(error),
         }
@@ -776,13 +785,17 @@ const fn function_index(function: lantern_domain::ModbusFunction) -> usize {
 mod tests {
     use std::{
         collections::VecDeque,
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
         time::{Duration, Instant},
     };
 
     use lantern_app::{
-        BusControlPort, BusError, BusRequestContext, PreparedBusWrite, ReadBusPort, ReadBusRequest,
-        RequestClass, WriteBusPort, WriteCoordinator,
+        BusControlPort, BusError, BusRequestContext, ClockFuture, ManualMonotonicClock,
+        MonotonicClock, PreparedBusWrite, ReadBusPort, ReadBusRequest, RequestClass, WriteBusPort,
+        WriteCoordinator,
     };
     use lantern_domain::{
         BaudRate, DataBits, LinkSettings, ModbusFunction, ModbusTable, Parity, RawRegisters,
@@ -794,14 +807,50 @@ mod tests {
 
     use super::{BusActor, BusActorConfig, protocol_t35};
 
+    #[derive(Clone, Debug)]
+    struct ObservedClock {
+        inner: ManualMonotonicClock,
+        sleep_calls: Arc<AtomicUsize>,
+    }
+
+    impl ObservedClock {
+        fn new() -> Self {
+            Self {
+                inner: ManualMonotonicClock::new(),
+                sleep_calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn advance(&self, duration: Duration) {
+            self.inner.advance(duration);
+        }
+
+        fn sleep_calls(&self) -> usize {
+            self.sleep_calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl MonotonicClock for ObservedClock {
+        fn now(&self) -> Instant {
+            self.inner.now()
+        }
+
+        fn sleep_until(&self, deadline: Instant) -> ClockFuture<'_> {
+            self.sleep_calls.fetch_add(1, Ordering::SeqCst);
+            self.inner.sleep_until(deadline)
+        }
+    }
+
     #[derive(Default)]
     struct FakeBackend {
         reads: VecDeque<Result<RawRegisters, BusError>>,
+        read_calls: Arc<Mutex<usize>>,
         writes: Arc<Mutex<usize>>,
     }
 
     impl RtuBackend for FakeBackend {
         fn read<'a>(&'a mut self, _request: &'a ReadBusRequest) -> BackendFuture<'a, RawRegisters> {
+            *self.read_calls.lock().expect("read calls") += 1;
             let value = self
                 .reads
                 .pop_front()
@@ -827,13 +876,13 @@ mod tests {
         }
     }
 
-    fn read_request(class: RequestClass) -> ReadBusRequest {
+    fn read_request_with_deadline(class: RequestClass, deadline: Instant) -> ReadBusRequest {
         ReadBusRequest::test_only(
             BusRequestContext::test_only(
                 RequestId::new(1),
                 SessionId::new(1),
                 class,
-                Instant::now() + Duration::from_secs(1),
+                deadline,
                 None,
             ),
             SlaveId::new(1).expect("valid slave"),
@@ -847,6 +896,20 @@ mod tests {
             .expect("block"),
             false,
         )
+    }
+
+    fn read_request(class: RequestClass) -> ReadBusRequest {
+        read_request_with_deadline(class, Instant::now() + Duration::from_secs(1))
+    }
+
+    async fn wait_for_sleep(clock: &ObservedClock) {
+        for _ in 0..32 {
+            if clock.sleep_calls() > 0 {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(clock.sleep_calls() > 0, "actor did not enter the expected sleep");
     }
 
     #[test]
@@ -883,6 +946,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deadline_expiring_during_t35_is_not_transmitted() {
+        let read_calls = Arc::new(Mutex::new(0));
+        let backend = FakeBackend {
+            read_calls: Arc::clone(&read_calls),
+            ..FakeBackend::default()
+        };
+        let clock = ObservedClock::new();
+        let (handle, task) = BusActor::spawn_with_clock(
+            backend,
+            BusActorConfig {
+                link: link(115_200),
+                profile_minimum_inter_frame_delay: Duration::ZERO,
+            },
+            Arc::new(clock.clone()),
+        );
+
+        handle
+            .read(read_request_with_deadline(
+                RequestClass::Interactive,
+                clock.now() + Duration::from_secs(1),
+            ))
+            .await
+            .expect("first read");
+        assert_eq!(*read_calls.lock().expect("read calls"), 1);
+
+        let second_handle = handle.clone();
+        let second_request = read_request_with_deadline(
+            RequestClass::Interactive,
+            clock.now() + Duration::from_millis(1),
+        );
+        let second = tokio::spawn(async move { second_handle.read(second_request).await });
+        wait_for_sleep(&clock).await;
+        assert_eq!(*read_calls.lock().expect("read calls"), 1);
+
+        clock.advance(Duration::from_micros(1_750));
+        assert_eq!(
+            second.await.expect("second read task"),
+            Err(BusError::TimeoutBeforeSend)
+        );
+        assert_eq!(*read_calls.lock().expect("read calls"), 1);
+        assert_eq!(handle.statistics().timeout_before_send, 1);
+
+        handle.shutdown();
+        task.await.expect("actor");
+    }
+
+    #[tokio::test]
+    async fn read_retry_is_not_sent_after_deadline_expires_during_retry_delay() {
+        let read_calls = Arc::new(Mutex::new(0));
+        let backend = FakeBackend {
+            reads: VecDeque::from([
+                Err(BusError::ResponseTimeout),
+                Ok(RawRegisters::new(vec![9]).expect("raw")),
+            ]),
+            read_calls: Arc::clone(&read_calls),
+            ..FakeBackend::default()
+        };
+        let clock = ObservedClock::new();
+        let (handle, task) = BusActor::spawn_with_clock(
+            backend,
+            BusActorConfig {
+                link: link(115_200),
+                profile_minimum_inter_frame_delay: Duration::ZERO,
+            },
+            Arc::new(clock.clone()),
+        );
+
+        let request_handle = handle.clone();
+        let request = read_request_with_deadline(
+            RequestClass::Interactive,
+            clock.now() + Duration::from_millis(2),
+        );
+        let pending = tokio::spawn(async move { request_handle.read(request).await });
+        wait_for_sleep(&clock).await;
+        assert_eq!(*read_calls.lock().expect("read calls"), 1);
+
+        clock.advance(Duration::from_millis(3));
+        assert_eq!(
+            pending.await.expect("read task"),
+            Err(BusError::ResponseTimeout)
+        );
+        assert_eq!(*read_calls.lock().expect("read calls"), 1);
+        assert_eq!(handle.statistics().read_retries, 0);
+
+        handle.shutdown();
+        task.await.expect("actor");
+    }
+
+    #[tokio::test]
     async fn write_is_never_retried_and_unknown_outcome_is_reported() {
         let writes = Arc::new(Mutex::new(0));
         let backend = FakeBackend {
@@ -905,13 +1057,10 @@ mod tests {
         .expect("block");
         let request = WriteCoordinator::test_only()
             .prepare_transport_write(
-                BusRequestContext::test_only(
-                    RequestId::new(2),
-                    SessionId::new(1),
-                    RequestClass::SafetyOneShot,
-                    Instant::now() + Duration::from_secs(1),
-                    None,
-                ),
+                RequestId::new(2),
+                SessionId::new(1),
+                Instant::now() + Duration::from_secs(1),
+                None,
                 SlaveId::new(1).expect("slave"),
                 ModbusFunction::WriteSingleRegister,
                 block,

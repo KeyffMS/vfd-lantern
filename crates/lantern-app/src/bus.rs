@@ -9,6 +9,8 @@ use lantern_domain::{
 };
 use thiserror::Error;
 
+use crate::write_coordinator::WriteAuthorityToken;
+
 pub type BusFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, BusError>> + Send + 'a>>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -113,8 +115,14 @@ impl BusRequestContext {
         Ok(Self::new(request_id, session_id, class, deadline, None))
     }
 
+    /// Creates a safety one-shot only for the holder of the sealed write authority.
+    ///
+    /// `WriteAuthorityToken` can only be instantiated inside the private
+    /// `write_coordinator` module, so another application module cannot mint a
+    /// production `SafetyOneShot` write context merely through `pub(crate)` visibility.
     #[allow(dead_code)]
     pub(crate) const fn safety_one_shot(
+        _authority: &WriteAuthorityToken,
         request_id: RequestId,
         session_id: SessionId,
         deadline: Instant,
@@ -293,6 +301,9 @@ impl ReadBusRequest {
 
 /// A write capability produced only by the application write authority.
 ///
+/// The crate-internal constructor requires an unforgeable `WriteAuthorityToken`
+/// whose value never leaves the private `write_coordinator` module.
+///
 /// ```compile_fail
 /// use lantern_app::PreparedBusWrite;
 /// let _ = PreparedBusWrite { /* private fields */ };
@@ -308,7 +319,8 @@ pub struct PreparedBusWrite {
 
 impl PreparedBusWrite {
     #[cfg_attr(not(feature = "test-support"), allow(dead_code))]
-    pub(crate) fn new(
+    pub(crate) fn from_write_authority(
+        _authority: &WriteAuthorityToken,
         context: BusRequestContext,
         slave: SlaveId,
         function: ModbusFunction,

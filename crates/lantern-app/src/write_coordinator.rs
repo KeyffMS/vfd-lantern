@@ -1,35 +1,70 @@
 #[cfg(feature = "test-support")]
-use lantern_domain::{ModbusFunction, RawRegisters, RegisterBlock, SlaveId};
+use std::time::Instant;
+
+#[cfg(feature = "test-support")]
+use lantern_domain::{
+    ModbusFunction, OperationId, RawRegisters, RegisterBlock, RequestId, SessionId, SlaveId,
+};
 
 #[cfg(feature = "test-support")]
 use crate::{BusError, BusRequestContext, PreparedBusWrite};
+
+/// Unforgeable crate-internal proof that a write request is being minted by the
+/// private write authority.
+///
+/// The type is visible to `bus` only so constructors can require it. Its value
+/// cannot be created or obtained outside this module because its field and the
+/// `WriteCoordinator` authority field are private.
+pub(crate) struct WriteAuthorityToken {
+    _sealed: (),
+}
 
 /// Single authority that may mint transport write capabilities.
 ///
 /// Its production constructor remains sealed until issues #16, #22 and #23 provide
 /// the complete safety, durable-audit and profile-trust dependencies.
 pub struct WriteCoordinator {
-    _sealed: (),
+    _authority: WriteAuthorityToken,
 }
 
 impl WriteCoordinator {
     #[cfg(feature = "test-support")]
     #[doc(hidden)]
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_transport_write(
         &self,
-        context: BusRequestContext,
+        request_id: RequestId,
+        session_id: SessionId,
+        deadline: Instant,
+        operation_id: Option<OperationId>,
         slave: SlaveId,
         function: ModbusFunction,
         block: RegisterBlock,
         values: RawRegisters,
     ) -> Result<PreparedBusWrite, BusError> {
-        PreparedBusWrite::new(context, slave, function, block, values)
+        let context = BusRequestContext::safety_one_shot(
+            &self._authority,
+            request_id,
+            session_id,
+            deadline,
+            operation_id,
+        );
+        PreparedBusWrite::from_write_authority(
+            &self._authority,
+            context,
+            slave,
+            function,
+            block,
+            values,
+        )
     }
 
     #[cfg(feature = "test-support")]
     #[doc(hidden)]
     pub const fn test_only() -> Self {
-        Self { _sealed: () }
+        Self {
+            _authority: WriteAuthorityToken { _sealed: () },
+        }
     }
 }
 
@@ -42,12 +77,12 @@ mod tests {
         RequestId, SessionId, SlaveId,
     };
 
-    use crate::BusRequestContext;
+    use crate::RequestClass;
 
     use super::WriteCoordinator;
 
     #[test]
-    fn authority_mints_a_width_checked_capability() {
+    fn authority_mints_a_width_checked_safety_capability() {
         let block = RegisterBlock::new(
             ModbusTable::HoldingRegisters,
             RegisterAddress::new(10),
@@ -57,18 +92,17 @@ mod tests {
         .expect("block");
         let request = WriteCoordinator::test_only()
             .prepare_transport_write(
-                BusRequestContext::safety_one_shot(
-                    RequestId::new(1),
-                    SessionId::new(1),
-                    Instant::now() + Duration::from_secs(1),
-                    None,
-                ),
+                RequestId::new(1),
+                SessionId::new(1),
+                Instant::now() + Duration::from_secs(1),
+                None,
                 SlaveId::new(1).expect("slave"),
                 ModbusFunction::WriteSingleRegister,
                 block,
                 RawRegisters::new(vec![42]).expect("raw"),
             )
             .expect("capability");
+        assert_eq!(request.context().class(), RequestClass::SafetyOneShot);
         assert_eq!(request.values().as_slice(), &[42]);
     }
 }
