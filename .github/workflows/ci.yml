@@ -26,29 +26,15 @@ jobs:
           test "${VERSION_ID%%.*}" = "13"
           printf 'runner=%s os=%s %s arch=%s\n' "$RUNNER_NAME" "$NAME" "$VERSION_ID" "$(uname -m)"
 
-      - name: Install system dependencies
+      - name: Verify runner prerequisites
         run: |
-          if [ "$(id -u)" -eq 0 ]; then
-            apt-get update
-            apt-get install --yes --no-install-recommends \
-              build-essential \
-              ca-certificates \
-              git \
-              libssl-dev \
-              libudev-dev \
-              pkg-config \
-              rustup
-          else
-            sudo apt-get update
-            sudo apt-get install --yes --no-install-recommends \
-              build-essential \
-              ca-certificates \
-              git \
-              libssl-dev \
-              libudev-dev \
-              pkg-config \
-              rustup
-          fi
+          command -v git
+          command -v cc
+          command -v make
+          command -v pkg-config
+          command -v rustup
+          pkg-config --exists openssl
+          pkg-config --exists libudev
 
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
