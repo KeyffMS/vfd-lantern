@@ -65,6 +65,9 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features --locked
 
+      - name: Run telemetry benchmark
+        run: cargo run --locked --release -p lantern-app --example telemetry_pipeline_benchmark
+
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings
@@ -76,6 +79,7 @@ jobs:
       - name: Install pinned supply-chain tools
         run: |
           export CARGO_INSTALL_ROOT="$HOME/.cache/vfd-lantern-cargo-tools"
+          export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
           sh scripts/install-cargo-tools.sh supply-chain
 
       - name: Check supply chain
