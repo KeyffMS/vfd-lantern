@@ -7,4 +7,6 @@ pub use model::*;
 pub use pipeline::*;
 
 #[cfg(test)]
+mod additional_tests;
+#[cfg(test)]
 mod tests;
