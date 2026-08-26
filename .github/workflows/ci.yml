@@ -51,7 +51,7 @@ jobs:
           cargo --version
 
       - name: Refresh lockfile for issue 12 dependency bootstrap
-        run: cargo metadata --format-version 1 --no-deps >/dev/null
+        run: cargo generate-lockfile
 
       - name: Validate lockfile and metadata
         run: cargo metadata --locked --format-version 1 --no-deps >/dev/null
