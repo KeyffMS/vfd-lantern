@@ -56,12 +56,7 @@ async fn dynamic_history_subscription_allocates_and_releases_buffer_immediately(
     let planner_config = PollPlannerConfig::for_profile(&profile);
     let first = Arc::new(
         planner
-            .build(
-                &profile,
-                [subscription(true)],
-                planner_config,
-                clock.now(),
-            )
+            .build(&profile, [subscription(true)], planner_config, clock.now())
             .expect("first plan"),
     );
     let (_poll_tx, poll_rx) = mpsc::channel(1);
@@ -87,12 +82,7 @@ async fn dynamic_history_subscription_allocates_and_releases_buffer_immediately(
 
     let second = Arc::new(
         planner
-            .build(
-                &profile,
-                [subscription(false)],
-                planner_config,
-                clock.now(),
-            )
+            .build(&profile, [subscription(false)], planner_config, clock.now())
             .expect("second plan"),
     );
     handle.update_plan(second).expect("disable history");
@@ -101,12 +91,7 @@ async fn dynamic_history_subscription_allocates_and_releases_buffer_immediately(
 
     let third = Arc::new(
         planner
-            .build(
-                &profile,
-                [subscription(true)],
-                planner_config,
-                clock.now(),
-            )
+            .build(&profile, [subscription(true)], planner_config, clock.now())
             .expect("third plan"),
     );
     handle.update_plan(third).expect("enable history");
@@ -151,7 +136,13 @@ async fn invalid_frame_preserves_last_good_and_next_good_recovers() {
         PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![5_000]).expect("raw"))),
     );
     let first = handle.latest();
-    assert!(first.value(&parameter()).expect("value").last_good.is_some());
+    assert!(
+        first
+            .value(&parameter())
+            .expect("value")
+            .last_good
+            .is_some()
+    );
 
     handle.ingest_test_result(
         plan.version(),
@@ -218,10 +209,10 @@ async fn multi_hour_fake_clock_run_keeps_history_and_render_output_bounded() {
             plan.blocks()[0].index(),
             RequestId::new(index + 1),
             clock.now(),
-            PollExecutionOutcome::Read(Ok(
-                RawRegisters::new(vec![u16::try_from(4_000 + index % 2_000).expect("raw word")])
-                    .expect("raw"),
-            )),
+            PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![
+                u16::try_from(4_000 + index % 2_000).expect("raw word"),
+            ])
+            .expect("raw"))),
         );
     }
 
