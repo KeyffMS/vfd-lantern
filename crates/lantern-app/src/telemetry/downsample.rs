@@ -179,10 +179,7 @@ fn downsample_segment(
                 maximum = Some(candidate);
             }
         }
-        let mut pair = [minimum, maximum]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let mut pair = [minimum, maximum].into_iter().flatten().collect::<Vec<_>>();
         pair.sort_by_key(|point| point.0);
         for (index, time, value) in pair {
             if selected.last().is_some_and(|(last, _)| *last == index) {
