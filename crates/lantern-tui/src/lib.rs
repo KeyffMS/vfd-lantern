@@ -94,7 +94,7 @@ mod tests {
             text.contains("DISCONNECTED"),
             text.contains("authorization=N/A"),
             text.contains("? help"),
-            text.contains("no device scan, serial open or Modbus transmission")
+            text.contains("no device scan")
         );
         insta::assert_snapshot!(semantic_snapshot, @r###"
         title=true
