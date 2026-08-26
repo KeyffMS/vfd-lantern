@@ -65,6 +65,8 @@ name = "P1"
 table = "holding_registers"
 address = { notation = "pdu_zero_based", value = 1 }
 encoding = "unsigned32"
+byte_order = "little_endian"
+word_order = "least_significant_first"
 quantity = "frequency"
 unit = "hz"
 scale = { multiplier = "1", divisor = "1", offset = "0", decimal_places = 0 }
@@ -156,7 +158,9 @@ async fn one_block_decodes_multiple_parameters_and_latest_values_are_metadata_fr
         plan.blocks()[0].index(),
         RequestId::new(7),
         clock.now(),
-        PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![10, 0, 20]).expect("raw"))),
+        PollExecutionOutcome::Read(Ok(
+            RawRegisters::new(vec![10, 0x1400, 0]).expect("raw"),
+        )),
     );
     let latest = handle.latest();
     let p0 = latest.value(&parameter("p0")).expect("p0");
@@ -202,7 +206,9 @@ async fn last_good_survives_timeout_and_disconnect_is_atomic() {
         plan.blocks()[0].index(),
         RequestId::new(1),
         clock.now(),
-        PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![1, 0, 2]).expect("raw"))),
+        PollExecutionOutcome::Read(Ok(
+            RawRegisters::new(vec![1, 0x0200, 0]).expect("raw"),
+        )),
     );
     handle.ingest_test_result(
         plan.version(),
@@ -252,7 +258,9 @@ async fn freshness_transitions_to_stale_and_new_good_recovers() {
         plan.blocks()[0].index(),
         RequestId::new(1),
         clock.now(),
-        PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![1, 0, 2]).expect("raw"))),
+        PollExecutionOutcome::Read(Ok(
+            RawRegisters::new(vec![1, 0x0200, 0]).expect("raw"),
+        )),
     );
     clock.advance(Duration::from_millis(20));
     assert!(
@@ -277,7 +285,9 @@ async fn freshness_transitions_to_stale_and_new_good_recovers() {
         plan.blocks()[0].index(),
         RequestId::new(2),
         clock.now(),
-        PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![3, 0, 4]).expect("raw"))),
+        PollExecutionOutcome::Read(Ok(
+            RawRegisters::new(vec![3, 0x0400, 0]).expect("raw"),
+        )),
     );
     assert!(
         handle
@@ -308,15 +318,16 @@ async fn history_and_consumer_backlogs_are_bounded_and_reported() {
     .expect("pipeline");
     for request in 0..8_u64 {
         clock.advance(Duration::from_millis(10));
+        let word = request as u16;
         handle.ingest_test_result(
             plan.version(),
             plan.blocks()[0].index(),
             RequestId::new(request + 1),
             clock.now(),
             PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![
-                request as u16,
+                word,
+                word.swap_bytes(),
                 0,
-                request as u16,
             ])
             .expect("raw"))),
         );
