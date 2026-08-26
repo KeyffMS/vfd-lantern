@@ -133,8 +133,10 @@ mod tests {
 
     #[test]
     fn modal_blocks_background_shortcuts() {
-        let mut ui = UiState::default();
-        ui.modal = Some(ModalState::Help);
+        let ui = UiState {
+            modal: Some(ModalState::Help),
+            ..UiState::default()
+        };
         let quit = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
         assert!(map_key(&ui, quit).is_none());
 
