@@ -50,11 +50,6 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Install pinned supply-chain tools
-        env:
-          CARGO_INSTALL_ROOT: ${{ runner.temp }}/vfd-lantern-cargo-tools
-        run: sh scripts/install-cargo-tools.sh supply-chain
-
       - name: Validate lockfile and metadata
         run: cargo metadata --locked --format-version 1 --no-deps >/dev/null
 
@@ -77,6 +72,11 @@ jobs:
 
       - name: Check architecture boundaries
         run: sh scripts/check-architecture.sh
+
+      - name: Install pinned supply-chain tools
+        run: |
+          export CARGO_INSTALL_ROOT="$HOME/.cache/vfd-lantern-cargo-tools"
+          sh scripts/install-cargo-tools.sh supply-chain
 
       - name: Check supply chain
         env:
