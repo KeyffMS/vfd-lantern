@@ -73,7 +73,7 @@ fn connection_lines(view: &ApplicationView) -> Vec<Line<'static>> {
         Line::from("The Verified-only connection wizard is implemented by #13."),
         Line::from(""),
         Line::from(format!(
-            "Profiles currently visible to ApplicationState: {profile_count}"
+            "Profiles currently visible to the application view: {profile_count}"
         )),
         Line::from("Press ? for key help. Use 1..9 or Left/Right to change screens."),
     ]
