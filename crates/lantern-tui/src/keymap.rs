@@ -102,14 +102,12 @@ pub fn map_key(ui: &UiState, key: KeyEvent) -> Option<MappedAction> {
         KeyCode::Down | KeyCode::Char('j') | KeyCode::PageDown => {
             Some(MappedAction::Ui(UiAction::ScrollDown))
         }
-        KeyCode::Char(character @ '1'..='9') => {
-            let index = usize::from(character as u8 - b'1');
-            Screen::ALL
-                .get(index)
-                .copied()
-                .map(UiAction::SelectScreen)
-                .map(MappedAction::Ui)
-        }
+        KeyCode::Char(character @ '1'..='9') => character
+            .to_digit(10)
+            .and_then(|digit| usize::try_from(digit.saturating_sub(1)).ok())
+            .and_then(|index| Screen::ALL.get(index).copied())
+            .map(UiAction::SelectScreen)
+            .map(MappedAction::Ui),
         _ => None,
     }
 }
