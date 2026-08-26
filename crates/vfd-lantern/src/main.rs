@@ -136,7 +136,7 @@ async fn run_tui(settings: &ValidatedSettings) -> Result<()> {
             action = terminal.next_action(&ui) => {
                 match action? {
                     MappedAction::Ui(action) => ui.apply(action),
-                    MappedAction::Application(action) => application.dispatch(action)?,
+                    MappedAction::Application(action) => application.dispatch(*action)?,
                 }
                 dirty = true;
             }
