@@ -10,12 +10,7 @@ use ratatui::{
 
 use crate::{HELP_BINDINGS, ModalState, Screen, Theme, UiState};
 
-pub fn render_header(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    view: &ApplicationView,
-    theme: Theme,
-) {
+pub fn render_header(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, theme: Theme) {
     let session = view.session();
     let session_id = session
         .session_id()
@@ -58,7 +53,11 @@ pub fn render_header(
     ];
 
     frame.render_widget(
-        Paragraph::new(lines).block(Block::bordered().title(" VFD Lantern ").title_style(theme.title())),
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .title(" VFD Lantern ")
+                .title_style(theme.title()),
+        ),
         area,
     );
 }
