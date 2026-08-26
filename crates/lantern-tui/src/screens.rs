@@ -72,12 +72,18 @@ fn connection_lines(view: &ApplicationView) -> Vec<Line<'static>> {
         Line::from("Clean start performs no device scan, serial open or Modbus transmission."),
         Line::from("The Verified-only connection wizard is implemented by #13."),
         Line::from(""),
-        Line::from(format!("Profiles currently visible to ApplicationState: {profile_count}")),
+        Line::from(format!(
+            "Profiles currently visible to ApplicationState: {profile_count}"
+        )),
         Line::from("Press ? for key help. Use 1..9 or Left/Right to change screens."),
     ]
 }
 
-fn planned_lines(title: &'static str, owner: &'static str, detail: &'static str) -> Vec<Line<'static>> {
+fn planned_lines(
+    title: &'static str,
+    owner: &'static str,
+    detail: &'static str,
+) -> Vec<Line<'static>> {
     vec![
         Line::from(format!("{title} presentation boundary is ready.")),
         Line::from(""),
