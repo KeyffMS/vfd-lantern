@@ -127,6 +127,7 @@ impl TerminalSession {
     }
 
     pub fn draw(&mut self, view: &ApplicationView, ui: &UiState) -> io::Result<()> {
+        self.terminal.autoresize()?;
         let theme = self.theme;
         self.terminal.draw(|frame| render(frame, view, ui, theme))?;
         Ok(())
