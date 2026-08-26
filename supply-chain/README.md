@@ -21,3 +21,12 @@ versions that were not previously required at the `safe-to-deploy` criterion.
 They are covered by narrowly scoped entries in `config.toml` for this locked
 graph. These entries are **exemptions, not independent source-code audits**.
 Any version change must obtain new policy coverage in the same pull request.
+
+## Issue #12 TUI dependency activation
+
+The Ratatui 0.30.2 / Crossterm 0.29.0 presentation stack activates additional
+exact transitive dependency versions in the locked graph. The entries generated
+for this graph in `config.toml` are reviewed policy **exemptions**, not a claim
+that VFD Lantern independently audited those crates. `cargo-deny`, `cargo-audit`
+and `cargo-vet` remain mandatory CI gates, and any dependency version change must
+receive fresh policy coverage in the same pull request.
