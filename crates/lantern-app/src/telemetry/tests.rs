@@ -156,9 +156,7 @@ async fn one_block_decodes_multiple_parameters_and_latest_values_are_metadata_fr
         plan.blocks()[0].index(),
         RequestId::new(7),
         clock.now(),
-        PollExecutionOutcome::Read(Ok(
-            RawRegisters::new(vec![10, 0, 20]).expect("raw"),
-        )),
+        PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![10, 0, 20]).expect("raw"))),
     );
     let latest = handle.latest();
     let p0 = latest.value(&parameter("p0")).expect("p0");
@@ -315,9 +313,12 @@ async fn history_and_consumer_backlogs_are_bounded_and_reported() {
             plan.blocks()[0].index(),
             RequestId::new(request + 1),
             clock.now(),
-            PollExecutionOutcome::Read(Ok(
-                RawRegisters::new(vec![request as u16, 0, request as u16]).expect("raw"),
-            )),
+            PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![
+                request as u16,
+                0,
+                request as u16,
+            ])
+            .expect("raw"))),
         );
     }
     assert!(handle.history(&parameter("p0")).len() <= 4);
@@ -358,9 +359,11 @@ fn downsampling_preserves_impulse_and_quality_gap() {
     );
     let rendered = downsample_min_max(&history, 20);
     assert!(rendered.len() <= 20);
-    assert!(rendered.iter().any(
-        |point| matches!(point, RenderHistoryPoint::Value { value, .. } if *value == 1000.0)
-    ));
+    assert!(
+        rendered.iter().any(
+            |point| matches!(point, RenderHistoryPoint::Value { value, .. } if *value == 1000.0)
+        )
+    );
     assert!(rendered.iter().any(|point| matches!(
         point,
         RenderHistoryPoint::Gap {
