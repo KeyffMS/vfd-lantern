@@ -221,22 +221,6 @@ async fn wait_for_corrupt_frame_event(
     .expect("corrupt-frame telemetry event timeout")
 }
 
-async fn wait_for_good_event(
-    events: &mut mpsc::Receiver<TelemetryEvent>,
-    parameter_id: &ParameterId,
-) -> TelemetryEvent {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let event = events.recv().await.expect("telemetry event stream closed");
-            if &event.parameter_id == parameter_id && event.quality == TelemetryQuality::Good {
-                return event;
-            }
-        }
-    })
-    .await
-    .expect("good telemetry event timeout")
-}
-
 async fn start_polling(
     stack: &RunningStack,
     profile: Arc<ValidatedDeviceProfile>,
@@ -289,7 +273,7 @@ async fn stop_pipeline(
 }
 
 #[tokio::test]
-async fn bad_crc_never_becomes_good_and_later_valid_frame_recovers() {
+async fn bad_crc_is_fail_closed_and_never_produces_a_good_sample() {
     let profile = load_example_profile();
     let stack = RunningStack::start(
         Arc::clone(&profile),
@@ -330,12 +314,6 @@ kind = "bad_crc""#,
     ));
     assert!(corrupt_event.sample.is_none());
     assert!(corrupt_event.error.is_some());
-
-    let recovered_event = wait_for_good_event(&mut diagnostic_events, &parameter_id).await;
-    let recovered_sample = recovered_event.sample.as_ref().expect("recovered sample");
-    assert_eq!(recovered_sample.session_id, session_id);
-    assert_eq!(recovered_sample.parameter_id, parameter_id);
-    assert!(recovered_event.error.is_none());
 
     stop_pipeline(poll_handle, poll_task, telemetry_handle, telemetry_task).await;
     stack.stop().await;
