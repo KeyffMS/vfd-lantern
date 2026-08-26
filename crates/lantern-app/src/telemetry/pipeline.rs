@@ -1,9 +1,14 @@
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
 };
 
-use lantern_domain::{ParameterId, RawRegisters, SessionId, TelemetryQuality, TelemetrySampleCore};
+use lantern_domain::{
+    ParameterId, RawRegisters, RequestId, SessionId, TelemetryQuality, TelemetrySampleCore,
+};
 use lantern_profile::ValidatedDeviceProfile;
 use tokio::{
     sync::{Notify, mpsc, watch},
@@ -147,6 +152,24 @@ impl TelemetryPipelineHandle {
             .unwrap_or_else(|| Arc::from(Vec::<HistoryPoint>::new().into_boxed_slice()))
     }
 
+    #[cfg(test)]
+    pub(crate) fn ingest_test_result(
+        &self,
+        plan_version: u64,
+        block_index: u32,
+        request_id: RequestId,
+        completed_at: Instant,
+        outcome: PollExecutionOutcome,
+    ) {
+        self.shared.process_parts(
+            plan_version,
+            block_index,
+            request_id,
+            completed_at,
+            outcome,
+        );
+    }
+
     #[must_use]
     pub fn statistics(&self) -> TelemetryPipelineStatistics {
         lock_state(&self.shared.state).statistics(self.shared.clock.now())
@@ -173,19 +196,31 @@ struct PipelineShared {
 
 impl PipelineShared {
     fn process_result(&self, result: PollExecutionResult) {
-        let completed_at = result.completed_at();
-        let request_id = result.request_id();
+        self.process_parts(
+            result.plan_version(),
+            result.block_index(),
+            result.request_id(),
+            result.completed_at(),
+            result.outcome().clone(),
+        );
+    }
+
+    fn process_parts(
+        &self,
+        plan_version: u64,
+        block_index: u32,
+        request_id: RequestId,
+        completed_at: Instant,
+        outcome: PollExecutionOutcome,
+    ) {
         let block = {
             let mut state = lock_state(&self.state);
-            let block = state
-                .plans
-                .get(&result.plan_version())
-                .and_then(|plan| {
-                    plan.blocks()
-                        .iter()
-                        .find(|block| block.index() == result.block_index())
-                        .cloned()
-                });
+            let block = state.plans.get(&plan_version).and_then(|plan| {
+                plan.blocks()
+                    .iter()
+                    .find(|block| block.index() == block_index)
+                    .cloned()
+            });
             if block.is_none() {
                 state.stats.unknown_plan_results =
                     state.stats.unknown_plan_results.saturating_add(1);
@@ -196,7 +231,6 @@ impl PipelineShared {
             return;
         };
 
-        let outcome = result.outcome().clone();
         let mut state = lock_state(&self.state);
         state.stats.attempts = state.stats.attempts.saturating_add(1);
         let mut events = Vec::new();
