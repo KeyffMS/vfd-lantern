@@ -50,4 +50,14 @@ Later issues must consume these application outputs instead of creating parallel
 
 ## Conformance
 
-The test suite covers multi-parameter block decoding, last-good preservation, monotonic stale/recovery, dynamic history subscriptions, bounded multi-hour history, slow-consumer drops, extrema-preserving downsampling and float special values. `lantern-sim` tests reuse the existing PTY/RTU harness to exercise timeout, Modbus exception, bad frame, physical disconnect and recovery without introducing a second transport simulator.
+The test suite covers multi-parameter block decoding with mixed register widths and byte/word order, last-good preservation, monotonic stale/recovery, dynamic history subscriptions, bounded multi-hour history, slow-consumer drops, extrema-preserving downsampling and float special values. `lantern-sim` tests reuse the existing PTY/RTU harness to exercise timeout, Modbus exception, bad frame, physical disconnect and recovery without introducing a second transport simulator.
+
+## Benchmark
+
+Run the deterministic developer benchmark with:
+
+```text
+cargo run --locked --release -p lantern-app --example telemetry_pipeline_benchmark
+```
+
+It validates a synthetic profile containing exactly the profile limit of 20,000 parameters, performs repeated full codec sweeps, and downsamples a 200,000-point history with an explicit quality gap. The benchmark records timings but does not hard-code candidate hardware thresholds; release-specific performance budgets and exact candidate-asset measurements remain part of #25.
