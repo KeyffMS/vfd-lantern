@@ -31,10 +31,7 @@ impl InputReader {
                 Event::Resize(width, height) => {
                     return Ok(MappedAction::Ui(UiAction::Resize { width, height }));
                 }
-                Event::FocusGained
-                | Event::FocusLost
-                | Event::Mouse(_)
-                | Event::Paste(_) => {}
+                Event::FocusGained | Event::FocusLost | Event::Mouse(_) | Event::Paste(_) => {}
             }
         }
     }
