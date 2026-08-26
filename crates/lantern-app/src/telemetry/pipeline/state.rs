@@ -104,7 +104,11 @@ impl PipelineState {
                         current.1 = current.1.min(slice.maximum_age());
                         current.2 |= slice.history_required();
                     })
-                    .or_insert((block.period(), slice.maximum_age(), slice.history_required()));
+                    .or_insert((
+                        block.period(),
+                        slice.maximum_age(),
+                        slice.history_required(),
+                    ));
             }
         }
 
