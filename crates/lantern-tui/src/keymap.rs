@@ -8,7 +8,7 @@ use crate::{Screen, UiAction, UiState};
 #[derive(Clone, Debug)]
 pub enum MappedAction {
     Ui(UiAction),
-    Application(ApplicationAction),
+    Application(Box<ApplicationAction>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -82,14 +82,14 @@ pub fn map_key(ui: &UiState, key: KeyEvent) -> Option<MappedAction> {
     }
 
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-        return Some(MappedAction::Application(ApplicationAction::Session(
-            SessionInput::Shutdown,
+        return Some(MappedAction::Application(Box::new(
+            ApplicationAction::Session(SessionInput::Shutdown),
         )));
     }
 
     match key.code {
-        KeyCode::Char('q') => Some(MappedAction::Application(ApplicationAction::Session(
-            SessionInput::Shutdown,
+        KeyCode::Char('q') => Some(MappedAction::Application(Box::new(
+            ApplicationAction::Session(SessionInput::Shutdown),
         ))),
         KeyCode::Char('?') => Some(MappedAction::Ui(UiAction::OpenHelp)),
         KeyCode::Tab => Some(MappedAction::Ui(UiAction::FocusNext)),
