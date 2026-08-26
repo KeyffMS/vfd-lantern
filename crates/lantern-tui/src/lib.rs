@@ -60,7 +60,7 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState, theme
 
 #[cfg(test)]
 mod tests {
-    use lantern_app::ApplicationState;
+    use lantern_app::ApplicationView;
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
     use super::{MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH, Theme, UiState, render};
@@ -82,7 +82,7 @@ mod tests {
     fn minimum_size_no_color_test_backend_snapshot_keeps_safety_labels_textual() {
         let backend = TestBackend::new(MIN_TERMINAL_WIDTH, MIN_TERMINAL_HEIGHT);
         let mut terminal = Terminal::new(backend).expect("test terminal");
-        let view = ApplicationState::default().view();
+        let view = ApplicationView::default();
         let ui = UiState::default();
         terminal
             .draw(|frame| render(frame, &view, &ui, Theme::new(false)))
@@ -109,7 +109,7 @@ mod tests {
     fn undersized_terminal_renders_only_resize_warning() {
         let backend = TestBackend::new(40, 10);
         let mut terminal = Terminal::new(backend).expect("test terminal");
-        let view = ApplicationState::default().view();
+        let view = ApplicationView::default();
         let ui = UiState::default();
         terminal
             .draw(|frame| render(frame, &view, &ui, Theme::new(false)))
