@@ -125,10 +125,7 @@ impl RunningStack {
     }
 }
 
-fn polling_plan(
-    profile: &ValidatedDeviceProfile,
-    now: Instant,
-) -> Arc<lantern_app::PollPlan> {
+fn polling_plan(profile: &ValidatedDeviceProfile, now: Instant) -> Arc<lantern_app::PollPlan> {
     let subscription = ReadSubscription::new(
         ParameterId::parse("status.output_frequency").expect("parameter"),
         FrequencyClass::Normal,
@@ -245,13 +242,7 @@ async fn verified_pty_polling_maps_timeout_exception_and_recovery_into_telemetry
         2,
     )
     .await;
-    wait_for_quality(
-        &telemetry_handle,
-        &parameter_id,
-        TelemetryQuality::Good,
-        3,
-    )
-    .await;
+    wait_for_quality(&telemetry_handle, &parameter_id, TelemetryQuality::Good, 3).await;
 
     let latest = telemetry_handle.latest();
     let value = latest.value(&parameter_id).expect("latest value");
