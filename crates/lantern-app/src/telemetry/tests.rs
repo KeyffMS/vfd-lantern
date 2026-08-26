@@ -158,9 +158,7 @@ async fn one_block_decodes_multiple_parameters_and_latest_values_are_metadata_fr
         plan.blocks()[0].index(),
         RequestId::new(7),
         clock.now(),
-        PollExecutionOutcome::Read(Ok(
-            RawRegisters::new(vec![10, 0x1400, 0]).expect("raw"),
-        )),
+        PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![10, 0x1400, 0]).expect("raw"))),
     );
     let latest = handle.latest();
     let p0 = latest.value(&parameter("p0")).expect("p0");
@@ -206,9 +204,7 @@ async fn last_good_survives_timeout_and_disconnect_is_atomic() {
         plan.blocks()[0].index(),
         RequestId::new(1),
         clock.now(),
-        PollExecutionOutcome::Read(Ok(
-            RawRegisters::new(vec![1, 0x0200, 0]).expect("raw"),
-        )),
+        PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![1, 0x0200, 0]).expect("raw"))),
     );
     handle.ingest_test_result(
         plan.version(),
@@ -258,9 +254,7 @@ async fn freshness_transitions_to_stale_and_new_good_recovers() {
         plan.blocks()[0].index(),
         RequestId::new(1),
         clock.now(),
-        PollExecutionOutcome::Read(Ok(
-            RawRegisters::new(vec![1, 0x0200, 0]).expect("raw"),
-        )),
+        PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![1, 0x0200, 0]).expect("raw"))),
     );
     clock.advance(Duration::from_millis(20));
     assert!(
@@ -285,9 +279,7 @@ async fn freshness_transitions_to_stale_and_new_good_recovers() {
         plan.blocks()[0].index(),
         RequestId::new(2),
         clock.now(),
-        PollExecutionOutcome::Read(Ok(
-            RawRegisters::new(vec![3, 0x0400, 0]).expect("raw"),
-        )),
+        PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![3, 0x0400, 0]).expect("raw"))),
     );
     assert!(
         handle
@@ -324,12 +316,9 @@ async fn history_and_consumer_backlogs_are_bounded_and_reported() {
             plan.blocks()[0].index(),
             RequestId::new(request + 1),
             clock.now(),
-            PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![
-                word,
-                word.swap_bytes(),
-                0,
-            ])
-            .expect("raw"))),
+            PollExecutionOutcome::Read(Ok(
+                RawRegisters::new(vec![word, word.swap_bytes(), 0]).expect("raw")
+            )),
         );
     }
     assert!(handle.history(&parameter("p0")).len() <= 4);
