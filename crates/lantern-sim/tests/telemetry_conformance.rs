@@ -7,7 +7,7 @@ use std::{
 use lantern_app::{
     BusControlPort, FrequencyClass, MonotonicClock, PollCadences, PollExecutor, PollPlanner,
     PollPlannerConfig, ReadBusPort, ReadSubscription, Rs485DirectionConfig, SerialOpenRequest,
-    SubscriberId, SubscriptionReason, TelemetryPipeline, TelemetryPipelineConfig,
+    SubscriberId, SubscriptionReason, TelemetryEvent, TelemetryPipeline, TelemetryPipelineConfig,
     TokioMonotonicClock,
 };
 use lantern_domain::{
@@ -19,6 +19,7 @@ use lantern_sim::{
     validate_scenario_for_profile,
 };
 use lantern_transport::{BusActorHandle, open_serial_bus};
+use tokio::sync::mpsc;
 
 const FINGERPRINT: &str = "example.vfd1000:telemetry-conformance";
 
@@ -197,6 +198,27 @@ async fn wait_for_quality(
     .expect("quality transition timeout");
 }
 
+async fn wait_for_corrupt_frame_event(
+    events: &mut mpsc::Receiver<TelemetryEvent>,
+    parameter_id: &ParameterId,
+) -> TelemetryEvent {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = events.recv().await.expect("telemetry event stream closed");
+            if &event.parameter_id == parameter_id
+                && matches!(
+                    event.quality,
+                    TelemetryQuality::Timeout | TelemetryQuality::DecodeError
+                )
+            {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("corrupt-frame telemetry event timeout")
+}
+
 async fn start_polling(
     stack: &RunningStack,
     profile: Arc<ValidatedDeviceProfile>,
@@ -207,6 +229,7 @@ async fn start_polling(
     tokio::task::JoinHandle<()>,
     lantern_app::TelemetryPipelineHandle,
     tokio::task::JoinHandle<()>,
+    mpsc::Receiver<TelemetryEvent>,
 ) {
     let clock: Arc<dyn MonotonicClock> = Arc::new(TokioMonotonicClock);
     let plan = polling_plan(&profile, clock.now(), maximum_age);
@@ -214,7 +237,7 @@ async fn start_polling(
     let (poll_handle, poll_results, poll_task) =
         PollExecutor::spawn(bus, Arc::clone(&clock), session_id, Arc::clone(&plan), 8)
             .expect("poll executor");
-    let (telemetry_handle, _consumers, telemetry_task) = TelemetryPipeline::spawn_system_utc(
+    let (telemetry_handle, consumers, telemetry_task) = TelemetryPipeline::spawn_system_utc(
         profile,
         clock,
         session_id,
@@ -223,7 +246,13 @@ async fn start_polling(
         telemetry_config(),
     )
     .expect("telemetry pipeline");
-    (poll_handle, poll_task, telemetry_handle, telemetry_task)
+    (
+        poll_handle,
+        poll_task,
+        telemetry_handle,
+        telemetry_task,
+        consumers.diagnostics,
+    )
 }
 
 async fn stop_pipeline(
@@ -266,30 +295,23 @@ kind = "bad_crc""#,
     assert!(stack.runtime.uses_wire_fault_harness());
     let session_id = SessionId::new(120);
     identify(&stack, &profile, session_id).await;
-    let (poll_handle, poll_task, telemetry_handle, telemetry_task) = start_polling(
-        &stack,
-        Arc::clone(&profile),
-        session_id,
-        Duration::from_secs(1),
-    )
-    .await;
+    let (poll_handle, poll_task, telemetry_handle, telemetry_task, mut diagnostic_events) =
+        start_polling(
+            &stack,
+            Arc::clone(&profile),
+            session_id,
+            Duration::from_secs(1),
+        )
+        .await;
     let parameter_id = ParameterId::parse("status.output_frequency").expect("parameter");
 
-    wait_for_quality(
-        &telemetry_handle,
-        &parameter_id,
-        TelemetryQuality::DecodeError,
-        1,
-    )
-    .await;
-    assert!(
-        telemetry_handle
-            .latest()
-            .value(&parameter_id)
-            .expect("decode error")
-            .last_good
-            .is_none()
-    );
+    let corrupt_event = wait_for_corrupt_frame_event(&mut diagnostic_events, &parameter_id).await;
+    assert!(matches!(
+        corrupt_event.quality,
+        TelemetryQuality::Timeout | TelemetryQuality::DecodeError
+    ));
+    assert!(corrupt_event.sample.is_none());
+    assert!(corrupt_event.error.is_some());
     wait_for_quality(&telemetry_handle, &parameter_id, TelemetryQuality::Good, 2).await;
     assert_eq!(stack.runtime.wire_records().len(), 3);
 
@@ -313,13 +335,14 @@ kind = "disconnect""#,
     .await;
     let session_id = SessionId::new(121);
     identify(&stack, &profile, session_id).await;
-    let (poll_handle, poll_task, telemetry_handle, telemetry_task) = start_polling(
-        &stack,
-        Arc::clone(&profile),
-        session_id,
-        Duration::from_secs(1),
-    )
-    .await;
+    let (poll_handle, poll_task, telemetry_handle, telemetry_task, _diagnostic_events) =
+        start_polling(
+            &stack,
+            Arc::clone(&profile),
+            session_id,
+            Duration::from_secs(1),
+        )
+        .await;
     let parameter_id = ParameterId::parse("status.output_frequency").expect("parameter");
     wait_for_quality(&telemetry_handle, &parameter_id, TelemetryQuality::Good, 1).await;
 
@@ -361,13 +384,14 @@ milliseconds = 350"#,
     .await;
     let session_id = SessionId::new(122);
     identify(&stack, &profile, session_id).await;
-    let (poll_handle, poll_task, telemetry_handle, telemetry_task) = start_polling(
-        &stack,
-        Arc::clone(&profile),
-        session_id,
-        Duration::from_millis(150),
-    )
-    .await;
+    let (poll_handle, poll_task, telemetry_handle, telemetry_task, _diagnostic_events) =
+        start_polling(
+            &stack,
+            Arc::clone(&profile),
+            session_id,
+            Duration::from_millis(150),
+        )
+        .await;
     let parameter_id = ParameterId::parse("status.output_frequency").expect("parameter");
     wait_for_quality(&telemetry_handle, &parameter_id, TelemetryQuality::Good, 1).await;
     wait_for_quality(&telemetry_handle, &parameter_id, TelemetryQuality::Stale, 1).await;
