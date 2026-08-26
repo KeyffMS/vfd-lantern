@@ -253,7 +253,7 @@ async fn verified_pty_polling_maps_timeout_exception_and_recovery_into_telemetry
     let EngineeringValue::Fixed(engineering) = &sample.engineering else {
         panic!("frequency should decode as fixed engineering value");
     };
-    assert_eq!(engineering.to_string(), "50.00");
+    assert_eq!(*engineering, rust_decimal::Decimal::new(5_000, 2));
     assert!(value.can_satisfy_write_guard());
 
     let history = telemetry_handle.history(&parameter_id);
