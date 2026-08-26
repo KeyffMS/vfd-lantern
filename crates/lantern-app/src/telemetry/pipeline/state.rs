@@ -127,6 +127,9 @@ impl PipelineState {
                     maximum_age: *maximum_age,
                     history_required: *history_required,
                 });
+            if *history_required {
+                self.histories.entry(parameter_id.clone()).or_default();
+            }
         }
         self.histories.retain(|parameter_id, _| {
             active
