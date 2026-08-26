@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "agent/**"]
+    branches: [main]
   pull_request:
 
 permissions:
@@ -14,30 +14,27 @@ concurrency:
 
 jobs:
   rust:
-    name: Debian 13 / Rust 1.97.1 / ${{ matrix.arch }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+    name: Debian 13 / Rust 1.97.1 / amd64
+    runs-on: [self-hosted, linux, x64]
 
     steps:
-      - name: Install system dependencies
+      - name: Verify runner platform
         run: |
-          apt-get update
-          apt-get install --yes --no-install-recommends \
-            build-essential \
-            ca-certificates \
-            git \
-            libssl-dev \
-            libudev-dev \
-            pkg-config \
-            rustup
+          test "$(uname -m)" = "x86_64"
+          . /etc/os-release
+          test "$ID" = "debian"
+          test "${VERSION_ID%%.*}" = "13"
+          printf 'runner=%s os=%s %s arch=%s\n' "$RUNNER_NAME" "$NAME" "$VERSION_ID" "$(uname -m)"
+
+      - name: Verify runner prerequisites
+        run: |
+          command -v git
+          command -v cc
+          command -v make
+          command -v pkg-config
+          command -v rustup
+          pkg-config --exists openssl
+          pkg-config --exists libudev
 
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -52,11 +49,6 @@ jobs:
           rustup default 1.97.1
           rustc --version
           cargo --version
-
-      - name: Install pinned supply-chain tools
-        env:
-          CARGO_INSTALL_ROOT: ${{ runner.temp }}/vfd-lantern-cargo-tools
-        run: sh scripts/install-cargo-tools.sh supply-chain
 
       - name: Validate lockfile and metadata
         run: cargo metadata --locked --format-version 1 --no-deps >/dev/null
@@ -73,6 +65,9 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features --locked
 
+      - name: Run telemetry benchmark
+        run: cargo run --locked --release -p lantern-app --example telemetry_pipeline_benchmark
+
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings
@@ -81,16 +76,22 @@ jobs:
       - name: Check architecture boundaries
         run: sh scripts/check-architecture.sh
 
+      - name: Install pinned supply-chain tools
+        run: |
+          export CARGO_INSTALL_ROOT="$HOME/.cache/vfd-lantern-cargo-tools"
+          export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
+          sh scripts/install-cargo-tools.sh supply-chain
+
       - name: Check supply chain
         env:
-          CARGO_VET_REPORT: target/supply-chain/cargo-vet-summary-${{ matrix.arch }}.json
+          CARGO_VET_REPORT: target/supply-chain/cargo-vet-summary-amd64.json
         run: sh scripts/check-supply-chain.sh
 
       - name: Upload supply-chain report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: supply-chain-${{ matrix.arch }}
+          name: supply-chain-amd64
           path: target/supply-chain
           if-no-files-found: warn
           retention-days: 14

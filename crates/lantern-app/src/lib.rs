@@ -11,6 +11,7 @@ mod profile_registry;
 mod serial;
 mod session;
 mod settings;
+mod telemetry;
 mod write_coordinator;
 
 pub use application::*;
@@ -22,4 +23,5 @@ pub use profile_registry::*;
 pub use serial::*;
 pub use session::*;
 pub use settings::*;
+pub use telemetry::*;
 pub use write_coordinator::*;
