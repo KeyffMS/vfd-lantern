@@ -266,8 +266,13 @@ kind = "bad_crc""#,
     assert!(stack.runtime.uses_wire_fault_harness());
     let session_id = SessionId::new(120);
     identify(&stack, &profile, session_id).await;
-    let (poll_handle, poll_task, telemetry_handle, telemetry_task) =
-        start_polling(&stack, Arc::clone(&profile), session_id, Duration::from_secs(1)).await;
+    let (poll_handle, poll_task, telemetry_handle, telemetry_task) = start_polling(
+        &stack,
+        Arc::clone(&profile),
+        session_id,
+        Duration::from_secs(1),
+    )
+    .await;
     let parameter_id = ParameterId::parse("status.output_frequency").expect("parameter");
 
     wait_for_quality(
@@ -285,13 +290,7 @@ kind = "bad_crc""#,
             .last_good
             .is_none()
     );
-    wait_for_quality(
-        &telemetry_handle,
-        &parameter_id,
-        TelemetryQuality::Good,
-        2,
-    )
-    .await;
+    wait_for_quality(&telemetry_handle, &parameter_id, TelemetryQuality::Good, 2).await;
     assert_eq!(stack.runtime.wire_records().len(), 3);
 
     stop_pipeline(poll_handle, poll_task, telemetry_handle, telemetry_task).await;
@@ -314,16 +313,15 @@ kind = "disconnect""#,
     .await;
     let session_id = SessionId::new(121);
     identify(&stack, &profile, session_id).await;
-    let (poll_handle, poll_task, telemetry_handle, telemetry_task) =
-        start_polling(&stack, Arc::clone(&profile), session_id, Duration::from_secs(1)).await;
-    let parameter_id = ParameterId::parse("status.output_frequency").expect("parameter");
-    wait_for_quality(
-        &telemetry_handle,
-        &parameter_id,
-        TelemetryQuality::Good,
-        1,
+    let (poll_handle, poll_task, telemetry_handle, telemetry_task) = start_polling(
+        &stack,
+        Arc::clone(&profile),
+        session_id,
+        Duration::from_secs(1),
     )
     .await;
+    let parameter_id = ParameterId::parse("status.output_frequency").expect("parameter");
+    wait_for_quality(&telemetry_handle, &parameter_id, TelemetryQuality::Good, 1).await;
 
     tokio::time::timeout(Duration::from_secs(3), stack.runtime.cancelled())
         .await
@@ -363,38 +361,25 @@ milliseconds = 350"#,
     .await;
     let session_id = SessionId::new(122);
     identify(&stack, &profile, session_id).await;
-    let (poll_handle, poll_task, telemetry_handle, telemetry_task) =
-        start_polling(
-            &stack,
-            Arc::clone(&profile),
-            session_id,
-            Duration::from_millis(150),
-        )
-        .await;
+    let (poll_handle, poll_task, telemetry_handle, telemetry_task) = start_polling(
+        &stack,
+        Arc::clone(&profile),
+        session_id,
+        Duration::from_millis(150),
+    )
+    .await;
     let parameter_id = ParameterId::parse("status.output_frequency").expect("parameter");
-    wait_for_quality(
-        &telemetry_handle,
-        &parameter_id,
-        TelemetryQuality::Good,
-        1,
-    )
-    .await;
-    wait_for_quality(
-        &telemetry_handle,
-        &parameter_id,
-        TelemetryQuality::Stale,
-        1,
-    )
-    .await;
+    wait_for_quality(&telemetry_handle, &parameter_id, TelemetryQuality::Good, 1).await;
+    wait_for_quality(&telemetry_handle, &parameter_id, TelemetryQuality::Stale, 1).await;
     let stale = telemetry_handle.latest();
-    assert!(stale.value(&parameter_id).expect("stale").last_good.is_some());
-    wait_for_quality(
-        &telemetry_handle,
-        &parameter_id,
-        TelemetryQuality::Good,
-        2,
-    )
-    .await;
+    assert!(
+        stale
+            .value(&parameter_id)
+            .expect("stale")
+            .last_good
+            .is_some()
+    );
+    wait_for_quality(&telemetry_handle, &parameter_id, TelemetryQuality::Good, 2).await;
 
     stop_pipeline(poll_handle, poll_task, telemetry_handle, telemetry_task).await;
     stack.stop().await;
