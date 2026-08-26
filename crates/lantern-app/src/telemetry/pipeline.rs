@@ -15,9 +15,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{
-    BusError, MonotonicClock, PollExecutionOutcome, PollExecutionResult, PollPlan,
-};
+use crate::{BusError, MonotonicClock, PollExecutionOutcome, PollExecutionResult, PollPlan};
 
 use super::{
     HistoryPoint, LatestValues, RenderHistoryPoint, SystemUtcClock, TelemetryAttemptError,
@@ -177,13 +175,8 @@ impl TelemetryPipelineHandle {
         completed_at: Instant,
         outcome: PollExecutionOutcome,
     ) {
-        self.shared.process_parts(
-            plan_version,
-            block_index,
-            request_id,
-            completed_at,
-            outcome,
-        );
+        self.shared
+            .process_parts(plan_version, block_index, request_id, completed_at, outcome);
     }
 
     #[must_use]
@@ -398,7 +391,10 @@ impl PipelineShared {
     }
 }
 
-async fn run_pipeline(shared: Arc<PipelineShared>, mut results: mpsc::Receiver<PollExecutionResult>) {
+async fn run_pipeline(
+    shared: Arc<PipelineShared>,
+    mut results: mpsc::Receiver<PollExecutionResult>,
+) {
     loop {
         if shared.shutdown.load(Ordering::Acquire) {
             return;
