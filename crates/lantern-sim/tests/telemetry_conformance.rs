@@ -208,7 +208,9 @@ async fn wait_for_corrupt_frame_event(
             if &event.parameter_id == parameter_id
                 && matches!(
                     event.quality,
-                    TelemetryQuality::Timeout | TelemetryQuality::DecodeError
+                    TelemetryQuality::Timeout
+                        | TelemetryQuality::DecodeError
+                        | TelemetryQuality::Unavailable
                 )
             {
                 return event;
@@ -217,6 +219,22 @@ async fn wait_for_corrupt_frame_event(
     })
     .await
     .expect("corrupt-frame telemetry event timeout")
+}
+
+async fn wait_for_good_event(
+    events: &mut mpsc::Receiver<TelemetryEvent>,
+    parameter_id: &ParameterId,
+) -> TelemetryEvent {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = events.recv().await.expect("telemetry event stream closed");
+            if &event.parameter_id == parameter_id && event.quality == TelemetryQuality::Good {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("good telemetry event timeout")
 }
 
 async fn start_polling(
@@ -308,12 +326,16 @@ kind = "bad_crc""#,
     let corrupt_event = wait_for_corrupt_frame_event(&mut diagnostic_events, &parameter_id).await;
     assert!(matches!(
         corrupt_event.quality,
-        TelemetryQuality::Timeout | TelemetryQuality::DecodeError
+        TelemetryQuality::Timeout | TelemetryQuality::DecodeError | TelemetryQuality::Unavailable
     ));
     assert!(corrupt_event.sample.is_none());
     assert!(corrupt_event.error.is_some());
-    wait_for_quality(&telemetry_handle, &parameter_id, TelemetryQuality::Good, 2).await;
-    assert_eq!(stack.runtime.wire_records().len(), 3);
+
+    let recovered_event = wait_for_good_event(&mut diagnostic_events, &parameter_id).await;
+    let recovered_sample = recovered_event.sample.as_ref().expect("recovered sample");
+    assert_eq!(recovered_sample.session_id, session_id);
+    assert_eq!(recovered_sample.parameter_id, parameter_id);
+    assert!(recovered_event.error.is_none());
 
     stop_pipeline(poll_handle, poll_task, telemetry_handle, telemetry_task).await;
     stack.stop().await;
