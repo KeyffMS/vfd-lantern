@@ -20,9 +20,9 @@ use crate::{
 };
 
 use super::{
-    HistoryPoint, LatestValue, LatestValues, SystemUtcClock, TelemetryAttemptError,
+    HistoryPoint, LatestValues, RenderHistoryPoint, SystemUtcClock, TelemetryAttemptError,
     TelemetryEvent, TelemetryPipelineConfig, TelemetryPipelineError, TelemetryPipelineStatistics,
-    UtcClock,
+    UtcClock, downsample_min_max,
 };
 
 mod state;
@@ -150,6 +150,22 @@ impl TelemetryPipelineHandle {
             .get(parameter_id)
             .map(|history| history.iter().cloned().collect::<Vec<_>>().into())
             .unwrap_or_else(|| Arc::from(Vec::<HistoryPoint>::new().into_boxed_slice()))
+    }
+
+    /// Builds a bounded render view directly from the channel's deque without
+    /// first cloning the complete history. The returned vector is capped by
+    /// `width` and is therefore suitable for TUI chart rendering.
+    #[must_use]
+    pub fn render_history(
+        &self,
+        parameter_id: &ParameterId,
+        width: usize,
+    ) -> Vec<RenderHistoryPoint> {
+        let mut state = lock_state(&self.shared.state);
+        let Some(history) = state.histories.get_mut(parameter_id) else {
+            return Vec::new();
+        };
+        downsample_min_max(history.make_contiguous(), width)
     }
 
     #[cfg(test)]
@@ -330,7 +346,8 @@ impl PipelineShared {
                 }
             }
         }
-        state.prune_histories(state.to_monotonic(completed_at));
+        let completed_monotonic = state.to_monotonic(completed_at);
+        state.prune_histories(completed_monotonic);
         drop(state);
         self.publish(events);
         self.changed.notify_one();
