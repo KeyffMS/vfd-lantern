@@ -166,8 +166,7 @@ impl UiState {
                 if self.viewport.width != width || self.viewport.height != height {
                     self.viewport.width = width;
                     self.viewport.height = height;
-                    self.viewport.layout_revision =
-                        self.viewport.layout_revision.saturating_add(1);
+                    self.viewport.layout_revision = self.viewport.layout_revision.saturating_add(1);
                 }
             }
         }
