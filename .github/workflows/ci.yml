@@ -16,20 +16,39 @@ jobs:
   rust:
     name: Debian 13 / Rust 1.97.1 / amd64
     runs-on: [self-hosted, linux, x64]
-    container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
 
     steps:
+      - name: Verify runner platform
+        run: |
+          test "$(uname -m)" = "x86_64"
+          . /etc/os-release
+          test "$ID" = "debian"
+          test "${VERSION_ID%%.*}" = "13"
+          printf 'runner=%s os=%s %s arch=%s\n' "$RUNNER_NAME" "$NAME" "$VERSION_ID" "$(uname -m)"
+
       - name: Install system dependencies
         run: |
-          apt-get update
-          apt-get install --yes --no-install-recommends \
-            build-essential \
-            ca-certificates \
-            git \
-            libssl-dev \
-            libudev-dev \
-            pkg-config \
-            rustup
+          if [ "$(id -u)" -eq 0 ]; then
+            apt-get update
+            apt-get install --yes --no-install-recommends \
+              build-essential \
+              ca-certificates \
+              git \
+              libssl-dev \
+              libudev-dev \
+              pkg-config \
+              rustup
+          else
+            sudo apt-get update
+            sudo apt-get install --yes --no-install-recommends \
+              build-essential \
+              ca-certificates \
+              git \
+              libssl-dev \
+              libudev-dev \
+              pkg-config \
+              rustup
+          fi
 
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
