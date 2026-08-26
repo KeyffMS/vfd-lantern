@@ -239,6 +239,16 @@ pub struct ApplicationView {
     session: SessionView,
 }
 
+impl Default for ApplicationView {
+    fn default() -> Self {
+        Self {
+            active_profile: None,
+            registry_profile_ids: Vec::new(),
+            session: SessionView::empty(SessionPhaseView::Disconnected),
+        }
+    }
+}
+
 impl ApplicationView {
     #[must_use]
     pub fn active_profile_id(&self) -> Option<&str> {
@@ -311,7 +321,7 @@ mod tests {
         ApplicationAction, ApplicationEffect, ApplicationState, EffectRunner, SessionPhaseView,
     };
 
-    use super::{ApplicationEffectError, ApplicationRuntime};
+    use super::{ApplicationEffectError, ApplicationRuntime, ApplicationView};
 
     #[derive(Default)]
     struct RecordingRunner(Vec<ApplicationEffect>);
@@ -343,5 +353,13 @@ mod tests {
         assert!(view.active_session().is_none());
         assert!(view.session().port().is_none());
         assert!(view.session().profile_hash().is_none());
+    }
+
+    #[test]
+    fn default_application_view_is_an_empty_disconnected_projection() {
+        let view = ApplicationView::default();
+        assert_eq!(view.session().phase(), SessionPhaseView::Disconnected);
+        assert!(view.active_profile_id().is_none());
+        assert!(view.registry_profile_ids().is_empty());
     }
 }
