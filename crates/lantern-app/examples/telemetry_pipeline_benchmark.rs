@@ -5,7 +5,9 @@ use lantern_domain::{
     EngineeringValue, MonotonicInstant, ParameterId, RawRegisters, RequestId, SessionId,
     TelemetryQuality, TelemetrySampleCore, UtcTimestamp,
 };
-use lantern_profile::{MAX_PARAMETERS, ProfileFormat, parse_and_validate_profile};
+use lantern_profile::{
+    MAX_PARAMETERS, MAX_PROFILE_BYTES, ProfileFormat, parse_and_validate_profile,
+};
 
 const DECODE_ITERATIONS: u64 = 100_000;
 const MAX_PROFILE_SWEEPS: u64 = 10;
@@ -17,9 +19,9 @@ fn maximum_profile_source() -> String {
         r#"schema_version = 1
 profile_id = "benchmark.maximum"
 revision = 1
-vendor = "Benchmark"
-family = "Maximum"
-model = "Synthetic"
+vendor = "B"
+family = "M"
+model = "S"
 
 [protocol]
 default_baud_rate = 115200
@@ -41,8 +43,8 @@ rs485_mode = "adapter_managed"
             r#"
 [[parameters]]
 id = "p{index}"
-code = "P{index}"
-name = "Parameter {index}"
+code = "{index}"
+name = "p"
 table = "holding_registers"
 address = {{ notation = "pdu_zero_based", value = {index} }}
 encoding = "unsigned16"
@@ -71,6 +73,7 @@ fn main() {
     let decode_elapsed = decode_started.elapsed();
 
     let maximum_source = maximum_profile_source();
+    assert!(maximum_source.len() <= MAX_PROFILE_BYTES);
     let maximum_validation_started = Instant::now();
     let maximum_profile =
         parse_and_validate_profile(maximum_source.as_bytes(), ProfileFormat::Toml)
@@ -137,8 +140,10 @@ fn main() {
         decode_elapsed.as_nanos() as f64 / DECODE_ITERATIONS as f64
     );
     println!(
-        "maximum profile: {MAX_PARAMETERS} parameters validated in {:?}; {maximum_decodes} decodes in {:?}",
-        maximum_validation_elapsed, maximum_sweep_elapsed
+        "maximum profile: {MAX_PARAMETERS} parameters / {} bytes validated in {:?}; {maximum_decodes} decodes in {:?}",
+        maximum_source.len(),
+        maximum_validation_elapsed,
+        maximum_sweep_elapsed
     );
     println!(
         "telemetry downsample: {} history points -> {} render points in {:?}",
