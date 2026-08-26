@@ -9,8 +9,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     FrequencyClass, ManualMonotonicClock, MonotonicClock, PollCadences, PollExecutionOutcome,
-    PollExecutionResult, PollPlanner, PollPlannerConfig, ReadSubscription, SubscriberId,
-    SubscriptionReason,
+    PollPlanner, PollPlannerConfig, ReadSubscription, SubscriberId, SubscriptionReason,
 };
 
 use super::{
@@ -135,23 +134,13 @@ fn pipeline_config() -> TelemetryPipelineConfig {
     }
 }
 
-async fn wait_for_attempt(handle: &crate::TelemetryPipelineHandle, expected: u64) {
-    for _ in 0..100 {
-        if handle.statistics().attempts >= expected {
-            return;
-        }
-        tokio::task::yield_now().await;
-    }
-    panic!("pipeline did not process expected attempt");
-}
-
 #[tokio::test]
 async fn one_block_decodes_multiple_parameters_and_latest_values_are_metadata_free() {
     let profile = profile();
     let clock = Arc::new(ManualMonotonicClock::new());
     let plan = plan(&profile, clock.as_ref(), true, Duration::from_secs(1));
     assert_eq!(plan.blocks().len(), 1);
-    let (tx, rx) = mpsc::channel(4);
+    let (_poll_tx, rx) = mpsc::channel(4);
     let (handle, _consumers, task) = TelemetryPipeline::spawn(
         Arc::clone(&profile),
         clock.clone(),
@@ -162,7 +151,7 @@ async fn one_block_decodes_multiple_parameters_and_latest_values_are_metadata_fr
         pipeline_config(),
     )
     .expect("pipeline");
-    tx.send(PollExecutionResult::test_only(
+    handle.ingest_test_result(
         plan.version(),
         plan.blocks()[0].index(),
         RequestId::new(7),
@@ -170,10 +159,7 @@ async fn one_block_decodes_multiple_parameters_and_latest_values_are_metadata_fr
         PollExecutionOutcome::Read(Ok(
             RawRegisters::new(vec![10, 0, 20]).expect("raw"),
         )),
-    ))
-    .await
-    .expect("send");
-    wait_for_attempt(&handle, 1).await;
+    );
     let latest = handle.latest();
     let p0 = latest.value(&parameter("p0")).expect("p0");
     let p1 = latest.value(&parameter("p1")).expect("p1");
@@ -202,7 +188,7 @@ async fn last_good_survives_timeout_and_disconnect_is_atomic() {
     let profile = profile();
     let clock = Arc::new(ManualMonotonicClock::new());
     let plan = plan(&profile, clock.as_ref(), true, Duration::from_secs(1));
-    let (tx, rx) = mpsc::channel(4);
+    let (_poll_tx, rx) = mpsc::channel(4);
     let (handle, _consumers, task) = TelemetryPipeline::spawn(
         profile,
         clock.clone(),
@@ -213,42 +199,33 @@ async fn last_good_survives_timeout_and_disconnect_is_atomic() {
         pipeline_config(),
     )
     .expect("pipeline");
-    tx.send(PollExecutionResult::test_only(
+    handle.ingest_test_result(
         plan.version(),
         plan.blocks()[0].index(),
         RequestId::new(1),
         clock.now(),
         PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![1, 0, 2]).expect("raw"))),
-    ))
-    .await
-    .expect("good");
-    wait_for_attempt(&handle, 1).await;
-    tx.send(PollExecutionResult::test_only(
+    );
+    handle.ingest_test_result(
         plan.version(),
         plan.blocks()[0].index(),
         RequestId::new(2),
         clock.now(),
         PollExecutionOutcome::Read(Err(crate::BusError::ResponseTimeout)),
-    ))
-    .await
-    .expect("timeout");
-    wait_for_attempt(&handle, 2).await;
+    );
     let after_timeout = handle.latest();
     for value in after_timeout.values().values() {
         assert_eq!(value.current_quality, TelemetryQuality::Timeout);
         assert!(value.last_good.is_some());
         assert!(!value.can_satisfy_write_guard());
     }
-    tx.send(PollExecutionResult::test_only(
+    handle.ingest_test_result(
         plan.version(),
         plan.blocks()[0].index(),
         RequestId::new(3),
         clock.now(),
         PollExecutionOutcome::Read(Err(crate::BusError::PortRemoved)),
-    ))
-    .await
-    .expect("disconnect");
-    wait_for_attempt(&handle, 3).await;
+    );
     assert!(handle.latest().values().values().all(|value| {
         value.current_quality == TelemetryQuality::Disconnected && value.last_good.is_some()
     }));
@@ -261,7 +238,7 @@ async fn freshness_transitions_to_stale_and_new_good_recovers() {
     let profile = profile();
     let clock = Arc::new(ManualMonotonicClock::new());
     let plan = plan(&profile, clock.as_ref(), true, Duration::from_millis(20));
-    let (tx, rx) = mpsc::channel(4);
+    let (_poll_tx, rx) = mpsc::channel(4);
     let (handle, _consumers, task) = TelemetryPipeline::spawn(
         profile,
         clock.clone(),
@@ -272,16 +249,13 @@ async fn freshness_transitions_to_stale_and_new_good_recovers() {
         pipeline_config(),
     )
     .expect("pipeline");
-    tx.send(PollExecutionResult::test_only(
+    handle.ingest_test_result(
         plan.version(),
         plan.blocks()[0].index(),
         RequestId::new(1),
         clock.now(),
         PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![1, 0, 2]).expect("raw"))),
-    ))
-    .await
-    .expect("good");
-    wait_for_attempt(&handle, 1).await;
+    );
     clock.advance(Duration::from_millis(20));
     assert!(
         handle
@@ -300,16 +274,13 @@ async fn freshness_transitions_to_stale_and_new_good_recovers() {
             .values()
             .all(|value| value.current_quality == TelemetryQuality::Stale)
     );
-    tx.send(PollExecutionResult::test_only(
+    handle.ingest_test_result(
         plan.version(),
         plan.blocks()[0].index(),
         RequestId::new(2),
         clock.now(),
         PollExecutionOutcome::Read(Ok(RawRegisters::new(vec![3, 0, 4]).expect("raw"))),
-    ))
-    .await
-    .expect("recovery");
-    wait_for_attempt(&handle, 2).await;
+    );
     assert!(
         handle
             .latest()
@@ -326,7 +297,7 @@ async fn history_and_consumer_backlogs_are_bounded_and_reported() {
     let profile = profile();
     let clock = Arc::new(ManualMonotonicClock::new());
     let plan = plan(&profile, clock.as_ref(), true, Duration::from_secs(1));
-    let (tx, rx) = mpsc::channel(16);
+    let (_poll_tx, rx) = mpsc::channel(16);
     let (handle, _consumers, task) = TelemetryPipeline::spawn(
         profile,
         clock.clone(),
@@ -339,7 +310,7 @@ async fn history_and_consumer_backlogs_are_bounded_and_reported() {
     .expect("pipeline");
     for request in 0..8_u64 {
         clock.advance(Duration::from_millis(10));
-        tx.send(PollExecutionResult::test_only(
+        handle.ingest_test_result(
             plan.version(),
             plan.blocks()[0].index(),
             RequestId::new(request + 1),
@@ -347,11 +318,8 @@ async fn history_and_consumer_backlogs_are_bounded_and_reported() {
             PollExecutionOutcome::Read(Ok(
                 RawRegisters::new(vec![request as u16, 0, request as u16]).expect("raw"),
             )),
-        ))
-        .await
-        .expect("send");
+        );
     }
-    wait_for_attempt(&handle, 8).await;
     assert!(handle.history(&parameter("p0")).len() <= 4);
     assert!(handle.history(&parameter("p1")).len() <= 4);
     let stats = handle.statistics();
