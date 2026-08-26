@@ -5,14 +5,12 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::{BusError, BusStatisticsSnapshot, PollExecutorStatistics, PollPlan, ValidatedSettings};
 use lantern_domain::{
     CodecError, MonotonicInstant, ParameterId, SessionId, TelemetryQuality, TelemetrySampleCore,
     UtcTimestamp,
 };
 use thiserror::Error;
-use crate::{
-    BusError, BusStatisticsSnapshot, PollExecutorStatistics, PollPlan, ValidatedSettings,
-};
 
 const BYTES_PER_MIB: usize = 1024 * 1024;
 
