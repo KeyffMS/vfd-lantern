@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "agent/**"]
+    branches: [main]
   pull_request:
 
 permissions:
@@ -14,16 +14,8 @@ concurrency:
 
 jobs:
   rust:
-    name: Debian 13 / Rust 1.97.1 / ${{ matrix.arch }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
+    name: Debian 13 / Rust 1.97.1 / amd64
+    runs-on: [self-hosted, linux, x64]
     container: debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
 
     steps:
@@ -83,14 +75,14 @@ jobs:
 
       - name: Check supply chain
         env:
-          CARGO_VET_REPORT: target/supply-chain/cargo-vet-summary-${{ matrix.arch }}.json
+          CARGO_VET_REPORT: target/supply-chain/cargo-vet-summary-amd64.json
         run: sh scripts/check-supply-chain.sh
 
       - name: Upload supply-chain report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: supply-chain-${{ matrix.arch }}
+          name: supply-chain-amd64
           path: target/supply-chain
           if-no-files-found: warn
           retention-days: 14
