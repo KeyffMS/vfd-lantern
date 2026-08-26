@@ -85,7 +85,7 @@ jobs:
       - name: Regenerate cargo-vet exemptions for issue 12 dependency activation
         run: |
           export PATH="$HOME/.cache/vfd-lantern-cargo-tools/bin:$PATH"
-          cargo vet --locked regenerate exemptions
+          cargo vet regenerate exemptions
 
       - name: Check supply chain
         env:
