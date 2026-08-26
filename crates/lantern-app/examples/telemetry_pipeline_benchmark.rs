@@ -72,8 +72,9 @@ fn main() {
 
     let maximum_source = maximum_profile_source();
     let maximum_validation_started = Instant::now();
-    let maximum_profile = parse_and_validate_profile(maximum_source.as_bytes(), ProfileFormat::Toml)
-        .expect("maximum profile");
+    let maximum_profile =
+        parse_and_validate_profile(maximum_source.as_bytes(), ProfileFormat::Toml)
+            .expect("maximum profile");
     let maximum_validation_elapsed = maximum_validation_started.elapsed();
     assert_eq!(maximum_profile.parameters().len(), MAX_PARAMETERS);
 
