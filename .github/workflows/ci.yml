@@ -82,10 +82,24 @@ jobs:
           export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
           sh scripts/install-cargo-tools.sh supply-chain
 
+      - name: Regenerate cargo-vet exemptions for issue 12 dependency activation
+        run: |
+          export PATH="$HOME/.cache/vfd-lantern-cargo-tools/bin:$PATH"
+          cargo vet --locked regenerate exemptions
+
       - name: Check supply chain
         env:
           CARGO_VET_REPORT: target/supply-chain/cargo-vet-summary-amd64.json
         run: sh scripts/check-supply-chain.sh
+
+      - name: Upload generated cargo-vet policy
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-12-cargo-vet-config
+          path: supply-chain/config.toml
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Upload supply-chain report
         if: always()
