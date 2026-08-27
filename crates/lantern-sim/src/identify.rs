@@ -1,21 +1,20 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use lantern_app::{
-    BusError, BusRequestContext, MonotonicClock, ReadBusPort, ReadBusRequest, TokioMonotonicClock,
-    VerifiedSessionIdentity,
+    AdapterIdentity, BusError, IdentificationAttempt, MonotonicClock, ReadBusPort,
+    TokioMonotonicClock,
 };
 use lantern_domain::{
     DeviceFingerprint, IdentificationMatch, IdentificationProbeResult, IdentificationReport,
-    ModbusFunction, ModbusTable, RequestId, SessionId, VerifiedDeviceIdentity,
+    SessionId,
 };
 use lantern_profile::ValidatedDeviceProfile;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct IdentificationAttempt {
-    pub report: IdentificationReport,
-    pub verified: Option<VerifiedSessionIdentity>,
-}
-
+/// Simulator compatibility adapter around the production application identification use case.
+///
+/// The explicit scenario fingerprint is retained only for existing #20 simulator tests. The
+/// real #13 composition path derives its fingerprint from opened-adapter and probe evidence in
+/// `lantern-app` and does not accept an externally supplied identity.
 pub async fn identify_profile_via_bus(
     bus: &dyn ReadBusPort,
     profile: &ValidatedDeviceProfile,
@@ -42,52 +41,28 @@ pub async fn identify_profile_via_bus_with_clock(
     timeout: Duration,
     clock: &dyn MonotonicClock,
 ) -> Result<IdentificationAttempt, BusError> {
-    let mut results = Vec::with_capacity(profile.probes().len());
-    for (index, probe) in profile.probes().iter().enumerate() {
-        let function = match probe.block.table() {
-            ModbusTable::HoldingRegisters => ModbusFunction::ReadHoldingRegisters,
-            ModbusTable::InputRegisters => ModbusFunction::ReadInputRegisters,
-        };
-        let request_id = RequestId::new(u64::try_from(index).unwrap_or(u64::MAX) + 1);
-        let raw = bus
-            .read(ReadBusRequest::one_shot(
-                BusRequestContext::interactive(request_id, session_id, clock.now() + timeout, None),
-                profile.protocol().default_link().slave_id,
-                function,
-                probe.block,
-            )?)
-            .await?;
-        let matched = probe.expected_raw.iter().any(|expected| expected == &raw);
-        results.push(IdentificationProbeResult {
-            probe_id: probe.id.clone(),
-            raw,
-            matched,
-        });
+    let adapter = AdapterIdentity {
+        stable_id: None,
+        canonical_device: PathBuf::from("/dev/vfd-lantern-simulator"),
+        vendor_id: None,
+        product_id: None,
+        serial_number: None,
+    };
+    let mut attempt = lantern_app::identify_profile_via_bus_with_clock(
+        bus,
+        profile,
+        &[],
+        &adapter,
+        session_id,
+        timeout,
+        clock,
+    )
+    .await;
+    attempt.report.fingerprint_candidate = Some(fingerprint.clone());
+    if let Some(verified) = &mut attempt.verified {
+        verified.device.fingerprint = fingerprint;
     }
-
-    let matched = results.iter().filter(|probe| probe.matched).count();
-    let outcome = if matched == results.len() && !results.is_empty() {
-        IdentificationMatch::Match
-    } else if matched > 0 {
-        IdentificationMatch::Partial
-    } else {
-        IdentificationMatch::Mismatch
-    };
-    let probes = results.into_boxed_slice();
-    let report = IdentificationReport {
-        profile_id: profile.profile_id().clone(),
-        outcome,
-        probes: probes.clone(),
-    };
-    let verified = (outcome == IdentificationMatch::Match).then(|| VerifiedSessionIdentity {
-        device: VerifiedDeviceIdentity {
-            profile_id: profile.profile_id().clone(),
-            fingerprint,
-            probes,
-        },
-        profile_hash: profile.profile_hash(),
-    });
-    Ok(IdentificationAttempt { report, verified })
+    Ok(attempt)
 }
 
 #[must_use]
@@ -99,5 +74,9 @@ pub fn ambiguous_identification_report(
         profile_id: profile.profile_id().clone(),
         outcome: IdentificationMatch::Ambiguous,
         probes,
+        fingerprint_candidate: None,
+        profile_hash: profile.profile_hash().to_hex(),
+        elapsed: Duration::ZERO,
+        error: None,
     }
 }
