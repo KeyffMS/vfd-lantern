@@ -427,6 +427,7 @@ impl ConnectionWizardState {
         let link = active_profile
             .and_then(|id| registry.get(id))
             .and_then(|entry| self.link.map(|current| link_view(current, entry.profile())));
+        let report = report_from_session(session);
         ConnectionWizardView {
             step: self.step,
             ports: self.ports.ports.iter().map(port_view).collect(),
@@ -439,7 +440,7 @@ impl ConnectionWizardState {
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
             failure: self.failure.as_ref().map(ToString::to_string),
-            report: report_from_session(session).map(report_view),
+            report: report.as_ref().map(report_view),
             last_export: self
                 .last_export
                 .as_ref()
@@ -499,13 +500,28 @@ pub fn identification_report_export(report: &IdentificationReport) -> Identifica
     }
 }
 
-fn report_from_session(state: &SessionState) -> Option<&IdentificationReport> {
+fn report_from_session(state: &SessionState) -> Option<IdentificationReport> {
     match state {
         SessionState::Disconnected {
             last_identification_report,
-        } => last_identification_report.as_ref(),
-        SessionState::Active(active) => Some(&active.identification_report),
-        SessionState::Connecting { .. } | SessionState::Identifying { .. } | SessionState::ShuttingDown => None,
+        } => last_identification_report.clone(),
+        SessionState::Active(active) => Some(IdentificationReport {
+            profile_id: active.identity.device.profile_id.clone(),
+            outcome: IdentificationMatch::Match,
+            probes: active.identity.device.probes.clone(),
+            fingerprint_candidate: Some(active.identity.device.fingerprint.clone()),
+            profile_hash: active.identity.profile_hash.to_hex(),
+            elapsed: active
+                .identity
+                .device
+                .probes
+                .iter()
+                .fold(Duration::ZERO, |total, probe| total.saturating_add(probe.elapsed)),
+            error: None,
+        }),
+        SessionState::Connecting { .. }
+        | SessionState::Identifying { .. }
+        | SessionState::ShuttingDown => None,
     }
 }
 
