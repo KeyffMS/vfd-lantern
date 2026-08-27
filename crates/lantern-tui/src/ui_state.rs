@@ -58,6 +58,11 @@ pub enum Focus {
     Modal,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConnectionEdit {
+    ManualPath,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModalState {
     Help,
@@ -88,6 +93,7 @@ pub struct UiState {
     pub scroll_offset: usize,
     pub selected_index: usize,
     pub form: FormState,
+    pub connection_edit: Option<ConnectionEdit>,
     pub modal: Option<ModalState>,
     pub viewport: Viewport,
 }
@@ -100,6 +106,7 @@ impl Default for UiState {
             scroll_offset: 0,
             selected_index: 0,
             form: FormState::default(),
+            connection_edit: None,
             modal: None,
             viewport: Viewport::default(),
         }
@@ -113,8 +120,14 @@ pub enum UiAction {
     PreviousScreen,
     ScrollUp,
     ScrollDown,
+    SelectionPrevious,
+    SelectionNext,
     FocusNext,
     FocusPrevious,
+    BeginManualPath(String),
+    InputChar(char),
+    Backspace,
+    CancelEdit,
     OpenHelp,
     CloseModal,
     Resize { width: u16, height: u16 },
@@ -126,11 +139,15 @@ impl UiState {
             UiAction::SelectScreen(screen) => {
                 self.screen = screen;
                 self.scroll_offset = 0;
+                self.selected_index = 0;
+                self.connection_edit = None;
             }
             UiAction::NextScreen => {
                 let next = (self.screen.index() + 1) % Screen::ALL.len();
                 self.screen = Screen::ALL[next];
                 self.scroll_offset = 0;
+                self.selected_index = 0;
+                self.connection_edit = None;
             }
             UiAction::PreviousScreen => {
                 let index = self.screen.index();
@@ -141,6 +158,8 @@ impl UiState {
                 };
                 self.screen = Screen::ALL[previous];
                 self.scroll_offset = 0;
+                self.selected_index = 0;
+                self.connection_edit = None;
             }
             UiAction::ScrollUp => {
                 self.scroll_offset = self.scroll_offset.saturating_sub(1);
@@ -148,11 +167,29 @@ impl UiState {
             UiAction::ScrollDown => {
                 self.scroll_offset = self.scroll_offset.saturating_add(1);
             }
+            UiAction::SelectionPrevious => {
+                self.selected_index = self.selected_index.saturating_sub(1);
+            }
+            UiAction::SelectionNext => {
+                self.selected_index = self.selected_index.saturating_add(1);
+            }
             UiAction::FocusNext | UiAction::FocusPrevious => {
                 self.focus = match self.focus {
                     Focus::Navigation => Focus::Content,
                     Focus::Content | Focus::Modal => Focus::Navigation,
                 };
+            }
+            UiAction::BeginManualPath(initial) => {
+                self.form.replace(initial);
+                self.connection_edit = Some(ConnectionEdit::ManualPath);
+                self.focus = Focus::Content;
+            }
+            UiAction::InputChar(character) => self.form.insert(character),
+            UiAction::Backspace => self.form.backspace(),
+            UiAction::CancelEdit => {
+                self.connection_edit = None;
+                self.form.clear();
+                self.focus = Focus::Navigation;
             }
             UiAction::OpenHelp => {
                 self.modal = Some(ModalState::Help);
@@ -175,7 +212,7 @@ impl UiState {
 
 #[cfg(test)]
 mod tests {
-    use super::{Focus, ModalState, Screen, UiAction, UiState};
+    use super::{ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState};
 
     #[test]
     fn ui_reducer_changes_only_presentation_state() {
@@ -186,6 +223,17 @@ mod tests {
         assert_eq!(state.screen, Screen::Dashboard);
         assert_eq!(state.scroll_offset, 1);
         assert_eq!(state.focus, Focus::Content);
+    }
+
+    #[test]
+    fn manual_path_edit_is_presentation_only() {
+        let mut state = UiState::default();
+        state.apply(UiAction::BeginManualPath("/dev/ttyUSB".to_owned()));
+        state.apply(UiAction::InputChar('0'));
+        assert_eq!(state.connection_edit, Some(ConnectionEdit::ManualPath));
+        assert_eq!(state.form.value(), "/dev/ttyUSB0");
+        state.apply(UiAction::CancelEdit);
+        assert!(state.connection_edit.is_none());
     }
 
     #[test]
