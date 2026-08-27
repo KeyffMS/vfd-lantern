@@ -6,9 +6,8 @@ use std::{
 
 use lantern_app::{
     ApplicationAction, ApplicationEffect, ApplicationEffectError, BusControlPort, ConnectionAction,
-    ConnectionAttemptKind, ConnectionEffect, EffectRunner, IdentificationReportExportV1,
-    PortDiscoveryPort, SessionEffect, SessionInput, SlaveId, identification_error_attempt,
-    identify_profile_via_bus,
+    ConnectionEffect, EffectRunner, IdentificationReportExportV1, PortDiscoveryPort, SessionEffect,
+    SessionInput, SlaveId, identification_error_attempt, identify_profile_via_bus,
 };
 use lantern_storage::create_new_synced;
 use lantern_transport::{BusActorHandle, UdevDiscovery, open_serial_bus_with_identity};
@@ -210,8 +209,7 @@ impl TuiEffectRunner {
                     &self.diagnostics_directory,
                     &suggested_name,
                     &report,
-                )
-                .map_err(|error| error.to_string());
+                );
                 send_action(
                     &self.action_tx,
                     ApplicationAction::Connection(ConnectionAction::ReportExported(result)),
@@ -285,8 +283,8 @@ fn write_report(
     directory: &Path,
     suggested_name: &str,
     report: &IdentificationReportExportV1,
-) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
-    let bytes = serde_json::to_vec_pretty(report)?;
+) -> Result<PathBuf, String> {
+    let bytes = serde_json::to_vec_pretty(report).map_err(|error| error.to_string())?;
     for suffix in 0_u32..=9_999 {
         let name = if suffix == 0 {
             suggested_name.to_owned()
@@ -297,10 +295,10 @@ fn write_report(
         if path.exists() {
             continue;
         }
-        create_new_synced(&path, &bytes)?;
+        create_new_synced(&path, &bytes).map_err(|error| error.to_string())?;
         return Ok(path);
     }
-    Err("too many existing identification report exports".into())
+    Err("too many existing identification report exports".to_owned())
 }
 
 #[cfg(test)]
