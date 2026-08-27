@@ -59,7 +59,7 @@ pub async fn identify_profile_via_bus_with_clock(
             selected_profile,
             adapter,
             results,
-            started_at.elapsed(),
+            clock.now().saturating_duration_since(started_at),
             "selected profile has no identification probes".to_owned(),
         );
     }
@@ -168,7 +168,6 @@ pub fn identification_error_report(
     adapter: Option<&AdapterIdentity>,
     message: impl Into<String>,
 ) -> IdentificationReport {
-    let message = message.into();
     IdentificationReport {
         profile_id: profile.profile_id().clone(),
         outcome: IdentificationMatch::Error,
@@ -176,7 +175,7 @@ pub fn identification_error_report(
         fingerprint_candidate: adapter.map(|identity| evidence_fingerprint(profile, identity, &[])),
         profile_hash: profile.profile_hash().to_hex(),
         elapsed: Duration::ZERO,
-        error: Some(message),
+        error: Some(message.into()),
     }
 }
 
@@ -254,7 +253,7 @@ fn evidence_fingerprint(
         .expect("sha256 evidence fingerprint is a portable bounded identifier")
 }
 
-const fn quality_for_bus_error(error: &BusError) -> TelemetryQuality {
+fn quality_for_bus_error(error: &BusError) -> TelemetryQuality {
     match error {
         BusError::TimeoutBeforeSend | BusError::ResponseTimeout => TelemetryQuality::Timeout,
         BusError::ProtocolException { .. } => TelemetryQuality::ProtocolException,
@@ -274,9 +273,7 @@ const fn quality_for_bus_error(error: &BusError) -> TelemetryQuality {
 mod tests {
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
-    use lantern_domain::{
-        IdentificationMatch, RawRegisters, RegisterBlock, RequestId, SessionId,
-    };
+    use lantern_domain::{IdentificationMatch, RawRegisters, SessionId};
     use lantern_profile::{ProfileFormat, parse_and_validate_profile};
 
     use crate::{
@@ -335,7 +332,6 @@ mod tests {
         assert!(attempt.report.fingerprint_candidate.is_some());
         assert!(attempt.verified.is_some());
         assert_eq!(attempt.report.probes[0].block, first.block);
-        let _ = (RequestId::new(1), RegisterBlock::clone(&first.block));
     }
 
     #[tokio::test]
