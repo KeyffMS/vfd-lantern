@@ -5,6 +5,7 @@
 mod application;
 mod bus;
 mod clock;
+mod identification;
 mod poll;
 mod ports;
 mod profile_registry;
@@ -17,6 +18,7 @@ mod write_coordinator;
 pub use application::*;
 pub use bus::*;
 pub use clock::*;
+pub use identification::*;
 pub use poll::*;
 pub use ports::*;
 pub use profile_registry::*;
