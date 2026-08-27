@@ -2446,8 +2446,10 @@ dependencies = [
  "clap",
  "lantern-app",
  "lantern-storage",
+ "lantern-transport",
  "lantern-tui",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 
