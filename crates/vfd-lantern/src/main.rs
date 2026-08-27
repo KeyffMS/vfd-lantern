@@ -3,11 +3,13 @@
 #![forbid(unsafe_code)]
 
 mod cli;
+mod connection_runtime;
 mod panic_support;
 mod profile_commands;
 
 use std::{
     io::{self, IsTerminal},
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -15,18 +17,24 @@ use std::{
 use anyhow::{Result, bail};
 use clap::Parser;
 use lantern_app::{
-    ApplicationEffect, ApplicationEffectError, ApplicationRuntime, ApplicationState,
-    CliSettingsOverrides, ColorMode, EffectRunner, ProfileRegistry, SessionEffect, SessionInput,
-    SessionPhaseView, SettingsLoader, ValidatedSettings,
+    ApplicationAction, ApplicationRuntime, ApplicationState, CliSettingsOverrides, ColorMode,
+    ConnectionAction, PortDiscoveryPort, ProfileRegistry, SessionInput, SessionPhaseView,
+    SettingsLoader, ValidatedSettings,
 };
-use lantern_storage::{AppPaths, FilesystemSettingsSource};
-use lantern_tui::{MappedAction, TerminalGuard, TerminalSession, UiState};
-use tokio::signal::unix::{SignalKind, signal};
+use lantern_storage::{
+    AppPaths, FilesystemProfileSource, FilesystemSettingsSource, ProfileLocations,
+};
+use lantern_transport::UdevDiscovery;
+use lantern_tui::{MappedAction, TerminalSession, UiState};
+use tokio::{signal::unix::{SignalKind, signal}, sync::mpsc};
 
 use crate::{
     cli::{BackupCommand, Cli, Command, DiagnosticsCommand},
+    connection_runtime::TuiEffectRunner,
     panic_support::install_terminal_panic_hook,
 };
+
+const SYSTEM_PROFILE_DIRECTORY: &str = "/usr/share/vfd-lantern/profiles";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -50,7 +58,7 @@ async fn main() -> Result<()> {
         },
         application_log.as_deref(),
     )?;
-    let _paths = AppPaths::resolve(&settings.paths)?;
+    let paths = AppPaths::resolve(&settings.paths)?;
 
     match cli.command {
         Some(Command::Profile(arguments)) => profile_commands::run(arguments.command),
@@ -73,52 +81,38 @@ async fn main() -> Result<()> {
                 output.display()
             ),
         },
-        None => run_tui(&settings).await,
+        None => run_tui(&settings, &paths).await,
     }
 }
 
-struct TuiEffectRunner {
-    terminal_guard: Arc<TerminalGuard>,
-}
+async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
+    let registry = load_product_registry(settings, paths)?;
+    let discovery = Arc::new(UdevDiscovery::default());
+    let mut port_events = discovery.subscribe()?;
 
-impl EffectRunner for TuiEffectRunner {
-    fn execute(&mut self, effect: ApplicationEffect) -> Result<(), ApplicationEffectError> {
-        match effect {
-            ApplicationEffect::Session(SessionEffect::RestoreTerminal) => self
-                .terminal_guard
-                .restore()
-                .map_err(|error| ApplicationEffectError(error.to_string())),
-            ApplicationEffect::Session(
-                SessionEffect::AbortOperation
-                | SessionEffect::StopPlanner
-                | SessionEffect::FinalizeStorage
-                | SessionEffect::ShutdownBusActor
-                | SessionEffect::FinalizeLogs,
-            ) => Ok(()),
-            ApplicationEffect::Session(other) => Err(ApplicationEffectError(format!(
-                "session effect {other:?} is not reachable before the #13 connection workflow"
-            ))),
-        }
-    }
-}
-
-async fn run_tui(settings: &ValidatedSettings) -> Result<()> {
     let mut terminal = TerminalSession::enter(color_enabled(settings))?;
     let terminal_guard = terminal.guard();
     install_terminal_panic_hook(Arc::clone(&terminal_guard));
 
-    let state = ApplicationState::with_registry(
-        Arc::new(ProfileRegistry::default()),
+    let (action_tx, mut action_rx) = mpsc::unbounded_channel();
+    let state = ApplicationState::with_registry_and_suggestions(
+        registry,
         settings.process_writes_enabled,
+        settings.suggested_device.clone(),
+        settings.suggested_slave,
     );
-    let mut application = ApplicationRuntime::new(
-        state,
-        TuiEffectRunner {
-            terminal_guard: Arc::clone(&terminal_guard),
-        },
+    let runner = TuiEffectRunner::new(
+        Arc::clone(&terminal_guard),
+        action_tx,
+        Arc::clone(&discovery),
+        paths.diagnostics_directory.clone(),
     );
+    let mut application = ApplicationRuntime::new(state, runner);
     let mut ui = UiState::default();
     terminal.initialize_viewport(&mut ui)?;
+
+    // Passive discovery only. The effect runner does not open a port here.
+    application.dispatch(ApplicationAction::Connection(ConnectionAction::RefreshPorts))?;
     terminal.draw(&application.state().view(), &ui)?;
 
     let frame_interval = Duration::from_millis(1_000 / u64::from(settings.render_fps));
@@ -131,21 +125,37 @@ async fn run_tui(settings: &ValidatedSettings) -> Result<()> {
         let redraw_at = last_draw
             .checked_add(frame_interval)
             .unwrap_or_else(Instant::now);
+        let view = application.state().view();
 
         tokio::select! {
-            action = terminal.next_action(&ui) => {
+            action = terminal.next_action(&ui, &view) => {
                 match action? {
                     MappedAction::Ui(action) => ui.apply(action),
                     MappedAction::Application(action) => application.dispatch(*action)?,
+                    MappedAction::Combined { ui: ui_action, application: app_action } => {
+                        ui.apply(ui_action);
+                        application.dispatch(*app_action)?;
+                    }
                 }
                 dirty = true;
             }
+            Some(action) = action_rx.recv() => {
+                application.dispatch(action)?;
+                dirty = true;
+            }
+            event = port_events.recv() => {
+                let Some(event) = event else {
+                    bail!("udev hotplug monitor closed unexpectedly");
+                };
+                application.dispatch(ApplicationAction::Connection(ConnectionAction::PortEvent(event)))?;
+                dirty = true;
+            }
             _ = sigint.recv() => {
-                application.dispatch(lantern_app::ApplicationAction::Session(SessionInput::Shutdown))?;
+                application.dispatch(ApplicationAction::Session(SessionInput::Shutdown))?;
                 break;
             }
             _ = sigterm.recv() => {
-                application.dispatch(lantern_app::ApplicationAction::Session(SessionInput::Shutdown))?;
+                application.dispatch(ApplicationAction::Session(SessionInput::Shutdown))?;
                 break;
             }
             () = tokio::time::sleep_until(tokio::time::Instant::from_std(redraw_at)), if dirty => {
@@ -162,6 +172,24 @@ async fn run_tui(settings: &ValidatedSettings) -> Result<()> {
 
     terminal.restore()?;
     Ok(())
+}
+
+fn load_product_registry(
+    settings: &ValidatedSettings,
+    paths: &AppPaths,
+) -> Result<Arc<ProfileRegistry>> {
+    let explicit = settings
+        .suggested_profile
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    let source = FilesystemProfileSource::new(ProfileLocations {
+        explicit,
+        user_directory: Some(paths.user_profiles.clone()),
+        system_directory: Some(PathBuf::from(SYSTEM_PROFILE_DIRECTORY)),
+    });
+    let registry = ProfileRegistry::load(&source, &profile_commands::embedded_manifest()?)?;
+    Ok(Arc::new(registry))
 }
 
 fn color_enabled(settings: &ValidatedSettings) -> bool {
