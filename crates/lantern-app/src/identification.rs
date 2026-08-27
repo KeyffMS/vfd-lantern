@@ -1,8 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
 use lantern_domain::{
-    DeviceFingerprint, IdentificationMatch, IdentificationProbeResult, IdentificationReport,
-    ModbusFunction, ModbusTable, RequestId, SessionId, TelemetryQuality, VerifiedDeviceIdentity,
+    DeviceFingerprint, EngineeringValue, IdentificationMatch, IdentificationProbeResult,
+    IdentificationReport, ModbusFunction, ModbusTable, RawRegisters, RegisterBlock, RequestId,
+    SessionId, TelemetryQuality, VerifiedDeviceIdentity,
 };
 use lantern_profile::ValidatedDeviceProfile;
 use sha2::{Digest, Sha256};
@@ -13,15 +14,45 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct IdentificationAttempt {
-    pub report: IdentificationReport,
-    pub verified: Option<VerifiedSessionIdentity>,
+pub struct IdentificationProbeDiagnostic {
+    pub probe_id: String,
+    pub description: String,
+    pub block: RegisterBlock,
+    pub expected_raw: Box<[RawRegisters]>,
+    pub raw: Option<RawRegisters>,
+    /// Profile v1 identification probes are raw-only, so this stays `None` instead of
+    /// inventing an engineering codec that is absent from the validated profile.
+    pub engineering: Option<EngineeringValue>,
+    pub quality: TelemetryQuality,
+    pub elapsed: Duration,
+    pub matched: bool,
+    pub error: Option<String>,
 }
 
-/// Performs only the bounded, profile-declared read probes required for identification.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IdentificationDiagnostics {
+    pub profile_id: String,
+    pub outcome: IdentificationMatch,
+    pub probes: Box<[IdentificationProbeDiagnostic]>,
+    pub fingerprint_candidate: Option<DeviceFingerprint>,
+    pub profile_hash: String,
+    pub elapsed: Duration,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IdentificationAttempt {
+    /// Minimal safety-relevant report consumed by `SessionStateMachine`.
+    pub report: IdentificationReport,
+    pub verified: Option<VerifiedSessionIdentity>,
+    /// Application-owned diagnostic evidence used by the connection wizard and offline export.
+    pub diagnostics: IdentificationDiagnostics,
+}
+
+/// Performs only bounded, profile-declared read probes.
 ///
-/// The caller supplies the already-opened adapter identity. No scanning, guessing, fallback
-/// profile selection or writes are performed here.
+/// The caller supplies the already-opened adapter identity. This function performs no scanning,
+/// guessing, fallback profile selection or writes.
 pub async fn identify_profile_via_bus(
     bus: &dyn ReadBusPort,
     selected_profile: &ValidatedDeviceProfile,
@@ -52,13 +83,15 @@ pub async fn identify_profile_via_bus_with_clock(
     clock: &dyn MonotonicClock,
 ) -> IdentificationAttempt {
     let started_at = clock.now();
-    let mut results = Vec::with_capacity(selected_profile.probes().len());
+    let mut core_results = Vec::with_capacity(selected_profile.probes().len());
+    let mut diagnostics = Vec::with_capacity(selected_profile.probes().len());
 
     if selected_profile.probes().is_empty() {
-        return error_attempt(
+        return identification_error_attempt_with_elapsed(
             selected_profile,
-            adapter,
-            results,
+            Some(adapter),
+            core_results,
+            diagnostics,
             clock.now().saturating_duration_since(started_at),
             "selected profile has no identification probes".to_owned(),
         );
@@ -85,7 +118,12 @@ pub async fn identify_profile_via_bus_with_clock(
         match raw {
             Ok(raw) => {
                 let matched = probe.expected_raw.iter().any(|expected| expected == &raw);
-                results.push(IdentificationProbeResult {
+                core_results.push(IdentificationProbeResult {
+                    probe_id: probe.id.clone(),
+                    raw: raw.clone(),
+                    matched,
+                });
+                diagnostics.push(IdentificationProbeDiagnostic {
                     probe_id: probe.id.clone(),
                     description: probe.description.clone(),
                     block: probe.block,
@@ -99,7 +137,7 @@ pub async fn identify_profile_via_bus_with_clock(
                 });
             }
             Err(error) => {
-                results.push(IdentificationProbeResult {
+                diagnostics.push(IdentificationProbeDiagnostic {
                     probe_id: probe.id.clone(),
                     description: probe.description.clone(),
                     block: probe.block,
@@ -111,10 +149,11 @@ pub async fn identify_profile_via_bus_with_clock(
                     matched: false,
                     error: Some(error.to_string()),
                 });
-                return error_attempt(
+                return identification_error_attempt_with_elapsed(
                     selected_profile,
-                    adapter,
-                    results,
+                    Some(adapter),
+                    core_results,
+                    diagnostics,
                     clock.now().saturating_duration_since(started_at),
                     error.to_string(),
                 );
@@ -122,8 +161,8 @@ pub async fn identify_profile_via_bus_with_clock(
         }
     }
 
-    let matched = results.iter().filter(|probe| probe.matched).count();
-    let mut outcome = if matched == results.len() {
+    let matched = core_results.iter().filter(|probe| probe.matched).count();
+    let mut outcome = if matched == core_results.len() {
         IdentificationMatch::Match
     } else if matched > 0 {
         IdentificationMatch::Partial
@@ -134,76 +173,89 @@ pub async fn identify_profile_via_bus_with_clock(
     if outcome == IdentificationMatch::Match
         && candidate_profiles.iter().any(|candidate| {
             candidate.profile_id() != selected_profile.profile_id()
-                && profile_matches_observed(candidate, &results)
+                && profile_matches_observed(candidate, &diagnostics)
         })
     {
         outcome = IdentificationMatch::Ambiguous;
     }
 
-    let fingerprint = evidence_fingerprint(selected_profile, adapter, &results);
-    let probes = results.into_boxed_slice();
+    let fingerprint = evidence_fingerprint(selected_profile, adapter, &diagnostics);
+    let core_probes = core_results.into_boxed_slice();
     let report = IdentificationReport {
         profile_id: selected_profile.profile_id().clone(),
         outcome,
-        probes: probes.clone(),
-        fingerprint_candidate: Some(fingerprint.clone()),
-        profile_hash: selected_profile.profile_hash().to_hex(),
-        elapsed: clock.now().saturating_duration_since(started_at),
-        error: None,
+        probes: core_probes.clone(),
     };
     let verified = (outcome == IdentificationMatch::Match).then(|| VerifiedSessionIdentity {
         device: VerifiedDeviceIdentity {
             profile_id: selected_profile.profile_id().clone(),
-            fingerprint,
-            probes,
+            fingerprint: fingerprint.clone(),
+            probes: core_probes,
         },
         profile_hash: selected_profile.profile_hash(),
     });
-    IdentificationAttempt { report, verified }
-}
-
-#[must_use]
-pub fn identification_error_report(
-    profile: &ValidatedDeviceProfile,
-    adapter: Option<&AdapterIdentity>,
-    message: impl Into<String>,
-) -> IdentificationReport {
-    IdentificationReport {
-        profile_id: profile.profile_id().clone(),
-        outcome: IdentificationMatch::Error,
-        probes: Box::new([]),
-        fingerprint_candidate: adapter.map(|identity| evidence_fingerprint(profile, identity, &[])),
-        profile_hash: profile.profile_hash().to_hex(),
-        elapsed: Duration::ZERO,
-        error: Some(message.into()),
+    IdentificationAttempt {
+        report,
+        verified,
+        diagnostics: IdentificationDiagnostics {
+            profile_id: selected_profile.profile_id().to_string(),
+            outcome,
+            probes: diagnostics.into_boxed_slice(),
+            fingerprint_candidate: Some(fingerprint),
+            profile_hash: selected_profile.profile_hash().to_hex(),
+            elapsed: clock.now().saturating_duration_since(started_at),
+            error: None,
+        },
     }
 }
 
-fn error_attempt(
+#[must_use]
+pub fn identification_error_attempt(
     profile: &ValidatedDeviceProfile,
-    adapter: &AdapterIdentity,
-    results: Vec<IdentificationProbeResult>,
+    adapter: Option<&AdapterIdentity>,
+    message: impl Into<String>,
+) -> IdentificationAttempt {
+    identification_error_attempt_with_elapsed(
+        profile,
+        adapter,
+        Vec::new(),
+        Vec::new(),
+        Duration::ZERO,
+        message.into(),
+    )
+}
+
+fn identification_error_attempt_with_elapsed(
+    profile: &ValidatedDeviceProfile,
+    adapter: Option<&AdapterIdentity>,
+    core_results: Vec<IdentificationProbeResult>,
+    diagnostics: Vec<IdentificationProbeDiagnostic>,
     elapsed: Duration,
     message: String,
 ) -> IdentificationAttempt {
-    let fingerprint = evidence_fingerprint(profile, adapter, &results);
+    let fingerprint_candidate = adapter.map(|identity| evidence_fingerprint(profile, identity, &diagnostics));
     IdentificationAttempt {
         report: IdentificationReport {
             profile_id: profile.profile_id().clone(),
             outcome: IdentificationMatch::Error,
-            probes: results.into_boxed_slice(),
-            fingerprint_candidate: Some(fingerprint),
+            probes: core_results.into_boxed_slice(),
+        },
+        verified: None,
+        diagnostics: IdentificationDiagnostics {
+            profile_id: profile.profile_id().to_string(),
+            outcome: IdentificationMatch::Error,
+            probes: diagnostics.into_boxed_slice(),
+            fingerprint_candidate,
             profile_hash: profile.profile_hash().to_hex(),
             elapsed,
             error: Some(message),
         },
-        verified: None,
     }
 }
 
 fn profile_matches_observed(
     profile: &ValidatedDeviceProfile,
-    observed: &[IdentificationProbeResult],
+    observed: &[IdentificationProbeDiagnostic],
 ) -> bool {
     !profile.probes().is_empty()
         && profile.probes().len() == observed.len()
@@ -223,7 +275,7 @@ fn profile_matches_observed(
 fn evidence_fingerprint(
     profile: &ValidatedDeviceProfile,
     adapter: &AdapterIdentity,
-    probes: &[IdentificationProbeResult],
+    probes: &[IdentificationProbeDiagnostic],
 ) -> DeviceFingerprint {
     let mut digest = Sha256::new();
     digest.update(profile.profile_hash().to_hex().as_bytes());
@@ -273,7 +325,7 @@ fn quality_for_bus_error(error: &BusError) -> TelemetryQuality {
 mod tests {
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
-    use lantern_domain::{IdentificationMatch, RawRegisters, SessionId};
+    use lantern_domain::{IdentificationMatch, RawRegisters, SessionId, TelemetryQuality};
     use lantern_profile::{ProfileFormat, parse_and_validate_profile};
 
     use crate::{
@@ -329,13 +381,13 @@ mod tests {
         )
         .await;
         assert_eq!(attempt.report.outcome, IdentificationMatch::Match);
-        assert!(attempt.report.fingerprint_candidate.is_some());
+        assert!(attempt.diagnostics.fingerprint_candidate.is_some());
         assert!(attempt.verified.is_some());
-        assert_eq!(attempt.report.probes[0].block, first.block);
+        assert_eq!(attempt.diagnostics.probes[0].block, first.block);
     }
 
     #[tokio::test]
-    async fn timeout_is_preserved_as_error_report_and_never_verifies() {
+    async fn timeout_is_preserved_as_error_diagnostics_and_never_verifies() {
         let profile = profile();
         let clock = ManualMonotonicClock::default();
         let attempt = identify_profile_via_bus_with_clock(
@@ -350,6 +402,7 @@ mod tests {
         .await;
         assert_eq!(attempt.report.outcome, IdentificationMatch::Error);
         assert!(attempt.verified.is_none());
-        assert!(attempt.report.probes[0].error.is_some());
+        assert_eq!(attempt.diagnostics.probes[0].quality, TelemetryQuality::Timeout);
+        assert!(attempt.diagnostics.probes[0].error.is_some());
     }
 }
