@@ -1,17 +1,17 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use lantern_domain::{
-    BaudRate, DataBits, IdentificationMatch, IdentificationReport, LinkSettings, Parity, ProfileId,
-    SessionId, SlaveId, StopBits, TelemetryQuality,
+    BaudRate, DataBits, IdentificationMatch, LinkSettings, Parity, ProfileId, SessionId, SlaveId,
+    StopBits, TelemetryQuality,
 };
 use lantern_profile::ValidatedDeviceProfile;
 use serde::Serialize;
 use thiserror::Error;
 
 use crate::{
-    PortDiscoveryError, PortEvent, PortPresence, PortSelection, PortSnapshot, ProfileOrigin,
-    ProfileRegistry, Rs485DirectionConfig, SerialConnectError, SerialOpenRequest,
-    SerialPortDescriptor, SerialPortOrigin, SessionState,
+    IdentificationDiagnostics, PortDiscoveryError, PortEvent, PortPresence, PortSelection,
+    PortSnapshot, ProfileOrigin, ProfileRegistry, Rs485DirectionConfig, SerialConnectError,
+    SerialOpenRequest, SerialPortDescriptor, SerialPortOrigin,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -233,6 +233,7 @@ pub(crate) struct ConnectionWizardState {
     pub(crate) manual_path_prefill: Option<PathBuf>,
     pub(crate) suggested_slave: Option<SlaveId>,
     pub(crate) failure: Option<ConnectionFailure>,
+    pub(crate) last_identification: Option<IdentificationDiagnostics>,
     pub(crate) last_export: Option<PathBuf>,
 }
 
@@ -255,6 +256,7 @@ impl ConnectionWizardState {
             manual_path_prefill,
             suggested_slave,
             failure: None,
+            last_identification: None,
             last_export: None,
         }
     }
@@ -417,7 +419,6 @@ impl ConnectionWizardState {
         &self,
         registry: &ProfileRegistry,
         active_profile: Option<&ProfileId>,
-        session: &SessionState,
     ) -> ConnectionWizardView {
         let profiles = registry
             .entries()
@@ -427,7 +428,6 @@ impl ConnectionWizardState {
         let link = active_profile
             .and_then(|id| registry.get(id))
             .and_then(|entry| self.link.map(|current| link_view(current, entry.profile())));
-        let report = report_from_session(session);
         ConnectionWizardView {
             step: self.step,
             ports: self.ports.ports.iter().map(port_view).collect(),
@@ -440,7 +440,7 @@ impl ConnectionWizardState {
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
             failure: self.failure.as_ref().map(ToString::to_string),
-            report: report.as_ref().map(report_view),
+            report: self.last_identification.as_ref().map(diagnostics_view),
             last_export: self
                 .last_export
                 .as_ref()
@@ -462,8 +462,10 @@ impl ConnectionWizardState {
 }
 
 #[must_use]
-pub fn identification_report_export(report: &IdentificationReport) -> IdentificationReportExportV1 {
-    let view = report_view(report);
+pub fn identification_report_export(
+    diagnostics: &IdentificationDiagnostics,
+) -> IdentificationReportExportV1 {
+    let view = diagnostics_view(diagnostics);
     IdentificationReportExportV1 {
         schema_version: 1,
         profile_id: view.profile_id,
@@ -500,43 +502,18 @@ pub fn identification_report_export(report: &IdentificationReport) -> Identifica
     }
 }
 
-fn report_from_session(state: &SessionState) -> Option<IdentificationReport> {
-    match state {
-        SessionState::Disconnected {
-            last_identification_report,
-        } => last_identification_report.clone(),
-        SessionState::Active(active) => Some(IdentificationReport {
-            profile_id: active.identity.device.profile_id.clone(),
-            outcome: IdentificationMatch::Match,
-            probes: active.identity.device.probes.clone(),
-            fingerprint_candidate: Some(active.identity.device.fingerprint.clone()),
-            profile_hash: active.identity.profile_hash.to_hex(),
-            elapsed: active
-                .identity
-                .device
-                .probes
-                .iter()
-                .fold(Duration::ZERO, |total, probe| total.saturating_add(probe.elapsed)),
-            error: None,
-        }),
-        SessionState::Connecting { .. }
-        | SessionState::Identifying { .. }
-        | SessionState::ShuttingDown => None,
-    }
-}
-
-fn report_view(report: &IdentificationReport) -> IdentificationReportView {
+fn diagnostics_view(diagnostics: &IdentificationDiagnostics) -> IdentificationReportView {
     IdentificationReportView {
-        profile_id: report.profile_id.to_string(),
-        outcome: report.outcome,
-        fingerprint_candidate: report
+        profile_id: diagnostics.profile_id.clone(),
+        outcome: diagnostics.outcome,
+        fingerprint_candidate: diagnostics
             .fingerprint_candidate
             .as_ref()
             .map(ToString::to_string),
-        profile_hash: report.profile_hash.clone(),
-        elapsed_micros: report.elapsed.as_micros(),
-        error: report.error.clone(),
-        probes: report
+        profile_hash: diagnostics.profile_hash.clone(),
+        elapsed_micros: diagnostics.elapsed.as_micros(),
+        error: diagnostics.error.clone(),
+        probes: diagnostics
             .probes
             .iter()
             .map(|probe| IdentificationProbeView {
