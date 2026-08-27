@@ -58,7 +58,7 @@ pub async fn identify_profile_via_bus_with_clock(
         clock,
     )
     .await;
-    attempt.report.fingerprint_candidate = Some(fingerprint.clone());
+    attempt.diagnostics.fingerprint_candidate = Some(fingerprint.clone());
     if let Some(verified) = &mut attempt.verified {
         verified.device.fingerprint = fingerprint;
     }
@@ -74,9 +74,5 @@ pub fn ambiguous_identification_report(
         profile_id: profile.profile_id().clone(),
         outcome: IdentificationMatch::Ambiguous,
         probes,
-        fingerprint_candidate: None,
-        profile_hash: profile.profile_hash().to_hex(),
-        elapsed: Duration::ZERO,
-        error: None,
     }
 }
