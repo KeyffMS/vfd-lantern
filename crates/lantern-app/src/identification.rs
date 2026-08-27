@@ -1,9 +1,9 @@
-use std::{sync::Arc, time::Duration};
+use std::{fmt::Write as _, sync::Arc, time::Duration};
 
 use lantern_domain::{
     DeviceFingerprint, EngineeringValue, IdentificationMatch, IdentificationProbeResult,
     IdentificationReport, ModbusFunction, ModbusTable, RawRegisters, RegisterBlock, RequestId,
-    SessionId, TelemetryQuality, VerifiedDeviceIdentity,
+    SessionId, SlaveId, TelemetryQuality, VerifiedDeviceIdentity,
 };
 use lantern_profile::ValidatedDeviceProfile;
 use sha2::{Digest, Sha256};
@@ -59,6 +59,7 @@ pub async fn identify_profile_via_bus(
     candidate_profiles: &[Arc<ValidatedDeviceProfile>],
     adapter: &AdapterIdentity,
     session_id: SessionId,
+    slave_id: SlaveId,
     timeout: Duration,
 ) -> IdentificationAttempt {
     identify_profile_via_bus_with_clock(
@@ -67,6 +68,7 @@ pub async fn identify_profile_via_bus(
         candidate_profiles,
         adapter,
         session_id,
+        slave_id,
         timeout,
         &TokioMonotonicClock,
     )
@@ -79,6 +81,7 @@ pub async fn identify_profile_via_bus_with_clock(
     candidate_profiles: &[Arc<ValidatedDeviceProfile>],
     adapter: &AdapterIdentity,
     session_id: SessionId,
+    slave_id: SlaveId,
     timeout: Duration,
     clock: &dyn MonotonicClock,
 ) -> IdentificationAttempt {
@@ -106,7 +109,7 @@ pub async fn identify_profile_via_bus_with_clock(
         let probe_started_at = clock.now();
         let request = ReadBusRequest::one_shot(
             BusRequestContext::interactive(request_id, session_id, clock.now() + timeout, None),
-            selected_profile.protocol().default_link().slave_id,
+            slave_id,
             function,
             probe.block,
         );
@@ -233,7 +236,8 @@ fn identification_error_attempt_with_elapsed(
     elapsed: Duration,
     message: String,
 ) -> IdentificationAttempt {
-    let fingerprint_candidate = adapter.map(|identity| evidence_fingerprint(profile, identity, &diagnostics));
+    let fingerprint_candidate =
+        adapter.map(|identity| evidence_fingerprint(profile, identity, &diagnostics));
     IdentificationAttempt {
         report: IdentificationReport {
             profile_id: profile.profile_id().clone(),
@@ -300,7 +304,11 @@ fn evidence_fingerprint(
             }
         }
     }
-    let hex = format!("{:x}", digest.finalize());
+    let digest = digest.finalize();
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
+    }
     DeviceFingerprint::parse(format!("vfd:{hex}"))
         .expect("sha256 evidence fingerprint is a portable bounded identifier")
 }
@@ -310,7 +318,9 @@ fn quality_for_bus_error(error: &BusError) -> TelemetryQuality {
         BusError::TimeoutBeforeSend | BusError::ResponseTimeout => TelemetryQuality::Timeout,
         BusError::ProtocolException { .. } => TelemetryQuality::ProtocolException,
         BusError::PortRemoved | BusError::Shutdown => TelemetryQuality::Disconnected,
-        BusError::InvalidFrameOrTransport | BusError::InvalidResponse => TelemetryQuality::DecodeError,
+        BusError::InvalidFrameOrTransport | BusError::InvalidResponse => {
+            TelemetryQuality::DecodeError
+        }
         BusError::PermissionDenied
         | BusError::PortBusy
         | BusError::Io(_)
@@ -376,6 +386,7 @@ mod tests {
             &[Arc::clone(&profile)],
             &adapter(),
             SessionId::new(1),
+            profile.protocol().default_link().slave_id,
             Duration::from_secs(1),
             &clock,
         )
@@ -396,6 +407,7 @@ mod tests {
             &[Arc::clone(&profile)],
             &adapter(),
             SessionId::new(2),
+            profile.protocol().default_link().slave_id,
             Duration::from_secs(1),
             &clock,
         )
