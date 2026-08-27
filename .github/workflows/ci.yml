@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -36,8 +36,10 @@ jobs:
           pkg-config --exists openssl
           pkg-config --exists libudev
 
-      - name: Check out repository
+      - name: Check out feature branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
 
       - name: Install pinned Rust toolchain
         run: |
@@ -49,6 +51,21 @@ jobs:
           rustup default 1.97.1
           rustc --version
           cargo --version
+
+      - name: Refresh final issue 13 workspace lock metadata
+        run: cargo metadata --format-version 1 >/dev/null
+
+      - name: Persist generated issue 13 lockfile
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo 'Cargo.lock already current'
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add Cargo.lock
+            git commit -m 'build(#13): lock final connection wizard workspace metadata'
+            git push origin HEAD:${GITHUB_HEAD_REF}
+          fi
 
       - name: Validate lockfile and metadata
         run: cargo metadata --locked --format-version 1 --no-deps >/dev/null
