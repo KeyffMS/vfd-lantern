@@ -21,6 +21,7 @@ pub use bus::*;
 pub use clock::*;
 pub use connection::*;
 pub use identification::*;
+pub use lantern_domain::IdentificationMatch;
 pub use poll::*;
 pub use ports::*;
 pub use profile_registry::*;
