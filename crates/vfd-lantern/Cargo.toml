@@ -19,5 +19,8 @@ lantern-storage.workspace = true
 lantern-transport.workspace = true
 lantern-tui.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true
