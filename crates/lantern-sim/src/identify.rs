@@ -54,6 +54,7 @@ pub async fn identify_profile_via_bus_with_clock(
         &[],
         &adapter,
         session_id,
+        profile.protocol().default_link().slave_id,
         timeout,
         clock,
     )
