@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::{
-    DeviceFingerprint, EngineeringValue, ProfileId, RawRegisters, TelemetryQuality,
+    DeviceFingerprint, EngineeringValue, ProfileId, RawRegisters, RegisterBlock, TelemetryQuality,
 };
 
 /// Result of comparing all bounded identification probes with the available profiles.
@@ -24,6 +24,7 @@ pub enum IdentificationMatch {
 pub struct IdentificationProbeResult {
     pub probe_id: String,
     pub description: String,
+    pub block: RegisterBlock,
     pub expected_raw: Box<[RawRegisters]>,
     pub raw: Option<RawRegisters>,
     /// Engineering representation when the identification probe declares one.
