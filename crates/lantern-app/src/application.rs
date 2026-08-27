@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
-use lantern_domain::{IdentificationMatch, IdentificationReport, ProfileId, SessionId, SlaveId};
+use lantern_domain::{IdentificationMatch, ProfileId, SessionId, SlaveId};
 use lantern_profile::ValidatedDeviceProfile;
 use thiserror::Error;
 
@@ -8,7 +8,7 @@ use crate::{
     AuditHealth, Authorization, BusError, ConnectionAction, ConnectionAttemptKind, ConnectionEffect,
     ConnectionFailure, ConnectionStep, ConnectionWizardState, ConnectionWizardView, Connectivity,
     OperationState, ProfileRegistry, SerialConnectError, SessionEffect, SessionFault, SessionInput,
-    SessionState, SessionStateMachine, identification_error_report, identification_report_export,
+    SessionState, SessionStateMachine, identification_error_attempt, identification_report_export,
 };
 
 #[derive(Clone, Debug)]
@@ -62,11 +62,9 @@ impl ApplicationState {
                 .map(|id| id.as_str().to_owned())
                 .collect(),
             session: SessionView::from_state(self.session.state()),
-            connection: self.connection.view(
-                &self.registry,
-                self.active_profile.as_ref(),
-                self.session.state(),
-            ),
+            connection: self
+                .connection
+                .view(&self.registry, self.active_profile.as_ref()),
         }
     }
 
@@ -125,17 +123,18 @@ impl ApplicationState {
                     SessionState::Identifying { opened_port } => {
                         let opened_port = opened_port.clone();
                         if let Some(profile) = self.selected_profile() {
-                            let report = identification_error_report(
+                            let attempt = identification_error_attempt(
                                 &profile,
                                 Some(&opened_port),
                                 "selected adapter was removed during identification",
                             );
+                            self.connection.last_identification = Some(attempt.diagnostics.clone());
                             let session_id = self
                                 .connection
                                 .pending_session_id
                                 .unwrap_or_else(|| self.connection.allocate_session_id());
                             let effects = self.session.transition(SessionInput::IdentificationFinished {
-                                report,
+                                report: attempt.report,
                                 verified: None,
                                 session_id,
                             });
@@ -254,7 +253,7 @@ impl ApplicationState {
                 kind,
             } => self.identification_finished(attempt, port_identity, kind),
             ConnectionAction::ExportReport => {
-                let Some(report) = self.current_identification_report() else {
+                let Some(diagnostics) = self.connection.last_identification.as_ref() else {
                     self.connection.failure = Some(ConnectionFailure::Validation(
                         "there is no identification report to export".to_owned(),
                     ));
@@ -268,7 +267,7 @@ impl ApplicationState {
                 vec![ApplicationEffect::Connection(
                     ConnectionEffect::ExportIdentificationReport {
                         suggested_name: format!("identification-{id}.json"),
-                        report: identification_report_export(&report),
+                        report: identification_report_export(diagnostics),
                     },
                 )]
             }
@@ -316,6 +315,7 @@ impl ApplicationState {
         self.connection.allocate_session_id();
         self.connection.step = ConnectionStep::Connecting;
         self.connection.failure = None;
+        self.connection.last_identification = None;
         let session_effects = self.session.transition(SessionInput::Connect);
         debug_assert_eq!(session_effects, vec![SessionEffect::OpenPort]);
         vec![ApplicationEffect::Connection(effect)]
@@ -430,7 +430,8 @@ impl ApplicationState {
         kind: ConnectionAttemptKind,
     ) -> Vec<ApplicationEffect> {
         let outcome = attempt.report.outcome;
-        let report_error = attempt.report.error.clone();
+        let report_error = attempt.diagnostics.error.clone();
+        self.connection.last_identification = Some(attempt.diagnostics);
         let verified = attempt.verified;
         let report = attempt.report;
         match kind {
@@ -467,7 +468,7 @@ impl ApplicationState {
                 if matches!(
                     self.session.state(),
                     SessionState::Active(active)
-                        if matches!(active.connectivity, Connectivity::Connected)
+                        if matches!(&active.connectivity, Connectivity::Connected)
                 ) {
                     self.connection.step = ConnectionStep::Connected;
                     self.connection.failure = None;
@@ -497,33 +498,6 @@ impl ApplicationState {
             .values()
             .map(|entry| Arc::clone(entry.profile()))
             .collect()
-    }
-
-    fn current_identification_report(&self) -> Option<IdentificationReport> {
-        match self.session.state() {
-            SessionState::Disconnected {
-                last_identification_report,
-            } => last_identification_report.clone(),
-            SessionState::Active(active) => Some(IdentificationReport {
-                profile_id: active.identity.device.profile_id.clone(),
-                outcome: IdentificationMatch::Match,
-                probes: active.identity.device.probes.clone(),
-                fingerprint_candidate: Some(active.identity.device.fingerprint.clone()),
-                profile_hash: active.identity.profile_hash.to_hex(),
-                elapsed: active
-                    .identity
-                    .device
-                    .probes
-                    .iter()
-                    .fold(std::time::Duration::ZERO, |total, probe| {
-                        total.saturating_add(probe.elapsed)
-                    }),
-                error: None,
-            }),
-            SessionState::Connecting { .. }
-            | SessionState::Identifying { .. }
-            | SessionState::ShuttingDown => None,
-        }
     }
 
     fn translate_session_effects(
@@ -729,13 +703,7 @@ impl Default for ApplicationView {
             active_profile: None,
             registry_profile_ids: Vec::new(),
             session: SessionView::empty(SessionPhaseView::Disconnected),
-            connection: ConnectionWizardState::default().view(
-                &ProfileRegistry::default(),
-                None,
-                &SessionState::Disconnected {
-                    last_identification_report: None,
-                },
-            ),
+            connection: ConnectionWizardState::default().view(&ProfileRegistry::default(), None),
         }
     }
 }
@@ -837,8 +805,8 @@ mod tests {
 
     use crate::{
         ApplicationAction, ApplicationEffect, ApplicationState, ConnectionAction,
-        ConnectionEffect, EffectRunner, PackagedProfilesManifestV1, PortPresence, PortSnapshot,
-        ProfileRegistry, ProfileSource, ProfileSourceFormat, ProfileSourceTier, SerialPortDescriptor,
+        ConnectionEffect, EffectRunner, PackagedProfilesManifestV1, PortSnapshot, ProfileRegistry,
+        ProfileSource, ProfileSourceFormat, ProfileSourceTier, SerialPortDescriptor,
         SessionPhaseView,
     };
 
@@ -919,7 +887,6 @@ mod tests {
             [ApplicationEffect::Connection(ConnectionEffect::OpenPort { .. })]
         ));
         assert_eq!(state.view().session().phase(), SessionPhaseView::Connecting);
-        let _ = PortPresence::Present;
     }
 
     #[test]
