@@ -7,7 +7,7 @@ use std::{
 use lantern_app::{
     BusControlPort, FrequencyClass, MonotonicClock, PollCadences, PollExecutor, PollPlanner,
     PollPlannerConfig, ReadBusPort, ReadSubscription, Rs485DirectionConfig, SerialOpenRequest,
-    SubscriberId, SubscriptionReason, TelemetryPipeline, TelemetryPipelineConfig,
+    SubscriberId, SubscriptionReason, TelemetryEvent, TelemetryPipeline, TelemetryPipelineConfig,
     TokioMonotonicClock,
 };
 use lantern_domain::{
@@ -155,27 +155,23 @@ fn polling_plan(profile: &ValidatedDeviceProfile, now: Instant) -> Arc<lantern_a
     )
 }
 
-async fn wait_for_quality(
-    handle: &lantern_app::TelemetryPipelineHandle,
+async fn next_parameter_event(
+    receiver: &mut tokio::sync::mpsc::Receiver<TelemetryEvent>,
     parameter_id: &ParameterId,
-    quality: TelemetryQuality,
-    minimum_attempts: u64,
-) {
+) -> TelemetryEvent {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let latest = handle.latest();
-            if handle.statistics().attempts >= minimum_attempts
-                && latest
-                    .value(parameter_id)
-                    .is_some_and(|value| value.current_quality == quality)
-            {
-                return;
+            let event = receiver
+                .recv()
+                .await
+                .expect("telemetry event stream closed");
+            if &event.parameter_id == parameter_id {
+                return event;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("telemetry quality transition timeout");
+    .expect("telemetry event timeout")
 }
 
 #[tokio::test]
@@ -201,7 +197,7 @@ async fn verified_pty_polling_maps_timeout_exception_and_recovery_into_telemetry
     let (poll_handle, poll_results, poll_task) =
         PollExecutor::spawn(bus, Arc::clone(&clock), session_id, Arc::clone(&plan), 8)
             .expect("poll executor");
-    let (telemetry_handle, _consumers, telemetry_task) = TelemetryPipeline::spawn_system_utc(
+    let (telemetry_handle, mut consumers, telemetry_task) = TelemetryPipeline::spawn_system_utc(
         Arc::clone(&profile),
         clock,
         session_id,
@@ -219,30 +215,21 @@ async fn verified_pty_polling_maps_timeout_exception_and_recovery_into_telemetry
     .expect("telemetry pipeline");
 
     let parameter_id = ParameterId::parse("status.output_frequency").expect("parameter");
-    wait_for_quality(
-        &telemetry_handle,
-        &parameter_id,
-        TelemetryQuality::Timeout,
-        1,
-    )
-    .await;
-    assert!(
-        telemetry_handle
-            .latest()
-            .value(&parameter_id)
-            .expect("timeout value")
-            .last_good
-            .is_none()
-    );
 
-    wait_for_quality(
-        &telemetry_handle,
-        &parameter_id,
-        TelemetryQuality::ProtocolException,
-        2,
-    )
-    .await;
-    wait_for_quality(&telemetry_handle, &parameter_id, TelemetryQuality::Good, 3).await;
+    let timeout_event = next_parameter_event(&mut consumers.csv, &parameter_id).await;
+    assert_eq!(timeout_event.quality, TelemetryQuality::Timeout);
+    assert!(timeout_event.sample.is_none());
+    assert!(timeout_event.error.is_some());
+
+    let exception_event = next_parameter_event(&mut consumers.csv, &parameter_id).await;
+    assert_eq!(exception_event.quality, TelemetryQuality::ProtocolException);
+    assert!(exception_event.sample.is_none());
+    assert!(exception_event.error.is_some());
+
+    let recovery_event = next_parameter_event(&mut consumers.csv, &parameter_id).await;
+    assert_eq!(recovery_event.quality, TelemetryQuality::Good);
+    assert!(recovery_event.error.is_none());
+    assert!(recovery_event.sample.is_some());
 
     let latest = telemetry_handle.latest();
     let value = latest.value(&parameter_id).expect("latest value");

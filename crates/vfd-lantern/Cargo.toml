@@ -13,9 +13,9 @@ publish = false
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
 lantern-app.workspace = true
 lantern-storage.workspace = true
-lantern-transport.workspace = true
 lantern-tui.workspace = true
 
 [lints]

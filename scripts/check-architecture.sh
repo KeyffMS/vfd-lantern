@@ -27,11 +27,25 @@ if grep -R -n -E 'std::fs|tokio::fs' crates/lantern-profile/src crates/lantern-d
     exit 1
 fi
 
+if grep -R -n -E '\b(ApplicationState|ApplicationRuntime|EffectRunner|SessionStateMachine)\b' crates/lantern-tui/src; then
+    printf 'application/domain reducer state escaped into lantern-tui\n' >&2
+    exit 1
+fi
+
+if grep -R -n -E 'panic::set_hook|set_hook[[:space:]]*\(' crates/lantern-tui/src; then
+    printf 'global panic hook must not be installed by lantern-tui\n' >&2
+    exit 1
+fi
+
+if ! grep -R -n -E 'panic::set_hook|set_hook[[:space:]]*\(' crates/vfd-lantern/src >/dev/null; then
+    printf 'composition root must own the global panic hook\n' >&2
+    exit 1
+fi
+
 if find . -type f -name '*.py' -not -path './target/*' | grep -q .; then
     printf 'Python source is not permitted in the project\n' >&2
     exit 1
 fi
-
 
 if grep -R -n -E 'unsafe[[:space:]]*\{|unsafe[[:space:]]+(fn|impl|trait)' crates --include='*.rs' \
     | grep -v '^crates/lantern-transport/src/rs485_ioctl.rs:'; then
@@ -56,7 +70,6 @@ for manifest in crates/*/Cargo.toml; do
             ;;
     esac
 done
-
 
 cargo metadata --locked --no-deps --format-version 1 >/dev/null
 printf 'architecture checks passed for internal graph: %s\n' "$internal"
