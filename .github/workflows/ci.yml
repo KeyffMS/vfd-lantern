@@ -50,6 +50,9 @@ jobs:
           rustc --version
           cargo --version
 
+      - name: Refresh lockfile metadata for issue 13
+        run: cargo metadata --format-version 1 >/dev/null
+
       - name: Validate lockfile and metadata
         run: cargo metadata --locked --format-version 1 --no-deps >/dev/null
 
@@ -86,6 +89,15 @@ jobs:
         env:
           CARGO_VET_REPORT: target/supply-chain/cargo-vet-summary-amd64.json
         run: sh scripts/check-supply-chain.sh
+
+      - name: Upload generated issue 13 lockfile
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue-13-cargo-lock
+          path: Cargo.lock
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Upload supply-chain report
         if: always()
