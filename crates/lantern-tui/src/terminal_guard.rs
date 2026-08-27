@@ -122,8 +122,12 @@ impl TerminalSession {
         Ok(())
     }
 
-    pub async fn next_action(&mut self, ui: &UiState) -> io::Result<MappedAction> {
-        self.input.next_action(ui).await
+    pub async fn next_action(
+        &mut self,
+        ui: &UiState,
+        view: &ApplicationView,
+    ) -> io::Result<MappedAction> {
+        self.input.next_action(ui, view).await
     }
 
     pub fn draw(&mut self, view: &ApplicationView, ui: &UiState) -> io::Result<()> {
