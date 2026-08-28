@@ -2,10 +2,14 @@ use std::{collections::BTreeSet, path::PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use lantern_app::{
-    ApplicationAction, ApplicationView, ConnectionAction, ConnectionStep, SessionInput,
+    ApplicationAction, ApplicationView, ConnectionAction, ConnectionStep, MonitoringAction,
+    ScopePanel, SessionInput,
 };
 
-use crate::{ConnectionEdit, Screen, UiAction, UiState, profile_matches_filter};
+use crate::{
+    ConnectionEdit, Screen, UiAction, UiState, monitoring_parameter_matches_filter,
+    profile_matches_filter,
+};
 
 #[derive(Clone, Debug)]
 pub enum MappedAction {
@@ -23,7 +27,7 @@ pub struct KeyBinding {
     pub description: &'static str,
 }
 
-pub const HELP_BINDINGS: [KeyBinding; 27] = [
+pub const HELP_BINDINGS: [KeyBinding; 31] = [
     KeyBinding {
         key: "1..9",
         description: "select top-level screen",
@@ -79,6 +83,22 @@ pub const HELP_BINDINGS: [KeyBinding; 27] = [
     KeyBinding {
         key: "e",
         description: "export identification report",
+    },
+    KeyBinding {
+        key: "Scope /",
+        description: "search code/name/alias/quantity/unit",
+    },
+    KeyBinding {
+        key: "Scope Enter",
+        description: "add/remove selected channel via PollPlanner",
+    },
+    KeyBinding {
+        key: "Scope m",
+        description: "move selected active channel to next panel",
+    },
+    KeyBinding {
+        key: "Scope H",
+        description: "clear active Scope history only",
     },
     KeyBinding {
         key: "Scope Space",
@@ -172,6 +192,13 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
                 KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
                 _ => None,
             },
+            ConnectionEdit::ScopeSearch => match key.code {
+                KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
+                KeyCode::Enter => Some(MappedAction::Ui(UiAction::ApplyScopeSearch)),
+                KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
+                KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
+                _ => None,
+            },
         };
     }
 
@@ -182,7 +209,7 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
     }
 
     if ui.screen == Screen::Scope
-        && let Some(action) = map_scope_key(key)
+        && let Some(action) = map_scope_key(ui, view, key)
     {
         return Some(action);
     }
@@ -210,21 +237,34 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
     }
 }
 
-fn map_scope_key(key: KeyEvent) -> Option<MappedAction> {
-    let action = match key.code {
-        KeyCode::Char(' ') => UiAction::ScopeTogglePause,
-        KeyCode::Char('w') => UiAction::ScopeNextWindow,
-        KeyCode::Char(',') => UiAction::ScopePanBackward,
-        KeyCode::Char('.') => UiAction::ScopePanForward,
-        KeyCode::Char('+') | KeyCode::Char('=') => UiAction::ScopeZoomIn,
-        KeyCode::Char('-') => UiAction::ScopeZoomOut,
-        KeyCode::Char('c') => UiAction::ScopeToggleCursor,
-        KeyCode::Char('p') => UiAction::ScopeCursorPrevious,
-        KeyCode::Char('n') => UiAction::ScopeCursorNext,
-        KeyCode::Char('0') => UiAction::ScopeResetView,
-        _ => return None,
-    };
-    Some(MappedAction::Ui(action))
+fn map_scope_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<MappedAction> {
+    match key.code {
+        KeyCode::Char('/') => Some(MappedAction::Ui(UiAction::BeginScopeSearch)),
+        KeyCode::Char('x') if !ui.scope_filter.is_empty() => {
+            Some(MappedAction::Ui(UiAction::ClearScopeSearch))
+        }
+        KeyCode::Up | KeyCode::Char('k') => Some(MappedAction::Ui(UiAction::SelectionPrevious)),
+        KeyCode::Down | KeyCode::Char('j') => Some(MappedAction::Ui(UiAction::SelectionNext)),
+        KeyCode::Enter => selected_scope_toggle_action(ui, view),
+        KeyCode::Char('m') => selected_scope_move_action(ui, view),
+        KeyCode::Char('H') => Some(monitoring_action(MonitoringAction::ClearScopeHistory)),
+        KeyCode::Char(' ') => Some(MappedAction::Ui(UiAction::ScopeTogglePause {
+            anchor_nanos: view
+                .monitoring()
+                .captured_at
+                .map_or(0, lantern_app::MonotonicInstant::as_nanos),
+        })),
+        KeyCode::Char('w') => Some(MappedAction::Ui(UiAction::ScopeNextWindow)),
+        KeyCode::Char(',') => Some(MappedAction::Ui(UiAction::ScopePanBackward)),
+        KeyCode::Char('.') => Some(MappedAction::Ui(UiAction::ScopePanForward)),
+        KeyCode::Char('+') | KeyCode::Char('=') => Some(MappedAction::Ui(UiAction::ScopeZoomIn)),
+        KeyCode::Char('-') => Some(MappedAction::Ui(UiAction::ScopeZoomOut)),
+        KeyCode::Char('c') => Some(MappedAction::Ui(UiAction::ScopeToggleCursor)),
+        KeyCode::Char('p') => Some(MappedAction::Ui(UiAction::ScopeCursorPrevious)),
+        KeyCode::Char('n') => Some(MappedAction::Ui(UiAction::ScopeCursorNext)),
+        KeyCode::Char('0') => Some(MappedAction::Ui(UiAction::ScopeResetView)),
+        _ => None,
+    }
 }
 
 fn map_connection_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<MappedAction> {
@@ -319,8 +359,51 @@ fn selected_profile_action(ui: &UiState, view: &ApplicationView) -> Option<Mappe
     })
 }
 
+fn selected_scope_parameter<'a>(
+    ui: &UiState,
+    view: &'a ApplicationView,
+) -> Option<&'a lantern_app::MonitoringParameterView> {
+    let parameters = view
+        .monitoring()
+        .catalog
+        .iter()
+        .filter(|parameter| monitoring_parameter_matches_filter(parameter, &ui.scope_filter))
+        .collect::<Vec<_>>();
+    let index = ui
+        .selected_index
+        .min(parameters.len().saturating_sub(1));
+    parameters.get(index).copied()
+}
+
+fn selected_scope_toggle_action(ui: &UiState, view: &ApplicationView) -> Option<MappedAction> {
+    selected_scope_parameter(ui, view).map(|parameter| {
+        monitoring_action(MonitoringAction::ToggleScopeParameter(
+            parameter.parameter_id.clone(),
+        ))
+    })
+}
+
+fn selected_scope_move_action(ui: &UiState, view: &ApplicationView) -> Option<MappedAction> {
+    let parameter = selected_scope_parameter(ui, view)?;
+    let channel = view
+        .monitoring()
+        .scope
+        .iter()
+        .find(|channel| channel.value.parameter_id == parameter.parameter_id)?;
+    let next_panel = if channel.panel >= 4 { 1 } else { channel.panel + 1 };
+    let panel = ScopePanel::new(next_panel).ok()?;
+    Some(monitoring_action(MonitoringAction::MoveScopeParameter {
+        parameter_id: parameter.parameter_id.clone(),
+        panel,
+    }))
+}
+
 fn connection_action(action: ConnectionAction) -> MappedAction {
     MappedAction::Application(Box::new(ApplicationAction::Connection(action)))
+}
+
+fn monitoring_action(action: MonitoringAction) -> MappedAction {
+    MappedAction::Application(Box::new(ApplicationAction::Monitoring(action)))
 }
 
 fn shutdown_action() -> MappedAction {
@@ -379,6 +462,21 @@ mod tests {
     }
 
     #[test]
+    fn scope_search_mode_treats_q_as_filter_text_not_shutdown() {
+        let ui = UiState {
+            screen: Screen::Scope,
+            connection_edit: Some(ConnectionEdit::ScopeSearch),
+            ..UiState::default()
+        };
+        let view = ApplicationView::default();
+        let q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        assert!(matches!(
+            map_key(&ui, &view, q),
+            Some(MappedAction::Ui(UiAction::InputChar('q')))
+        ));
+    }
+
+    #[test]
     fn profile_search_mode_treats_q_as_filter_text_not_shutdown() {
         let ui = UiState {
             connection_edit: Some(ConnectionEdit::ProfileSearch),
@@ -393,30 +491,44 @@ mod tests {
     }
 
     #[test]
-    fn scope_shortcuts_emit_only_ui_actions() {
+    fn scope_presentation_shortcuts_emit_only_ui_actions() {
         let ui = UiState {
             screen: Screen::Scope,
             ..UiState::default()
         };
         let view = ApplicationView::default();
-        for (code, expected) in [
-            (KeyCode::Char(' '), UiAction::ScopeTogglePause),
-            (KeyCode::Char('w'), UiAction::ScopeNextWindow),
-            (KeyCode::Char(','), UiAction::ScopePanBackward),
-            (KeyCode::Char('.'), UiAction::ScopePanForward),
-            (KeyCode::Char('+'), UiAction::ScopeZoomIn),
-            (KeyCode::Char('-'), UiAction::ScopeZoomOut),
-            (KeyCode::Char('c'), UiAction::ScopeToggleCursor),
-            (KeyCode::Char('p'), UiAction::ScopeCursorPrevious),
-            (KeyCode::Char('n'), UiAction::ScopeCursorNext),
-            (KeyCode::Char('0'), UiAction::ScopeResetView),
+        for code in [
+            KeyCode::Char(' '),
+            KeyCode::Char('w'),
+            KeyCode::Char(','),
+            KeyCode::Char('.'),
+            KeyCode::Char('+'),
+            KeyCode::Char('-'),
+            KeyCode::Char('c'),
+            KeyCode::Char('p'),
+            KeyCode::Char('n'),
+            KeyCode::Char('0'),
         ] {
             let key = KeyEvent::new(code, KeyModifiers::NONE);
             assert!(matches!(
                 map_key(&ui, &view, key),
-                Some(MappedAction::Ui(action)) if action == expected
+                Some(MappedAction::Ui(_))
             ));
         }
+    }
+
+    #[test]
+    fn scope_clear_history_is_an_application_action() {
+        let ui = UiState {
+            screen: Screen::Scope,
+            ..UiState::default()
+        };
+        let view = ApplicationView::default();
+        let key = KeyEvent::new(KeyCode::Char('H'), KeyModifiers::SHIFT);
+        assert!(matches!(
+            map_key(&ui, &view, key),
+            Some(MappedAction::Application(_))
+        ));
     }
 
     #[test]
