@@ -436,7 +436,7 @@ mod tests {
     };
 
     use super::{
-        AxisKey, MonitoringError, ScopePanel, ScopeSelection, dashboard_subscriptions,
+        AxisKey, MonitoringError, ScopeSelection, dashboard_subscriptions,
         default_dashboard_parameters, resolve_monitoring_parameter, scope_subscriptions,
     };
 
