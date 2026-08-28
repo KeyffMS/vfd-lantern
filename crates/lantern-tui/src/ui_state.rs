@@ -1,3 +1,5 @@
+use lantern_app::ProfileChoiceView;
+
 use crate::FormState;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -61,6 +63,7 @@ pub enum Focus {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConnectionEdit {
     ManualPath,
+    ProfileSearch,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,6 +97,7 @@ pub struct UiState {
     pub selected_index: usize,
     pub form: FormState,
     pub connection_edit: Option<ConnectionEdit>,
+    pub profile_filter: String,
     pub modal: Option<ModalState>,
     pub viewport: Viewport,
 }
@@ -107,6 +111,7 @@ impl Default for UiState {
             selected_index: 0,
             form: FormState::default(),
             connection_edit: None,
+            profile_filter: String::new(),
             modal: None,
             viewport: Viewport::default(),
         }
@@ -125,6 +130,9 @@ pub enum UiAction {
     FocusNext,
     FocusPrevious,
     BeginManualPath(String),
+    BeginProfileSearch,
+    ApplyProfileSearch,
+    ClearProfileSearch,
     InputChar(char),
     Backspace,
     CancelEdit,
@@ -184,6 +192,25 @@ impl UiState {
                 self.connection_edit = Some(ConnectionEdit::ManualPath);
                 self.focus = Focus::Content;
             }
+            UiAction::BeginProfileSearch => {
+                self.form.replace(self.profile_filter.clone());
+                self.connection_edit = Some(ConnectionEdit::ProfileSearch);
+                self.focus = Focus::Content;
+            }
+            UiAction::ApplyProfileSearch => {
+                self.profile_filter = self.form.value().trim().to_owned();
+                self.connection_edit = None;
+                self.form.clear();
+                self.selected_index = 0;
+                self.focus = Focus::Navigation;
+            }
+            UiAction::ClearProfileSearch => {
+                self.profile_filter.clear();
+                self.form.clear();
+                self.connection_edit = None;
+                self.selected_index = 0;
+                self.focus = Focus::Navigation;
+            }
             UiAction::InputChar(character) => self.form.insert(character),
             UiAction::Backspace => self.form.backspace(),
             UiAction::CancelEdit => {
@@ -210,9 +237,30 @@ impl UiState {
     }
 }
 
+pub(crate) fn profile_matches_filter(profile: &ProfileChoiceView, filter: &str) -> bool {
+    let filter = filter.trim();
+    if filter.is_empty() {
+        return true;
+    }
+    let needle = filter.to_ascii_lowercase();
+    [
+        profile.profile_id.as_str(),
+        profile.vendor.as_str(),
+        profile.family.as_str(),
+        profile.model.as_str(),
+    ]
+    .into_iter()
+    .any(|value| value.to_ascii_lowercase().contains(&needle))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState};
+    use lantern_app::{ProfileChoiceView, ProfileOrigin};
+    use lantern_domain::ProfileId;
+
+    use super::{
+        ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState, profile_matches_filter,
+    };
 
     #[test]
     fn ui_reducer_changes_only_presentation_state() {
@@ -233,6 +281,34 @@ mod tests {
         assert_eq!(state.connection_edit, Some(ConnectionEdit::ManualPath));
         assert_eq!(state.form.value(), "/dev/ttyUSB0");
         state.apply(UiAction::CancelEdit);
+        assert!(state.connection_edit.is_none());
+    }
+
+    #[test]
+    fn profile_search_is_case_insensitive_and_presentation_only() {
+        let profile = ProfileChoiceView {
+            profile_id: ProfileId::parse("example.vfd1000").expect("profile ID"),
+            vendor: "Example Devices".to_owned(),
+            family: "Fictional".to_owned(),
+            model: "VFD 1000".to_owned(),
+            revision: 1,
+            origin: ProfileOrigin::Explicit,
+            profile_hash: "profile-hash".to_owned(),
+            source_hash: "source-hash".to_owned(),
+            hardware_verification: None,
+        };
+        assert!(profile_matches_filter(&profile, "devices"));
+        assert!(profile_matches_filter(&profile, "VFD1000"));
+        assert!(profile_matches_filter(&profile, "fictional"));
+        assert!(!profile_matches_filter(&profile, "other"));
+
+        let mut state = UiState::default();
+        state.apply(UiAction::BeginProfileSearch);
+        for character in "vfd1000".chars() {
+            state.apply(UiAction::InputChar(character));
+        }
+        state.apply(UiAction::ApplyProfileSearch);
+        assert_eq!(state.profile_filter, "vfd1000");
         assert!(state.connection_edit.is_none());
     }
 
