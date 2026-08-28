@@ -242,9 +242,7 @@ impl SimulatorProcess {
         let (sender, receiver) = std::sync::mpsc::channel();
         thread::spawn(move || {
             let mut line = String::new();
-            let result = BufReader::new(stdout)
-                .read_line(&mut line)
-                .map(|_| line);
+            let result = BufReader::new(stdout).read_line(&mut line).map(|_| line);
             let _ = sender.send(result);
         });
         let line = receiver
@@ -336,8 +334,16 @@ fn main() -> Result<()> {
     let debug_directory = debug_directory()?;
     let simulator = debug_directory.join("lantern-sim");
     let product = debug_directory.join("vfd-lantern");
-    ensure!(simulator.is_file(), "missing built binary {}", simulator.display());
-    ensure!(product.is_file(), "missing built binary {}", product.display());
+    ensure!(
+        simulator.is_file(),
+        "missing built binary {}",
+        simulator.display()
+    );
+    ensure!(
+        product.is_file(),
+        "missing built binary {}",
+        product.display()
+    );
 
     for outcome in [
         ExpectedOutcome::MatchProcessOff,
@@ -355,7 +361,11 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_case(simulator_binary: &Path, product_binary: &Path, outcome: ExpectedOutcome) -> Result<()> {
+fn run_case(
+    simulator_binary: &Path,
+    product_binary: &Path,
+    outcome: ExpectedOutcome,
+) -> Result<()> {
     let environment = CaseEnvironment::new()?;
     let base_profile = fs::read_to_string(reference_profile())?;
     let selected_source = if matches!(outcome, ExpectedOutcome::Partial) {
@@ -376,7 +386,10 @@ fn run_case(simulator_binary: &Path, product_binary: &Path, outcome: ExpectedOut
         environment.add_ambiguous_user_profile(&other)?;
     }
 
-    let scenario = environment.root.path().join(format!("{}.toml", outcome.name()));
+    let scenario = environment
+        .root
+        .path()
+        .join(format!("{}.toml", outcome.name()));
     fs::write(
         &scenario,
         scenario_source(&selected_profile, &profile, outcome),
@@ -450,17 +463,28 @@ fn run_case(simulator_binary: &Path, product_binary: &Path, outcome: ExpectedOut
         outcome.expected_requests()
     );
     ensure!(
-        records.iter().all(|record| matches!(record.function, 3 | 4)),
+        records
+            .iter()
+            .all(|record| matches!(record.function, 3 | 4)),
         "{} emitted a non-read Modbus function: {:?}",
         outcome.name(),
-        records.iter().map(|record| record.function).collect::<Vec<_>>()
+        records
+            .iter()
+            .map(|record| record.function)
+            .collect::<Vec<_>>()
     );
 
     if matches!(outcome, ExpectedOutcome::MismatchWithExport) {
         let reports = environment.exported_reports()?;
-        ensure!(reports.len() == 1, "expected one offline identification report, found {reports:?}");
+        ensure!(
+            reports.len() == 1,
+            "expected one offline identification report, found {reports:?}"
+        );
         let report: serde_json::Value = serde_json::from_slice(&fs::read(&reports[0])?)?;
-        ensure!(report["outcome"] == "mismatch", "unexpected exported report: {report}");
+        ensure!(
+            report["outcome"] == "mismatch",
+            "unexpected exported report: {report}"
+        );
     }
     Ok(())
 }
@@ -496,9 +520,7 @@ fn scenario_source(
     let extra = match outcome {
         ExpectedOutcome::Partial => "[probe_overrides]\naux = [9999]\n",
         ExpectedOutcome::MismatchWithExport => "[probe_overrides]\nmodel = [4097]\n",
-        ExpectedOutcome::Timeout => {
-            "[[read_behaviors]]\nstart_request = 1\nkind = \"timeout\"\n"
-        }
+        ExpectedOutcome::Timeout => "[[read_behaviors]]\nstart_request = 1\nkind = \"timeout\"\n",
         ExpectedOutcome::ProtocolException => {
             "[[read_behaviors]]\nstart_request = 1\nkind = \"exception\"\ncode = 2\n"
         }
@@ -524,7 +546,10 @@ expected_raw = [[1234]]
 address = { notation = "pdu_zero_based", value = 100 }
 
 [[parameters]]"#;
-    ensure!(base.contains(marker), "reference profile has no parameter marker");
+    ensure!(
+        base.contains(marker),
+        "reference profile has no parameter marker"
+    );
     Ok(base.replacen(marker, insertion, 1))
 }
 

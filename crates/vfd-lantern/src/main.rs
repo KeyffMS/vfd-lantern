@@ -19,8 +19,8 @@ use anyhow::{Result, bail};
 use clap::Parser;
 use lantern_app::{
     ApplicationAction, ApplicationRuntime, ApplicationState, CliSettingsOverrides, ColorMode,
-    ConnectionAction, PortDiscoveryPort, PortEvent, PortEventReceiver, ProfileRegistry, SessionInput,
-    SessionPhaseView, SettingsLoader, ValidatedSettings,
+    ConnectionAction, PortDiscoveryPort, PortEvent, PortEventReceiver, ProfileRegistry,
+    SessionInput, SessionPhaseView, SettingsLoader, ValidatedSettings,
 };
 use lantern_storage::{
     AppPaths, FilesystemProfileSource, FilesystemSettingsSource, ProfileLocations,
