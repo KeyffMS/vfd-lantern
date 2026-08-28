@@ -82,19 +82,19 @@ pub async fn open_serial_bus_with_identity_and_clock(
     let expected_identity = request.expected_identity.clone();
     let port = serial_open::SerialPortOpener::open(request).await?;
     let canonical_device = port.canonical_device().to_path_buf();
-    let identity = expected_identity.map_or_else(
-        || lantern_app::AdapterIdentity {
+    let identity = match expected_identity {
+        Some(mut identity) => {
+            identity.canonical_device = canonical_device;
+            identity
+        }
+        None => lantern_app::AdapterIdentity {
             stable_id: None,
-            canonical_device: canonical_device.clone(),
+            canonical_device,
             vendor_id: None,
             product_id: None,
             serial_number: None,
         },
-        |mut identity| {
-            identity.canonical_device = canonical_device;
-            identity
-        },
-    );
+    };
     let backend = TokioModbusBackend::new(port, link.slave_id, link.response_timeout);
     let (handle, task) = BusActor::spawn_with_clock(
         backend,
