@@ -69,6 +69,7 @@ impl ScopeYRange {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScopeUiState {
     pub paused: bool,
+    pub pause_anchor_nanos: Option<u128>,
     pub window: ScopeWindow,
     pub pan_steps: i64,
     pub zoom_steps: i16,
@@ -80,6 +81,7 @@ impl Default for ScopeUiState {
     fn default() -> Self {
         Self {
             paused: false,
+            pause_anchor_nanos: None,
             window: ScopeWindow::OneMinute,
             pan_steps: 0,
             zoom_steps: 0,
@@ -90,8 +92,19 @@ impl Default for ScopeUiState {
 }
 
 impl ScopeUiState {
+    pub fn toggle_pause(&mut self, current_anchor_nanos: u128) {
+        if self.paused {
+            self.paused = false;
+            self.pause_anchor_nanos = None;
+        } else {
+            self.paused = true;
+            self.pause_anchor_nanos = Some(current_anchor_nanos);
+        }
+    }
+
     pub fn reset_view(&mut self) {
         self.paused = false;
+        self.pause_anchor_nanos = None;
         self.window = ScopeWindow::OneMinute;
         self.pan_steps = 0;
         self.zoom_steps = 0;
@@ -136,9 +149,21 @@ mod tests {
     }
 
     #[test]
+    fn pause_freezes_and_releases_monotonic_anchor_without_touching_data() {
+        let mut state = ScopeUiState::default();
+        state.toggle_pause(123);
+        assert!(state.paused);
+        assert_eq!(state.pause_anchor_nanos, Some(123));
+        state.toggle_pause(999);
+        assert!(!state.paused);
+        assert_eq!(state.pause_anchor_nanos, None);
+    }
+
+    #[test]
     fn reset_clears_only_scope_presentation_controls() {
         let mut state = ScopeUiState {
             paused: true,
+            pause_anchor_nanos: Some(123),
             window: ScopeWindow::Max,
             pan_steps: 7,
             zoom_steps: -2,
