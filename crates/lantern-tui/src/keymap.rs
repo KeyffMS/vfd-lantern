@@ -23,7 +23,7 @@ pub struct KeyBinding {
     pub description: &'static str,
 }
 
-pub const HELP_BINDINGS: [KeyBinding; 20] = [
+pub const HELP_BINDINGS: [KeyBinding; 27] = [
     KeyBinding {
         key: "1..9",
         description: "select top-level screen",
@@ -79,6 +79,34 @@ pub const HELP_BINDINGS: [KeyBinding; 20] = [
     KeyBinding {
         key: "e",
         description: "export identification report",
+    },
+    KeyBinding {
+        key: "Scope Space",
+        description: "pause/resume Scope presentation only",
+    },
+    KeyBinding {
+        key: "Scope w",
+        description: "cycle Scope 10s/30s/1m/5m/max window",
+    },
+    KeyBinding {
+        key: "Scope , / .",
+        description: "pan Scope backward / forward",
+    },
+    KeyBinding {
+        key: "Scope + / -",
+        description: "zoom Scope in / out",
+    },
+    KeyBinding {
+        key: "Scope c",
+        description: "toggle Scope cursor",
+    },
+    KeyBinding {
+        key: "Scope p / n",
+        description: "previous / next actual Scope sample",
+    },
+    KeyBinding {
+        key: "Scope 0",
+        description: "reset Scope presentation view",
     },
     KeyBinding {
         key: "Tab",
@@ -153,6 +181,12 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
         return Some(action);
     }
 
+    if ui.screen == Screen::Scope
+        && let Some(action) = map_scope_key(key)
+    {
+        return Some(action);
+    }
+
     match key.code {
         KeyCode::Char('q') => Some(shutdown_action()),
         KeyCode::Char('?') => Some(MappedAction::Ui(UiAction::OpenHelp)),
@@ -174,6 +208,23 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
             .map(MappedAction::Ui),
         _ => None,
     }
+}
+
+fn map_scope_key(key: KeyEvent) -> Option<MappedAction> {
+    let action = match key.code {
+        KeyCode::Char(' ') => UiAction::ScopeTogglePause,
+        KeyCode::Char('w') => UiAction::ScopeNextWindow,
+        KeyCode::Char(',') => UiAction::ScopePanBackward,
+        KeyCode::Char('.') => UiAction::ScopePanForward,
+        KeyCode::Char('+') | KeyCode::Char('=') => UiAction::ScopeZoomIn,
+        KeyCode::Char('-') => UiAction::ScopeZoomOut,
+        KeyCode::Char('c') => UiAction::ScopeToggleCursor,
+        KeyCode::Char('p') => UiAction::ScopeCursorPrevious,
+        KeyCode::Char('n') => UiAction::ScopeCursorNext,
+        KeyCode::Char('0') => UiAction::ScopeResetView,
+        _ => return None,
+    };
+    Some(MappedAction::Ui(action))
 }
 
 fn map_connection_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<MappedAction> {
@@ -287,7 +338,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use lantern_app::ApplicationView;
 
-    use crate::{ConnectionEdit, ModalState, UiAction, UiState};
+    use crate::{ConnectionEdit, ModalState, Screen, UiAction, UiState};
 
     use super::{MappedAction, keymap_is_collision_free, map_key};
 
@@ -339,6 +390,33 @@ mod tests {
             map_key(&ui, &view, q),
             Some(MappedAction::Ui(UiAction::InputChar('q')))
         ));
+    }
+
+    #[test]
+    fn Scope_shortcuts_emit_only_ui_actions() {
+        let ui = UiState {
+            screen: Screen::Scope,
+            ..UiState::default()
+        };
+        let view = ApplicationView::default();
+        for (code, expected) in [
+            (KeyCode::Char(' '), UiAction::ScopeTogglePause),
+            (KeyCode::Char('w'), UiAction::ScopeNextWindow),
+            (KeyCode::Char(','), UiAction::ScopePanBackward),
+            (KeyCode::Char('.'), UiAction::ScopePanForward),
+            (KeyCode::Char('+'), UiAction::ScopeZoomIn),
+            (KeyCode::Char('-'), UiAction::ScopeZoomOut),
+            (KeyCode::Char('c'), UiAction::ScopeToggleCursor),
+            (KeyCode::Char('p'), UiAction::ScopeCursorPrevious),
+            (KeyCode::Char('n'), UiAction::ScopeCursorNext),
+            (KeyCode::Char('0'), UiAction::ScopeResetView),
+        ] {
+            let key = KeyEvent::new(code, KeyModifiers::NONE);
+            assert!(matches!(
+                map_key(&ui, &view, key),
+                Some(MappedAction::Ui(action)) if action == expected
+            ));
+        }
     }
 
     #[test]
