@@ -393,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn Scope_shortcuts_emit_only_ui_actions() {
+    fn scope_shortcuts_emit_only_ui_actions() {
         let ui = UiState {
             screen: Screen::Scope,
             ..UiState::default()
