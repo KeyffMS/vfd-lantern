@@ -105,7 +105,11 @@ fn parameter_matches(
     parameter.id().as_str().to_ascii_lowercase().contains(query)
         || parameter.code().to_ascii_lowercase().contains(query)
         || parameter.name().to_ascii_lowercase().contains(query)
-        || parameter.unit().as_str().to_ascii_lowercase().contains(query)
+        || parameter
+            .unit()
+            .as_str()
+            .to_ascii_lowercase()
+            .contains(query)
         || quantity_search_key(parameter.quantity()).contains(query)
         || profile.aliases().iter().any(|(alias, target)| {
             target == parameter.id() && alias.to_ascii_lowercase().contains(query)
@@ -213,7 +217,10 @@ mod tests {
             MonotonicInstant::from_nanos(100_000_000),
         );
         assert_eq!(view.quality, TelemetryQuality::Timeout);
-        assert_eq!(view.value, Some(EngineeringValue::Float64Bits(50.0_f64.to_bits())));
+        assert_eq!(
+            view.value,
+            Some(EngineeringValue::Float64Bits(50.0_f64.to_bits()))
+        );
         assert_eq!(view.last_good_age, Some(Duration::from_millis(20)));
         assert_eq!(view.last_attempt_age, Some(Duration::from_millis(10)));
         assert_eq!(view.unit.as_str(), "hz");
@@ -223,7 +230,10 @@ mod tests {
     fn catalog_search_uses_semantic_metadata_without_addresses() {
         let profile = profile();
         assert_eq!(search_monitoring_catalog(&profile, "D1.00").len(), 1);
-        assert_eq!(search_monitoring_catalog(&profile, "output frequency").len(), 1);
+        assert_eq!(
+            search_monitoring_catalog(&profile, "output frequency").len(),
+            1
+        );
         assert_eq!(search_monitoring_catalog(&profile, "frequency").len(), 1);
         assert_eq!(search_monitoring_catalog(&profile, "hz").len(), 1);
         assert!(search_monitoring_catalog(&profile, "40002").is_empty());
