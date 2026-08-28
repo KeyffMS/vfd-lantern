@@ -309,7 +309,7 @@ fn subscriptions(
 mod tests {
     use std::time::{Duration, Instant};
 
-    use lantern_domain::{QuantityKind, UnitId};
+    use lantern_domain::QuantityKind;
     use lantern_profile::{ProfileFormat, parse_and_validate_profile};
 
     use crate::{
@@ -413,9 +413,9 @@ parameters = ["frequency", "speed", "current"]
             AxisKey::from_parameter(speed)
         );
         assert_eq!(frequency.quantity(), &QuantityKind::Frequency);
-        assert_eq!(frequency.unit(), &UnitId::hz());
+        assert_eq!(frequency.unit().as_str(), "hz");
         assert_eq!(speed.quantity(), &QuantityKind::RotationalSpeed);
-        assert_eq!(speed.unit(), &UnitId::rpm());
+        assert_eq!(speed.unit().as_str(), "rpm");
     }
 
     #[test]
@@ -510,7 +510,8 @@ parameters = ["frequency", "speed", "current"]
             700_000,
         )
         .expect("config");
-        let plan = PollPlanner::compile(&profile, &[normal, fast], &config, 1, Instant::now())
+        let plan = PollPlanner::new()
+            .build(&profile, vec![normal, fast], config, Instant::now())
             .expect("plan");
         assert_eq!(plan.blocks().len(), 1);
         assert_eq!(plan.blocks()[0].period(), Duration::from_millis(100));
