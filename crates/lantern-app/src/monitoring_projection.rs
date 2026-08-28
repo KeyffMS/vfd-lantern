@@ -110,6 +110,7 @@ pub struct MonitoringRuntimeSnapshot {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct MonitoringView {
+    pub captured_at: Option<MonotonicInstant>,
     pub dashboard: Vec<MonitoringValueView>,
     pub scope: Vec<ScopeChannelView>,
     pub histories: Vec<ScopeHistoryView>,
@@ -157,6 +158,7 @@ pub fn project_monitoring_view(
         })
         .collect();
     MonitoringView {
+        captured_at: latest.map(LatestValues::captured_at),
         dashboard,
         scope,
         histories: snapshot
