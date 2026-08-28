@@ -82,7 +82,10 @@ impl ChildGuard {
                 return Ok(status);
             }
             if Instant::now() >= deadline {
-                bail!("child {} did not exit within {PROCESS_TIMEOUT:?}", self.id());
+                bail!(
+                    "child {} did not exit within {PROCESS_TIMEOUT:?}",
+                    self.id()
+                );
             }
             thread::sleep(Duration::from_millis(20));
         }
@@ -175,9 +178,7 @@ impl Screen {
                     if bytes[index] == 0x07 {
                         return index + 1;
                     }
-                    if bytes[index] == 0x1b
-                        && bytes.get(index + 1).copied() == Some(b'\\')
-                    {
+                    if bytes[index] == 0x1b && bytes.get(index + 1).copied() == Some(b'\\') {
                         return index + 2;
                     }
                     index += 1;
@@ -639,7 +640,10 @@ fn run_case(simulator_binary: &Path, product_binary: &Path, case: Case) -> Resul
         let reports = env.reports()?;
         ensure!(reports.len() == 1, "expected one export, found {reports:?}");
         let report: serde_json::Value = serde_json::from_slice(&fs::read(&reports[0])?)?;
-        ensure!(report["outcome"] == "mismatch", "unexpected report {report}");
+        ensure!(
+            report["outcome"] == "mismatch",
+            "unexpected report {report}"
+        );
     }
     Ok(())
 }
@@ -669,7 +673,8 @@ fn run_reconnect_case(simulator_binary: &Path, product_binary: &Path) -> Result<
     let manual = env.root.path().join("manual-vfd");
     symlink(&first.pty, &manual)?;
 
-    let mut product = TerminalChild::spawn(product_binary, &product_args(&selected, &manual), &env)?;
+    let mut product =
+        TerminalChild::spawn(product_binary, &product_args(&selected, &manual), &env)?;
     drive_to_summary(&mut product)?;
     assert_no_traffic(&first, "reconnect-initial")?;
     product.send("\r")?;
@@ -727,7 +732,9 @@ fn assert_read_only(case: &str, records: &[LogRecord], expected: usize) -> Resul
         records.len()
     );
     ensure!(
-        records.iter().all(|record| matches!(record.function, 3 | 4)),
+        records
+            .iter()
+            .all(|record| matches!(record.function, 3 | 4)),
         "{case} emitted non-read Modbus function"
     );
     Ok(())
