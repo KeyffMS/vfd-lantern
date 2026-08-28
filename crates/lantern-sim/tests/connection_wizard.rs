@@ -319,13 +319,8 @@ async fn timeout_and_protocol_exception_are_reported_and_fail_closed() {
             opened.state.view().session().phase(),
             SessionPhaseView::Disconnected
         );
-        let report = opened
-            .state
-            .view()
-            .connection()
-            .report
-            .as_ref()
-            .expect("report");
+        let view = opened.state.view();
+        let report = view.connection().report.as_ref().expect("report");
         assert_eq!(report.outcome, IdentificationMatch::Error);
         assert_eq!(report.probes[0].quality, expected_quality);
         assert_eq!(opened.bus.statistics().writes_started, 0);
