@@ -1,8 +1,8 @@
 use std::{path::PathBuf, time::Duration};
 
 use lantern_app::{
-    AdapterIdentity, BusError, IdentificationAttempt, MonotonicClock, ReadBusPort,
-    TokioMonotonicClock,
+    AdapterIdentity, BusError, IdentificationAttempt, IdentificationRequest, MonotonicClock,
+    ReadBusPort, TokioMonotonicClock,
 };
 use lantern_domain::{
     DeviceFingerprint, IdentificationMatch, IdentificationProbeResult, IdentificationReport,
@@ -50,12 +50,14 @@ pub async fn identify_profile_via_bus_with_clock(
     };
     let mut attempt = lantern_app::identify_profile_via_bus_with_clock(
         bus,
-        profile,
-        &[],
-        &adapter,
-        session_id,
-        profile.protocol().default_link().slave_id,
-        timeout,
+        IdentificationRequest {
+            selected_profile: profile,
+            candidate_profiles: &[],
+            adapter: &adapter,
+            session_id,
+            slave_id: profile.protocol().default_link().slave_id,
+            timeout,
+        },
         clock,
     )
     .await;
