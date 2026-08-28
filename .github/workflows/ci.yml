@@ -57,7 +57,32 @@ jobs:
         run: cargo build --workspace --all-features --locked
 
       - name: Check formatting
+        id: fmt_check
+        continue-on-error: true
         run: cargo fmt --all -- --check
+
+      - name: Capture rustfmt output
+        if: steps.fmt_check.outcome == 'failure'
+        run: |
+          cargo fmt --all
+          mkdir -p target/rustfmt-sources
+          git diff --name-only -- '*.rs' | while IFS= read -r file; do
+            mkdir -p "target/rustfmt-sources/$(dirname "$file")"
+            cp "$file" "target/rustfmt-sources/$file"
+          done
+
+      - name: Upload rustfmt output
+        if: steps.fmt_check.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rustfmt-sources-amd64
+          path: target/rustfmt-sources
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Enforce formatting
+        if: steps.fmt_check.outcome == 'failure'
+        run: exit 1
 
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
