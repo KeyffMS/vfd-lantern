@@ -21,6 +21,7 @@ use tempfile::TempDir;
 const SEED: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 const PROCESS_TIMEOUT: Duration = Duration::from_secs(8);
 const SCREEN_SETTLE: Duration = Duration::from_millis(300);
+const BEFORE_CONNECT_SETTLE: Duration = Duration::from_millis(150);
 
 #[derive(Clone, Copy)]
 enum ExpectedOutcome {
@@ -199,15 +200,16 @@ impl TerminalChild {
     }
 
     fn wait_for(&self, needle: &str) -> Result<()> {
+        let needle = semantic_text(needle.as_bytes());
         let deadline = Instant::now() + PROCESS_TIMEOUT;
         loop {
-            let text = self.text();
-            if text.contains(needle) {
+            let text = self.semantic_text();
+            if text.contains(&needle) {
                 return Ok(());
             }
             if Instant::now() >= deadline {
                 bail!(
-                    "TUI did not render {needle:?}; output tail:\n{}",
+                    "TUI did not render semantic text {needle:?}; semantic output tail:\n{}",
                     tail(&text, 6000)
                 );
             }
@@ -216,17 +218,18 @@ impl TerminalChild {
     }
 
     fn assert_not_contains(&self, needle: &str) -> Result<()> {
-        let text = self.text();
+        let needle = semantic_text(needle.as_bytes());
+        let text = self.semantic_text();
         ensure!(
-            !text.contains(needle),
-            "TUI unexpectedly rendered {needle:?}; output tail:\n{}",
+            !text.contains(&needle),
+            "TUI unexpectedly rendered semantic text {needle:?}; output tail:\n{}",
             tail(&text, 4000)
         );
         Ok(())
     }
 
-    fn text(&self) -> String {
-        String::from_utf8_lossy(&lock_output(&self.output)).into_owned()
+    fn semantic_text(&self) -> String {
+        semantic_text(&lock_output(&self.output))
     }
 
     fn quit_and_wait(mut self) -> Result<()> {
@@ -279,6 +282,10 @@ impl SimulatorProcess {
         })
     }
 
+    fn read_log(&self) -> Result<Vec<LogRecord>> {
+        read_log_records(&self.log_path)
+    }
+
     fn stop_and_read_log(mut self) -> Result<Vec<LogRecord>> {
         let pid = i32::try_from(self.child.id()).context("simulator pid")?;
         match kill(Pid::from_raw(pid), Signal::SIGINT) {
@@ -287,13 +294,7 @@ impl SimulatorProcess {
         }
         let status = self.child.wait_timeout(PROCESS_TIMEOUT)?;
         ensure!(status.success(), "lantern-sim exited with {status}");
-        let source = fs::read_to_string(&self.log_path)
-            .with_context(|| format!("read simulator log {}", self.log_path.display()))?;
-        source
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| serde_json::from_str(line).context("parse simulator JSONL record"))
-            .collect()
+        read_log_records(&self.log_path)
     }
 }
 
@@ -329,9 +330,6 @@ impl CaseEnvironment {
     }
 
     fn add_ambiguous_user_profile(&self, source: &str) -> Result<()> {
-        // `directories::ProjectDirs` uses the application component on Linux. The extra
-        // candidates keep this harness robust to an organization-qualified layout without
-        // relaxing the product's own profile-source rules.
         for relative in [
             "vfd-lantern/profiles",
             "aiteracja/vfd-lantern/profiles",
@@ -420,12 +418,11 @@ fn run_case(
         &scenario,
         scenario_source(&selected_profile, &profile, outcome),
     )?;
-    let simulator_log = environment.root.path().join("simulator.jsonl");
     let simulator = SimulatorProcess::spawn(
         simulator_binary,
         &selected_profile,
         &scenario,
-        simulator_log,
+        environment.root.path().join("simulator.jsonl"),
     )?;
 
     let mut arguments = vec![
@@ -439,7 +436,9 @@ fn run_case(
         arguments.push("--enable-writes".to_owned());
     }
     let mut product = TerminalChild::spawn(product_binary, &arguments, &environment)?;
-    drive_wizard_to_connect(&mut product)?;
+    drive_wizard_to_summary(&mut product)?;
+    assert_no_traffic_before_connect(&simulator, outcome.name())?;
+    product.send("\r")?;
 
     match outcome {
         ExpectedOutcome::MatchProcessOff => {
@@ -539,7 +538,9 @@ fn run_reconnect_identity_change_case(
         "--no-color".to_owned(),
     ];
     let mut product = TerminalChild::spawn(product_binary, &arguments, &environment)?;
-    drive_wizard_to_connect(&mut product)?;
+    drive_wizard_to_summary(&mut product)?;
+    assert_no_traffic_before_connect(&first, "reconnect-initial")?;
+    product.send("\r")?;
     product.wait_for("Verified read-only session established")?;
     product.wait_for("PROCESS-OFF")?;
 
@@ -557,6 +558,42 @@ fn run_reconnect_identity_change_case(
     let second_records = second.stop_and_read_log()?;
     assert_read_only_request_count("reconnect-initial", &first_records, 1)?;
     assert_read_only_request_count("reconnect-replacement", &second_records, 1)?;
+    Ok(())
+}
+
+fn drive_wizard_to_summary(product: &mut TerminalChild) -> Result<()> {
+    product.wait_for("step Port")?;
+    product.send("m")?;
+    product.wait_for("Manual device path:")?;
+    product.send("\r")?;
+
+    product.wait_for("step Profile")?;
+    product.send("/")?;
+    product.wait_for("Profile search:")?;
+    product.send("example.vfd1000")?;
+    product.send("\r")?;
+    product.wait_for("Profile filter:")?;
+    product.send("\r")?;
+
+    product.wait_for("step Link")?;
+    product.send("\r")?;
+    product.wait_for("step Summary")?;
+    product.wait_for("[Manual]")?;
+    product.wait_for("stable=-")?;
+    product.wait_for("profile_hash=")?;
+    product.wait_for("source_hash=")?;
+    product.wait_for("Identification probes")?;
+    Ok(())
+}
+
+fn assert_no_traffic_before_connect(simulator: &SimulatorProcess, case: &str) -> Result<()> {
+    thread::sleep(BEFORE_CONNECT_SETTLE);
+    let records = simulator.read_log()?;
+    ensure!(
+        records.is_empty(),
+        "{case} transmitted Modbus traffic before explicit Connect: {} request(s)",
+        records.len()
+    );
     Ok(())
 }
 
@@ -580,29 +617,6 @@ fn assert_read_only_request_count(
             .map(|record| record.function)
             .collect::<Vec<_>>()
     );
-    Ok(())
-}
-
-fn drive_wizard_to_connect(product: &mut TerminalChild) -> Result<()> {
-    product.wait_for("step Port")?;
-    product.send("m")?;
-    product.wait_for("Manual device path:")?;
-    product.send("\r")?;
-
-    product.wait_for("step Profile")?;
-    product.send("/")?;
-    product.wait_for("Profile search:")?;
-    product.send("example.vfd1000")?;
-    product.send("\r")?;
-    product.wait_for("Profile filter:")?;
-    product.send("\r")?;
-
-    product.wait_for("step Link")?;
-    product.send("\r")?;
-    product.wait_for("step Summary")?;
-    product.wait_for("[Manual]")?;
-    product.wait_for("stable=-")?;
-    product.send("\r")?;
     Ok(())
 }
 
@@ -658,6 +672,48 @@ fn debug_directory() -> Result<PathBuf> {
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .context("derive target/debug directory")
+}
+
+fn read_log_records(path: &Path) -> Result<Vec<LogRecord>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let source = fs::read_to_string(path)
+        .with_context(|| format!("read simulator log {}", path.display()))?;
+    source
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).context("parse simulator JSONL record"))
+        .collect()
+}
+
+fn semantic_text(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == 0x1b {
+            index += 1;
+            if index < bytes.len() && bytes[index] == b'[' {
+                index += 1;
+                while index < bytes.len() {
+                    let byte = bytes[index];
+                    index += 1;
+                    if (0x40..=0x7e).contains(&byte) {
+                        break;
+                    }
+                }
+            } else if index < bytes.len() {
+                index += 1;
+            }
+            continue;
+        }
+        let byte = bytes[index];
+        if (0x21..=0x7e).contains(&byte) {
+            output.push(char::from(byte));
+        }
+        index += 1;
+    }
+    output
 }
 
 fn lock_output(output: &Arc<Mutex<Vec<u8>>>) -> std::sync::MutexGuard<'_, Vec<u8>> {
