@@ -72,10 +72,11 @@ SIGINT and SIGTERM are received by the composition root and dispatched as the sa
 
 ## Testing and acceptance evidence
 
-Normal workspace tests cover presentation-state reduction, resize invalidation, modal shortcut blocking, profile search, manual path editing, collision-free help, idempotent terminal restoration, no-color safety labels, minimum/undersized TestBackend rendering, connection reducer invariants, stable fingerprints, non-Match rejection, reconnect identity rejection, production PTY open/identification and transport error mapping.
+Normal workspace tests cover presentation-state reduction, resize invalidation, modal shortcut blocking, profile search, manual path editing, collision-free help, idempotent terminal restoration, no-color safety labels, minimum/undersized TestBackend rendering, connection reducer invariants, stable fingerprints, non-Match rejection, cancellation in Connecting/Identifying, adapter removal during identification, reconnect identity rejection, production PTY open/identification and transport error mapping.
 
-The mandatory CI step `Run connection process E2E` executes separate real `lantern-sim` and `vfd-lantern` processes connected through simulator PTYs. `vfd-lantern` runs under a controlled terminal whose harness answers terminal cursor-position queries and is driven through the same Connection wizard with normal keys. The matrix covers:
+The mandatory CI step `Run connection process E2E` executes separate real `lantern-sim` and `vfd-lantern` processes connected through simulator PTYs. `vfd-lantern` runs under a controlled terminal whose Rust harness answers terminal cursor-position queries and reconstructs the current terminal screen from CSI cursor/erase operations before making UI assertions. The process matrix covers:
 
+- a dedicated Summary-without-Connect case that exits the product without connecting and requires zero Modbus request records after the simulator writes its final structured log;
 - Match with default process write gate (`PROCESS-OFF`);
 - Match with `--enable-writes` (`DISARMED`, never `ARMED`);
 - Partial;
@@ -85,6 +86,6 @@ The mandatory CI step `Run connection process E2E` executes separate real `lante
 - Modbus protocol exception;
 - controlled Manual-path loss followed by reconnect to a second PTY, where the changed Verified fingerprint must fault the old logical session and close the replacement transport.
 
-The simulator JSONL trace is checked after every process case. It permits only read functions 03/04 and a bounded number of identification requests, providing explicit evidence that the wizard and reconnect verification perform no write and start no hidden telemetry polling. The reconnect case requires exactly one identification read against the original simulator and exactly one against the replacement simulator.
+`lantern-sim` writes a structured JSONL log on shutdown. The acceptance harness distinguishes simulator `metadata` and `wire_fault` records from actual `request` records and counts only the latter as bus traffic. The Summary-without-Connect case requires exactly zero `request` records. Connected identification cases permit only read functions 03/04 and a bounded request count, providing explicit evidence that the wizard performs no write and starts no hidden telemetry polling. The reconnect case requires exactly one identification read against the original simulator and exactly one against the replacement simulator.
 
 Architecture checks forbid reducer/session state, filesystem access, transport/storage adapters and global panic-hook installation inside `lantern-tui`, and forbid a production dependency from `vfd-lantern` to `lantern-sim`.
