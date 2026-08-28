@@ -8,9 +8,10 @@ use lantern_app::{
     ApplicationAction, ApplicationEffect, ApplicationState, Authorization, BusControlPort,
     ConnectionAction, ConnectionAttemptKind, ConnectionEffect, ConnectionStep, IdentificationMatch,
     IdentificationRequest, PackagedProfilesManifestV1, ProfileRegistry, ProfileSource,
-    ProfileSourceFormat, ProfileSourceTier, SessionPhaseView, SessionState, TelemetryQuality,
+    ProfileSourceFormat, ProfileSourceTier, SessionPhaseView, SessionState,
     identify_profile_via_bus,
 };
+use lantern_domain::TelemetryQuality;
 use lantern_profile::ValidatedDeviceProfile;
 use lantern_sim::{
     LoadedScenario, SimulatorRuntime, load_profile, parse_scenario, validate_scenario_for_profile,
