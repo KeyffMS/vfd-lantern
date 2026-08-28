@@ -1,4 +1,4 @@
-use lantern_app::ProfileChoiceView;
+use lantern_app::{MonitoringParameterView, ProfileChoiceView};
 
 use crate::{FormState, ScopeUiState, ScopeYRange};
 
@@ -64,6 +64,7 @@ pub enum Focus {
 pub enum ConnectionEdit {
     ManualPath,
     ProfileSearch,
+    ScopeSearch,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,6 +99,7 @@ pub struct UiState {
     pub form: FormState,
     pub connection_edit: Option<ConnectionEdit>,
     pub profile_filter: String,
+    pub scope_filter: String,
     pub scope: ScopeUiState,
     pub modal: Option<ModalState>,
     pub viewport: Viewport,
@@ -113,6 +115,7 @@ impl Default for UiState {
             form: FormState::default(),
             connection_edit: None,
             profile_filter: String::new(),
+            scope_filter: String::new(),
             scope: ScopeUiState::default(),
             modal: None,
             viewport: Viewport::default(),
@@ -135,10 +138,15 @@ pub enum UiAction {
     BeginProfileSearch,
     ApplyProfileSearch,
     ClearProfileSearch,
+    BeginScopeSearch,
+    ApplyScopeSearch,
+    ClearScopeSearch,
     InputChar(char),
     Backspace,
     CancelEdit,
-    ScopeTogglePause,
+    ScopeTogglePause {
+        anchor_nanos: u128,
+    },
     ScopeNextWindow,
     ScopePanBackward,
     ScopePanForward,
@@ -230,6 +238,25 @@ impl UiState {
                 self.selected_index = 0;
                 self.focus = Focus::Navigation;
             }
+            UiAction::BeginScopeSearch => {
+                self.form.replace(self.scope_filter.clone());
+                self.connection_edit = Some(ConnectionEdit::ScopeSearch);
+                self.focus = Focus::Content;
+            }
+            UiAction::ApplyScopeSearch => {
+                self.scope_filter = self.form.value().trim().to_owned();
+                self.connection_edit = None;
+                self.form.clear();
+                self.selected_index = 0;
+                self.focus = Focus::Navigation;
+            }
+            UiAction::ClearScopeSearch => {
+                self.scope_filter.clear();
+                self.form.clear();
+                self.connection_edit = None;
+                self.selected_index = 0;
+                self.focus = Focus::Navigation;
+            }
             UiAction::InputChar(character) => self.form.insert(character),
             UiAction::Backspace => self.form.backspace(),
             UiAction::CancelEdit => {
@@ -237,8 +264,8 @@ impl UiState {
                 self.form.clear();
                 self.focus = Focus::Navigation;
             }
-            UiAction::ScopeTogglePause => {
-                self.scope.paused = !self.scope.paused;
+            UiAction::ScopeTogglePause { anchor_nanos } => {
+                self.scope.toggle_pause(anchor_nanos);
             }
             UiAction::ScopeNextWindow => {
                 self.scope.window = self.scope.window.next();
@@ -305,6 +332,37 @@ pub(crate) fn profile_matches_filter(profile: &ProfileChoiceView, filter: &str) 
     )
 }
 
+pub(crate) fn monitoring_parameter_matches_filter(
+    parameter: &MonitoringParameterView,
+    filter: &str,
+) -> bool {
+    let needle = normalized_filter(filter);
+    if needle.is_empty() {
+        return true;
+    }
+    [
+        parameter.parameter_id.as_str(),
+        parameter.code.as_str(),
+        parameter.name.as_str(),
+        parameter.unit.as_str(),
+    ]
+    .into_iter()
+    .any(|value| normalized_filter(value).contains(&needle))
+        || normalized_filter(&format!("{:?}", parameter.quantity)).contains(&needle)
+        || parameter
+            .aliases
+            .iter()
+            .any(|alias| normalized_filter(alias).contains(&needle))
+}
+
+fn normalized_filter(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 fn profile_fields_match_filter(
     profile_id: &str,
     vendor: &str,
@@ -324,8 +382,11 @@ fn profile_fields_match_filter(
 
 #[cfg(test)]
 mod tests {
+    use lantern_app::{MonitoringParameterView, ParameterId, QuantityKind, UnitId};
+
     use super::{
-        ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState, profile_fields_match_filter,
+        ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState,
+        monitoring_parameter_matches_filter, profile_fields_match_filter,
     };
     use crate::{ScopeWindow, ScopeYRange};
 
@@ -346,7 +407,7 @@ mod tests {
             screen: Screen::Scope,
             ..UiState::default()
         };
-        state.apply(UiAction::ScopeTogglePause);
+        state.apply(UiAction::ScopeTogglePause { anchor_nanos: 123 });
         state.apply(UiAction::ScopeNextWindow);
         state.apply(UiAction::ScopePanBackward);
         state.apply(UiAction::ScopeZoomIn);
@@ -357,6 +418,7 @@ mod tests {
             range: ScopeYRange::new(0.0, 100.0),
         });
         assert!(state.scope.paused);
+        assert_eq!(state.scope.pause_anchor_nanos, Some(123));
         assert_eq!(state.scope.window, ScopeWindow::FiveMinutes);
         assert_eq!(state.scope.pan_steps, -1);
         assert_eq!(state.scope.zoom_steps, 1);
@@ -370,6 +432,36 @@ mod tests {
 
         state.apply(UiAction::ScopeResetView);
         assert_eq!(state.scope, crate::ScopeUiState::default());
+    }
+
+    #[test]
+    fn scope_search_normalizes_code_alias_quantity_and_unit() {
+        let parameter = MonitoringParameterView {
+            parameter_id: ParameterId::parse("status.output_frequency").expect("id"),
+            code: "D1.00".to_owned(),
+            name: "Output frequency".to_owned(),
+            quantity: QuantityKind::Frequency,
+            unit: UnitId::new(QuantityKind::Frequency, "hz").expect("unit"),
+            axis: crate::AxisKey::from_parameter_view_for_test(QuantityKind::Frequency, "hz"),
+            aliases: vec!["output_hz".to_owned()],
+        };
+        assert!(monitoring_parameter_matches_filter(&parameter, "D1.00"));
+        assert!(monitoring_parameter_matches_filter(&parameter, "output_hz"));
+        assert!(monitoring_parameter_matches_filter(&parameter, "frequency"));
+        assert!(monitoring_parameter_matches_filter(&parameter, "hz"));
+        assert!(!monitoring_parameter_matches_filter(&parameter, "rpm"));
+    }
+
+    #[test]
+    fn scope_search_edit_is_presentation_only() {
+        let mut state = UiState::default();
+        state.apply(UiAction::BeginScopeSearch);
+        for character in "rpm".chars() {
+            state.apply(UiAction::InputChar(character));
+        }
+        state.apply(UiAction::ApplyScopeSearch);
+        assert_eq!(state.scope_filter, "rpm");
+        assert!(state.connection_edit.is_none());
     }
 
     #[test]
