@@ -181,16 +181,14 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
 }
 
 async fn next_port_event(receiver: &mut Option<PortEventReceiver>) -> Option<PortEvent> {
-    match receiver {
-        Some(receiver) => match receiver.recv().await {
-            Some(event) => Some(event),
-            None => {
-                *receiver = None;
-                None
-            }
-        },
-        None => pending().await,
+    let event = match receiver.as_mut() {
+        Some(active) => active.recv().await,
+        None => return pending().await,
+    };
+    if event.is_none() {
+        *receiver = None;
     }
+    event
 }
 
 fn load_product_registry(
