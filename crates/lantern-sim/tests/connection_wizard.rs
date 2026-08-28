@@ -1,4 +1,8 @@
-use std::{path::{Path, PathBuf}, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use lantern_app::{
     ApplicationAction, ApplicationEffect, ApplicationState, Authorization, BusControlPort,
@@ -7,7 +11,9 @@ use lantern_app::{
     ProfileSourceTier, SessionPhaseView, SessionState, TelemetryQuality, identify_profile_via_bus,
 };
 use lantern_profile::ValidatedDeviceProfile;
-use lantern_sim::{LoadedScenario, SimulatorRuntime, load_profile, parse_scenario, validate_scenario_for_profile};
+use lantern_sim::{
+    LoadedScenario, SimulatorRuntime, load_profile, parse_scenario, validate_scenario_for_profile,
+};
 use lantern_transport::{BusActorHandle, open_serial_bus_with_identity};
 
 fn profile_path() -> PathBuf {
@@ -61,7 +67,8 @@ tick_micros = 1000
 
 fn scenario(profile: &ValidatedDeviceProfile, extra: &str) -> Arc<LoadedScenario> {
     let path = profile_path();
-    let scenario = parse_scenario(scenario_source(&path, profile, extra).as_bytes()).expect("scenario");
+    let scenario =
+        parse_scenario(scenario_source(&path, profile, extra).as_bytes()).expect("scenario");
     validate_scenario_for_profile(&scenario, &path, profile).expect("scenario/profile");
     Arc::new(scenario)
 }
@@ -84,19 +91,26 @@ async fn open_via_wizard(extra: &str, process_writes_enabled: bool) -> OpenedAtt
     let runtime = SimulatorRuntime::spawn(Arc::clone(&profile), scenario(&profile, extra))
         .expect("simulator runtime");
     let registry = registry();
-    let profile_id = registry.entries().keys().next().expect("profile id").clone();
+    let profile_id = registry
+        .entries()
+        .keys()
+        .next()
+        .expect("profile id")
+        .clone();
     let mut state = ApplicationState::with_registry(registry, process_writes_enabled);
 
     assert!(
         state
-            .reduce(ApplicationAction::Connection(ConnectionAction::SelectManualPath(
-                runtime.client_path().to_path_buf(),
-            )))
+            .reduce(ApplicationAction::Connection(
+                ConnectionAction::SelectManualPath(runtime.client_path().to_path_buf(),)
+            ))
             .is_empty()
     );
     assert!(
         state
-            .reduce(ApplicationAction::Connection(ConnectionAction::SelectProfile(profile_id)))
+            .reduce(ApplicationAction::Connection(
+                ConnectionAction::SelectProfile(profile_id)
+            ))
             .is_empty()
     );
     assert!(
@@ -107,11 +121,13 @@ async fn open_via_wizard(extra: &str, process_writes_enabled: bool) -> OpenedAtt
     assert_eq!(runtime.control().snapshot().request_count, 0);
 
     let effects = state.reduce(ApplicationAction::Connection(ConnectionAction::Connect));
-    let [ApplicationEffect::Connection(ConnectionEffect::OpenPort {
-        request,
-        minimum_inter_frame_delay,
-        kind,
-    })] = effects.as_slice()
+    let [
+        ApplicationEffect::Connection(ConnectionEffect::OpenPort {
+            request,
+            minimum_inter_frame_delay,
+            kind,
+        }),
+    ] = effects.as_slice()
     else {
         panic!("explicit Connect must be the first transport effect: {effects:?}");
     };
@@ -122,18 +138,22 @@ async fn open_via_wizard(extra: &str, process_writes_enabled: bool) -> OpenedAtt
             .expect("production serial open");
     assert_eq!(runtime.control().snapshot().request_count, 0);
 
-    let effects = state.reduce(ApplicationAction::Connection(ConnectionAction::PortOpened {
-        identity: identity.clone(),
-        kind: *kind,
-    }));
-    let [ApplicationEffect::Connection(ConnectionEffect::Identify {
-        profile,
-        candidates,
-        adapter: _,
-        session_id,
-        timeout,
-        kind,
-    })] = effects.as_slice()
+    let effects = state.reduce(ApplicationAction::Connection(
+        ConnectionAction::PortOpened {
+            identity: identity.clone(),
+            kind: *kind,
+        },
+    ));
+    let [
+        ApplicationEffect::Connection(ConnectionEffect::Identify {
+            profile,
+            candidates,
+            adapter: _,
+            session_id,
+            timeout,
+            kind,
+        }),
+    ] = effects.as_slice()
     else {
         panic!("opened port must start bounded identification: {effects:?}");
     };
@@ -189,17 +209,29 @@ async fn stop(opened: OpenedAttempt) {
 #[tokio::test]
 async fn explicit_connect_and_matching_probe_create_verified_read_only_session() {
     let mut opened = open_via_wizard("", false).await;
-    assert_eq!(opened.state.view().connection().step, ConnectionStep::Identifying);
+    assert_eq!(
+        opened.state.view().connection().step,
+        ConnectionStep::Identifying
+    );
 
     let effects = identify_and_reduce(&mut opened).await;
     assert!(effects.is_empty());
     assert_eq!(opened.runtime.control().snapshot().request_count, 1);
-    assert_eq!(opened.state.view().session().phase(), SessionPhaseView::Connected);
-    assert_eq!(opened.state.view().connection().step, ConnectionStep::Connected);
+    assert_eq!(
+        opened.state.view().session().phase(),
+        SessionPhaseView::Connected
+    );
+    assert_eq!(
+        opened.state.view().connection().step,
+        ConnectionStep::Connected
+    );
     let SessionState::Active(active) = opened.state.session().state() else {
         panic!("verified active session");
     };
-    assert!(matches!(active.authorization, Authorization::ProcessDisabled));
+    assert!(matches!(
+        active.authorization,
+        Authorization::ProcessDisabled
+    ));
     assert_eq!(opened.bus.statistics().writes_started, 0);
 
     tokio::time::sleep(Duration::from_millis(30)).await;
@@ -219,7 +251,10 @@ async fn enable_writes_still_finishes_matching_wizard_disarmed() {
     let SessionState::Active(active) = opened.state.session().state() else {
         panic!("verified active session");
     };
-    assert!(matches!(active.authorization, Authorization::Disarmed { .. }));
+    assert!(matches!(
+        active.authorization,
+        Authorization::Disarmed { .. }
+    ));
     assert_eq!(opened.bus.statistics().writes_started, 0);
     stop(opened).await;
 }
@@ -232,10 +267,23 @@ async fn mismatch_closes_port_and_never_creates_a_session() {
         effects.as_slice(),
         [ApplicationEffect::Connection(ConnectionEffect::ClosePort)]
     ));
-    assert_eq!(opened.state.view().session().phase(), SessionPhaseView::Disconnected);
-    assert_eq!(opened.state.view().connection().step, ConnectionStep::Report);
     assert_eq!(
-        opened.state.view().connection().report.as_ref().expect("report").outcome,
+        opened.state.view().session().phase(),
+        SessionPhaseView::Disconnected
+    );
+    assert_eq!(
+        opened.state.view().connection().step,
+        ConnectionStep::Report
+    );
+    assert_eq!(
+        opened
+            .state
+            .view()
+            .connection()
+            .report
+            .as_ref()
+            .expect("report")
+            .outcome,
         IdentificationMatch::Mismatch
     );
     assert_eq!(opened.bus.statistics().writes_started, 0);
@@ -260,8 +308,17 @@ async fn timeout_and_protocol_exception_are_reported_and_fail_closed() {
             effects.as_slice(),
             [ApplicationEffect::Connection(ConnectionEffect::ClosePort)]
         ));
-        assert_eq!(opened.state.view().session().phase(), SessionPhaseView::Disconnected);
-        let report = opened.state.view().connection().report.as_ref().expect("report");
+        assert_eq!(
+            opened.state.view().session().phase(),
+            SessionPhaseView::Disconnected
+        );
+        let report = opened
+            .state
+            .view()
+            .connection()
+            .report
+            .as_ref()
+            .expect("report");
         assert_eq!(report.outcome, IdentificationMatch::Error);
         assert_eq!(report.probes[0].quality, expected_quality);
         assert_eq!(opened.bus.statistics().writes_started, 0);

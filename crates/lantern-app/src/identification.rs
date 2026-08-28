@@ -414,7 +414,10 @@ mod tests {
         .await;
         assert_eq!(attempt.report.outcome, IdentificationMatch::Error);
         assert!(attempt.verified.is_none());
-        assert_eq!(attempt.diagnostics.probes[0].quality, TelemetryQuality::Timeout);
+        assert_eq!(
+            attempt.diagnostics.probes[0].quality,
+            TelemetryQuality::Timeout
+        );
         assert!(attempt.diagnostics.probes[0].error.is_some());
     }
 }

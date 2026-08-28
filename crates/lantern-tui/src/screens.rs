@@ -6,9 +6,7 @@ use ratatui::{
     widgets::{Block, Paragraph, Wrap},
 };
 
-use crate::{
-    ConnectionEdit, HELP_BINDINGS, Screen, Theme, UiState, profile_matches_filter,
-};
+use crate::{ConnectionEdit, HELP_BINDINGS, Screen, Theme, UiState, profile_matches_filter};
 
 pub fn render_screen(
     frame: &mut Frame<'_>,
@@ -131,9 +129,14 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
             };
             if ui.connection_edit == Some(ConnectionEdit::ProfileSearch) {
                 lines.push(Line::from(format!("Profile search: {active_filter}_")));
-                lines.push(Line::from("Enter applies the search; Esc keeps the previous filter."));
+                lines.push(Line::from(
+                    "Enter applies the search; Esc keeps the previous filter.",
+                ));
             } else if !ui.profile_filter.is_empty() {
-                lines.push(Line::from(format!("Profile filter: {:?}", ui.profile_filter)));
+                lines.push(Line::from(format!(
+                    "Profile filter: {:?}",
+                    ui.profile_filter
+                )));
             }
             let profiles = connection
                 .profiles
@@ -141,7 +144,9 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
                 .filter(|profile| profile_matches_filter(profile, active_filter))
                 .collect::<Vec<_>>();
             if profiles.is_empty() {
-                lines.push(Line::from("No validated profiles match the current search."));
+                lines.push(Line::from(
+                    "No validated profiles match the current search.",
+                ));
             }
             for (index, profile) in profiles.into_iter().enumerate() {
                 let marker = selection_marker(index, ui.selected_index);

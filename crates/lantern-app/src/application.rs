@@ -5,10 +5,11 @@ use lantern_profile::ValidatedDeviceProfile;
 use thiserror::Error;
 
 use crate::{
-    AuditHealth, Authorization, BusError, ConnectionAction, ConnectionAttemptKind, ConnectionEffect,
-    ConnectionFailure, ConnectionStep, ConnectionWizardState, ConnectionWizardView, Connectivity,
-    OperationState, ProfileRegistry, SerialConnectError, SessionEffect, SessionFault, SessionInput,
-    SessionState, SessionStateMachine, identification_error_attempt, identification_report_export,
+    AuditHealth, Authorization, BusError, ConnectionAction, ConnectionAttemptKind,
+    ConnectionEffect, ConnectionFailure, ConnectionStep, ConnectionWizardState,
+    ConnectionWizardView, Connectivity, OperationState, ProfileRegistry, SerialConnectError,
+    SessionEffect, SessionFault, SessionInput, SessionState, SessionStateMachine,
+    identification_error_attempt, identification_report_export,
 };
 
 #[derive(Clone, Debug)]
@@ -108,7 +109,9 @@ impl ApplicationState {
     fn reduce_connection(&mut self, action: ConnectionAction) -> Vec<ApplicationEffect> {
         match action {
             ConnectionAction::RefreshPorts => {
-                vec![ApplicationEffect::Connection(ConnectionEffect::RefreshPorts)]
+                vec![ApplicationEffect::Connection(
+                    ConnectionEffect::RefreshPorts,
+                )]
             }
             ConnectionAction::PortsRefreshed(result) => {
                 self.connection.refresh_result(result);
@@ -133,11 +136,13 @@ impl ApplicationState {
                                 .connection
                                 .pending_session_id
                                 .unwrap_or_else(|| self.connection.allocate_session_id());
-                            let effects = self.session.transition(SessionInput::IdentificationFinished {
-                                report: attempt.report,
-                                verified: None,
-                                session_id,
-                            });
+                            let effects =
+                                self.session
+                                    .transition(SessionInput::IdentificationFinished {
+                                        report: attempt.report,
+                                        verified: None,
+                                        session_id,
+                                    });
                             self.connection.step = ConnectionStep::Report;
                             self.connection.failure =
                                 Some(ConnectionFailure::RemovedDuringIdentification);
@@ -241,12 +246,8 @@ impl ApplicationState {
             }
             ConnectionAction::Connect => self.begin_initial_connection(),
             ConnectionAction::Cancel => self.cancel_connection(),
-            ConnectionAction::PortOpened { identity, kind } => {
-                self.port_opened(identity, kind)
-            }
-            ConnectionAction::PortOpenFailed { error, kind } => {
-                self.port_open_failed(error, kind)
-            }
+            ConnectionAction::PortOpened { identity, kind } => self.port_opened(identity, kind),
+            ConnectionAction::PortOpenFailed { error, kind } => self.port_open_failed(error, kind),
             ConnectionAction::IdentificationFinished {
                 attempt,
                 port_identity,
@@ -367,10 +368,10 @@ impl ApplicationState {
                     candidates,
                     adapter: identity,
                     session_id,
-                    timeout: self
-                        .connection
-                        .link
-                        .map_or_else(|| std::time::Duration::from_secs(1), |link| link.response_timeout),
+                    timeout: self.connection.link.map_or_else(
+                        || std::time::Duration::from_secs(1),
+                        |link| link.response_timeout,
+                    ),
                     kind,
                 })]
             }
@@ -389,10 +390,10 @@ impl ApplicationState {
                     candidates,
                     adapter: identity,
                     session_id,
-                    timeout: self
-                        .connection
-                        .link
-                        .map_or_else(|| std::time::Duration::from_secs(1), |link| link.response_timeout),
+                    timeout: self.connection.link.map_or_else(
+                        || std::time::Duration::from_secs(1),
+                        |link| link.response_timeout,
+                    ),
                     kind,
                 })]
             }
@@ -410,7 +411,9 @@ impl ApplicationState {
             ConnectionAttemptKind::Initial => {
                 self.connection.step = ConnectionStep::Summary;
                 self.connection.pending_session_id = None;
-                let effects = self.session.transition(SessionInput::PortOpenFailed { cause: fault });
+                let effects = self
+                    .session
+                    .transition(SessionInput::PortOpenFailed { cause: fault });
                 self.translate_session_effects(effects)
             }
             ConnectionAttemptKind::Reconnect => {
@@ -439,11 +442,13 @@ impl ApplicationState {
                 let Some(session_id) = self.connection.pending_session_id else {
                     return vec![ApplicationEffect::Connection(ConnectionEffect::ClosePort)];
                 };
-                let effects = self.session.transition(SessionInput::IdentificationFinished {
-                    report,
-                    verified,
-                    session_id,
-                });
+                let effects = self
+                    .session
+                    .transition(SessionInput::IdentificationFinished {
+                        report,
+                        verified,
+                        session_id,
+                    });
                 if outcome == IdentificationMatch::Match
                     && matches!(self.session.state(), SessionState::Active(_))
                 {
@@ -452,19 +457,20 @@ impl ApplicationState {
                 } else {
                     self.connection.step = ConnectionStep::Report;
                     self.connection.failure = Some(ConnectionFailure::Identification(
-                        report_error.unwrap_or_else(|| format!("identification result is {outcome:?}")),
+                        report_error
+                            .unwrap_or_else(|| format!("identification result is {outcome:?}")),
                     ));
                 }
                 self.translate_session_effects(effects)
             }
             ConnectionAttemptKind::Reconnect => {
-                let effects = self
-                    .session
-                    .transition(SessionInput::ReconnectIdentificationFinished {
-                        report,
-                        verified,
-                        port_identity,
-                    });
+                let effects =
+                    self.session
+                        .transition(SessionInput::ReconnectIdentificationFinished {
+                            report,
+                            verified,
+                            port_identity,
+                        });
                 if matches!(
                     self.session.state(),
                     SessionState::Active(active)
@@ -500,16 +506,13 @@ impl ApplicationState {
             .collect()
     }
 
-    fn translate_session_effects(
-        &mut self,
-        effects: Vec<SessionEffect>,
-    ) -> Vec<ApplicationEffect> {
+    fn translate_session_effects(&mut self, effects: Vec<SessionEffect>) -> Vec<ApplicationEffect> {
         let mut translated = Vec::with_capacity(effects.len());
         for effect in effects {
             match effect {
-                SessionEffect::ClosePort => translated.push(ApplicationEffect::Connection(
-                    ConnectionEffect::ClosePort,
-                )),
+                SessionEffect::ClosePort => {
+                    translated.push(ApplicationEffect::Connection(ConnectionEffect::ClosePort))
+                }
                 SessionEffect::ScheduleReconnect { at } => translated.push(
                     ApplicationEffect::Connection(ConnectionEffect::ScheduleReconnect { at }),
                 ),
@@ -527,7 +530,8 @@ impl ApplicationState {
                         }
                     }
                 }
-                SessionEffect::StartIdentification | SessionEffect::StartReconnectIdentification => {
+                SessionEffect::StartIdentification
+                | SessionEffect::StartReconnectIdentification => {
                     self.connection.failure = Some(ConnectionFailure::Validation(
                         "identification start lacked an opened adapter result".to_owned(),
                     ));
@@ -804,10 +808,9 @@ mod tests {
     use std::{path::PathBuf, sync::Arc};
 
     use crate::{
-        ApplicationAction, ApplicationEffect, ApplicationState, ConnectionAction,
-        ConnectionEffect, EffectRunner, PackagedProfilesManifestV1, PortSnapshot, ProfileRegistry,
-        ProfileSource, ProfileSourceFormat, ProfileSourceTier, SerialPortDescriptor,
-        SessionPhaseView,
+        ApplicationAction, ApplicationEffect, ApplicationState, ConnectionAction, ConnectionEffect,
+        EffectRunner, PackagedProfilesManifestV1, PortSnapshot, ProfileRegistry, ProfileSource,
+        ProfileSourceFormat, ProfileSourceTier, SerialPortDescriptor, SessionPhaseView,
     };
 
     use super::{ApplicationEffectError, ApplicationRuntime, ApplicationView};
@@ -862,29 +865,43 @@ mod tests {
         let profile_id = registry.entries().keys().next().expect("profile").clone();
         let mut state = ApplicationState::with_registry(Arc::clone(&registry), false);
         let descriptor = SerialPortDescriptor::manual(PathBuf::from("/dev/ttyUSB0"));
-        assert!(state
-            .reduce(ApplicationAction::Connection(ConnectionAction::PortsRefreshed(Ok(
-                PortSnapshot {
-                    generation: 1,
-                    ports: vec![descriptor.clone()],
-                }
-            ))))
-            .is_empty());
-        assert!(state
-            .reduce(ApplicationAction::Connection(ConnectionAction::SelectDetectedPort(
-                crate::PortSelection::Manual(descriptor.device_node.clone())
-            )))
-            .is_empty());
-        assert!(state
-            .reduce(ApplicationAction::Connection(ConnectionAction::SelectProfile(profile_id)))
-            .is_empty());
-        assert!(state
-            .reduce(ApplicationAction::Connection(ConnectionAction::Continue))
-            .is_empty());
+        assert!(
+            state
+                .reduce(ApplicationAction::Connection(
+                    ConnectionAction::PortsRefreshed(Ok(PortSnapshot {
+                        generation: 1,
+                        ports: vec![descriptor.clone()],
+                    }))
+                ))
+                .is_empty()
+        );
+        assert!(
+            state
+                .reduce(ApplicationAction::Connection(
+                    ConnectionAction::SelectDetectedPort(crate::PortSelection::Manual(
+                        descriptor.device_node.clone()
+                    ))
+                ))
+                .is_empty()
+        );
+        assert!(
+            state
+                .reduce(ApplicationAction::Connection(
+                    ConnectionAction::SelectProfile(profile_id)
+                ))
+                .is_empty()
+        );
+        assert!(
+            state
+                .reduce(ApplicationAction::Connection(ConnectionAction::Continue))
+                .is_empty()
+        );
         let effects = state.reduce(ApplicationAction::Connection(ConnectionAction::Connect));
         assert!(matches!(
             effects.as_slice(),
-            [ApplicationEffect::Connection(ConnectionEffect::OpenPort { .. })]
+            [ApplicationEffect::Connection(
+                ConnectionEffect::OpenPort { .. }
+            )]
         ));
         assert_eq!(state.view().session().phase(), SessionPhaseView::Connecting);
     }

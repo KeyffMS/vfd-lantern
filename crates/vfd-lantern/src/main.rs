@@ -26,7 +26,10 @@ use lantern_storage::{
 };
 use lantern_transport::UdevDiscovery;
 use lantern_tui::{MappedAction, TerminalSession, UiState};
-use tokio::{signal::unix::{SignalKind, signal}, sync::mpsc};
+use tokio::{
+    signal::unix::{SignalKind, signal},
+    sync::mpsc,
+};
 
 use crate::{
     cli::{BackupCommand, Cli, Command, DiagnosticsCommand},
@@ -112,7 +115,9 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
     terminal.initialize_viewport(&mut ui)?;
 
     // Passive discovery only. The effect runner does not open a port here.
-    application.dispatch(ApplicationAction::Connection(ConnectionAction::RefreshPorts))?;
+    application.dispatch(ApplicationAction::Connection(
+        ConnectionAction::RefreshPorts,
+    ))?;
     terminal.draw(&application.state().view(), &ui)?;
 
     let frame_interval = Duration::from_millis(1_000 / u64::from(settings.render_fps));

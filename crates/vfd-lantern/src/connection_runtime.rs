@@ -52,7 +52,10 @@ impl TuiEffectRunner {
         }
     }
 
-    fn execute_connection(&mut self, effect: ConnectionEffect) -> Result<(), ApplicationEffectError> {
+    fn execute_connection(
+        &mut self,
+        effect: ConnectionEffect,
+    ) -> Result<(), ApplicationEffectError> {
         match effect {
             ConnectionEffect::RefreshPorts => {
                 let result = self.discovery.snapshot();
@@ -205,11 +208,7 @@ impl TuiEffectRunner {
                 suggested_name,
                 report,
             } => {
-                let result = write_report(
-                    &self.diagnostics_directory,
-                    &suggested_name,
-                    &report,
-                );
+                let result = write_report(&self.diagnostics_directory, &suggested_name, &report);
                 send_action(
                     &self.action_tx,
                     ApplicationAction::Connection(ConnectionAction::ReportExported(result)),
@@ -276,7 +275,9 @@ fn close_runtime_bus(runtime: &Arc<Mutex<RuntimeState>>) {
 }
 
 fn lock_runtime(runtime: &Arc<Mutex<RuntimeState>>) -> MutexGuard<'_, RuntimeState> {
-    runtime.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    runtime
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn write_report(
@@ -323,11 +324,14 @@ mod tests {
             error: None,
             probes: Vec::new(),
         };
-        let first = write_report(directory.path(), "identification-1.json", &report)
-            .expect("first export");
+        let first =
+            write_report(directory.path(), "identification-1.json", &report).expect("first export");
         let second = write_report(directory.path(), "identification-1.json", &report)
             .expect("second export");
         assert_ne!(first, second);
-        assert_eq!(first, PathBuf::from(directory.path()).join("identification-1.json"));
+        assert_eq!(
+            first,
+            PathBuf::from(directory.path()).join("identification-1.json")
+        );
     }
 }

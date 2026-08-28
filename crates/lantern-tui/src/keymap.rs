@@ -176,11 +176,7 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
     }
 }
 
-fn map_connection_key(
-    ui: &UiState,
-    view: &ApplicationView,
-    key: KeyEvent,
-) -> Option<MappedAction> {
+fn map_connection_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<MappedAction> {
     let connection = view.connection();
     match connection.step {
         ConnectionStep::Port => match key.code {
@@ -190,12 +186,8 @@ fn map_connection_key(
             KeyCode::Char('m') => Some(MappedAction::Ui(UiAction::BeginManualPath(
                 connection.manual_path_prefill.clone().unwrap_or_default(),
             ))),
-            KeyCode::Up | KeyCode::Char('k') => {
-                Some(MappedAction::Ui(UiAction::SelectionPrevious))
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                Some(MappedAction::Ui(UiAction::SelectionNext))
-            }
+            KeyCode::Up | KeyCode::Char('k') => Some(MappedAction::Ui(UiAction::SelectionPrevious)),
+            KeyCode::Down | KeyCode::Char('j') => Some(MappedAction::Ui(UiAction::SelectionNext)),
             KeyCode::Enter => selected_port_action(ui, view),
             _ => None,
         },
@@ -204,12 +196,8 @@ fn map_connection_key(
             KeyCode::Char('x') if !ui.profile_filter.is_empty() => {
                 Some(MappedAction::Ui(UiAction::ClearProfileSearch))
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                Some(MappedAction::Ui(UiAction::SelectionPrevious))
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                Some(MappedAction::Ui(UiAction::SelectionNext))
-            }
+            KeyCode::Up | KeyCode::Char('k') => Some(MappedAction::Ui(UiAction::SelectionPrevious)),
+            KeyCode::Down | KeyCode::Char('j') => Some(MappedAction::Ui(UiAction::SelectionNext)),
             KeyCode::Enter => selected_profile_action(ui, view),
             KeyCode::Esc => Some(connection_action(ConnectionAction::Back)),
             _ => None,

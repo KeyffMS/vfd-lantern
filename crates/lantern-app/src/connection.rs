@@ -245,7 +245,10 @@ impl Default for ConnectionWizardState {
 
 impl ConnectionWizardState {
     #[must_use]
-    pub(crate) fn new(manual_path_prefill: Option<PathBuf>, suggested_slave: Option<SlaveId>) -> Self {
+    pub(crate) fn new(
+        manual_path_prefill: Option<PathBuf>,
+        suggested_slave: Option<SlaveId>,
+    ) -> Self {
         Self {
             step: ConnectionStep::Port,
             ports: PortSnapshot::default(),
@@ -307,14 +310,21 @@ impl ConnectionWizardState {
         selected_matches && event.descriptor.presence == PortPresence::Removed
     }
 
-    pub(crate) fn select_detected(&mut self, selection: &PortSelection) -> Result<(), ConnectionFailure> {
+    pub(crate) fn select_detected(
+        &mut self,
+        selection: &PortSelection,
+    ) -> Result<(), ConnectionFailure> {
         let descriptor = self
             .ports
             .ports
             .iter()
             .find(|descriptor| selection_matches(selection, descriptor))
             .cloned()
-            .ok_or_else(|| ConnectionFailure::Validation("selected adapter is no longer present in the passive snapshot".to_owned()))?;
+            .ok_or_else(|| {
+                ConnectionFailure::Validation(
+                    "selected adapter is no longer present in the passive snapshot".to_owned(),
+                )
+            })?;
         self.selected_port = Some(descriptor);
         self.step = ConnectionStep::Profile;
         self.failure = None;
@@ -323,7 +333,9 @@ impl ConnectionWizardState {
 
     pub(crate) fn select_manual(&mut self, path: PathBuf) -> Result<(), ConnectionFailure> {
         if path.as_os_str().is_empty() {
-            return Err(ConnectionFailure::Validation("manual device path must not be empty".to_owned()));
+            return Err(ConnectionFailure::Validation(
+                "manual device path must not be empty".to_owned(),
+            ));
         }
         self.selected_port = Some(SerialPortDescriptor::manual(path));
         self.step = ConnectionStep::Profile;
@@ -366,11 +378,11 @@ impl ConnectionWizardState {
     }
 
     pub(crate) fn set_slave(&mut self, value: u8) -> Result<(), ConnectionFailure> {
-        let slave = SlaveId::new(value).map_err(|error| ConnectionFailure::Validation(error.to_string()))?;
-        let link = self
-            .link
-            .as_mut()
-            .ok_or_else(|| ConnectionFailure::Validation("select a profile before editing the slave ID".to_owned()))?;
+        let slave = SlaveId::new(value)
+            .map_err(|error| ConnectionFailure::Validation(error.to_string()))?;
+        let link = self.link.as_mut().ok_or_else(|| {
+            ConnectionFailure::Validation("select a profile before editing the slave ID".to_owned())
+        })?;
         link.slave_id = slave;
         Ok(())
     }
@@ -380,16 +392,19 @@ impl ConnectionWizardState {
         profile: &ValidatedDeviceProfile,
         kind: ConnectionAttemptKind,
     ) -> Result<ConnectionEffect, ConnectionFailure> {
-        let descriptor = self
-            .selected_port
-            .as_ref()
-            .ok_or_else(|| ConnectionFailure::Validation("select an adapter before connecting".to_owned()))?;
+        let descriptor = self.selected_port.as_ref().ok_or_else(|| {
+            ConnectionFailure::Validation("select an adapter before connecting".to_owned())
+        })?;
         if descriptor.presence == PortPresence::Removed {
-            return Err(ConnectionFailure::Validation("selected adapter is currently removed".to_owned()));
+            return Err(ConnectionFailure::Validation(
+                "selected adapter is currently removed".to_owned(),
+            ));
         }
-        let link = self
-            .link
-            .ok_or_else(|| ConnectionFailure::Validation("select validated link settings before connecting".to_owned()))?;
+        let link = self.link.ok_or_else(|| {
+            ConnectionFailure::Validation(
+                "select validated link settings before connecting".to_owned(),
+            )
+        })?;
         let (selection, expected_identity) = if descriptor.origin == SerialPortOrigin::Manual {
             (PortSelection::Manual(descriptor.device_node.clone()), None)
         } else if let Some(stable_id) = &descriptor.identity.stable_id {
@@ -455,7 +470,12 @@ impl ConnectionWizardState {
         if selected.origin == SerialPortOrigin::Manual {
             return;
         }
-        if let Some(updated) = self.ports.ports.iter().find(|port| same_port(port, selected)) {
+        if let Some(updated) = self
+            .ports
+            .ports
+            .iter()
+            .find(|port| same_port(port, selected))
+        {
             self.selected_port = Some(updated.clone());
         }
     }
