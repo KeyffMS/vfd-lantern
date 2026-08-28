@@ -54,7 +54,14 @@ impl Case {
     }
 
     const fn expected_requests(self) -> usize {
-        if matches!(self, Self::Partial) { 2 } else { 1 }
+        if matches!(
+            self,
+            Self::MatchProcessOff | Self::MatchDisarmed | Self::Partial
+        ) {
+            2
+        } else {
+            1
+        }
     }
 }
 
@@ -731,7 +738,7 @@ fn run_reconnect_case(simulator_binary: &Path, product_binary: &Path) -> Result<
 
     product.quit()?;
     let second_records = second.stop()?;
-    assert_read_only("reconnect-initial", &first_records, 1)?;
+    assert_read_only("reconnect-initial", &first_records, 2)?;
     assert_read_only("reconnect-replacement", &second_records, 1)?;
     Ok(())
 }
