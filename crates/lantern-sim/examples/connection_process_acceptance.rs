@@ -64,6 +64,12 @@ struct Handshake {
 }
 
 #[derive(Debug, Deserialize)]
+struct StructuredLogLine {
+    record: String,
+    function: Option<u8>,
+}
+
+#[derive(Debug)]
 struct LogRecord {
     function: u8,
 }
@@ -466,10 +472,6 @@ impl Simulator {
         })
     }
 
-    fn read_log(&self) -> Result<Vec<LogRecord>> {
-        read_log_records(&self.log_path)
-    }
-
     fn stop(mut self) -> Result<Vec<LogRecord>> {
         let pid = i32::try_from(self.child.id()).context("simulator pid")?;
         match kill(Pid::from_raw(pid), Signal::SIGINT) {
@@ -540,6 +542,9 @@ fn main() -> Result<()> {
     ensure!(simulator.is_file(), "missing {}", simulator.display());
     ensure!(product.is_file(), "missing {}", product.display());
 
+    run_no_traffic_before_connect_case(&simulator, &product)?;
+    println!("process-e2e no-traffic-before-connect ok");
+
     for case in [
         Case::MatchProcessOff,
         Case::MatchDisarmed,
@@ -555,6 +560,43 @@ fn main() -> Result<()> {
     }
     run_reconnect_case(&simulator, &product)?;
     println!("process-e2e reconnect-identity-change ok");
+    Ok(())
+}
+
+fn run_no_traffic_before_connect_case(
+    simulator_binary: &Path,
+    product_binary: &Path,
+) -> Result<()> {
+    let env = CaseEnvironment::new()?;
+    let selected = env.root.path().join("selected-vfd.toml");
+    fs::write(&selected, fs::read_to_string(reference_profile())?)?;
+    let profile = lantern_sim::load_profile(&selected)?;
+    let scenario = env.root.path().join("no-traffic-before-connect.toml");
+    fs::write(
+        &scenario,
+        scenario_source(&selected, &profile, Case::MatchProcessOff),
+    )?;
+    let simulator = Simulator::spawn(
+        simulator_binary,
+        &selected,
+        &scenario,
+        env.root.path().join("no-traffic-before-connect.jsonl"),
+    )?;
+    let mut product = TerminalChild::spawn(
+        product_binary,
+        &product_args(&selected, &simulator.pty),
+        &env,
+    )?;
+
+    drive_to_summary(&mut product)?;
+    thread::sleep(BEFORE_CONNECT_SETTLE);
+    product.quit()?;
+    let requests = simulator.stop()?;
+    ensure!(
+        requests.is_empty(),
+        "product transmitted {} Modbus request(s) before explicit Connect",
+        requests.len()
+    );
     Ok(())
 }
 
@@ -591,7 +633,6 @@ fn run_case(simulator_binary: &Path, product_binary: &Path, case: Case) -> Resul
     }
     let mut product = TerminalChild::spawn(product_binary, &args, &env)?;
     drive_to_summary(&mut product)?;
-    assert_no_traffic(&simulator, case.name())?;
     product.send("\r")?;
 
     match case {
@@ -676,7 +717,6 @@ fn run_reconnect_case(simulator_binary: &Path, product_binary: &Path) -> Result<
     let mut product =
         TerminalChild::spawn(product_binary, &product_args(&selected, &manual), &env)?;
     drive_to_summary(&mut product)?;
-    assert_no_traffic(&first, "reconnect-initial")?;
     product.send("\r")?;
     product.wait_for("Verified read-only session established")?;
     product.wait_for("PROCESS-OFF")?;
@@ -715,13 +755,6 @@ fn drive_to_summary(product: &mut TerminalChild) -> Result<()> {
     product.wait_for("profile_hash=")?;
     product.wait_for("source_hash=")?;
     product.wait_for("Identification probes")?;
-    Ok(())
-}
-
-fn assert_no_traffic(simulator: &Simulator, case: &str) -> Result<()> {
-    thread::sleep(BEFORE_CONNECT_SETTLE);
-    let records = simulator.read_log()?;
-    ensure!(records.is_empty(), "{case} transmitted before Connect");
     Ok(())
 }
 
@@ -802,11 +835,20 @@ fn read_log_records(path: &Path) -> Result<Vec<LogRecord>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    fs::read_to_string(path)?
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).context("parse simulator JSONL record"))
-        .collect()
+    let source = fs::read_to_string(path)?;
+    let mut requests = Vec::new();
+    for line in source.lines().filter(|line| !line.trim().is_empty()) {
+        let parsed: StructuredLogLine =
+            serde_json::from_str(line).context("parse simulator JSONL record")?;
+        if parsed.record == "request" {
+            requests.push(LogRecord {
+                function: parsed
+                    .function
+                    .context("simulator request record is missing function")?,
+            });
+        }
+    }
+    Ok(requests)
 }
 
 fn collect_named_files(root: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
