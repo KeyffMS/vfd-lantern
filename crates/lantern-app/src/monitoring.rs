@@ -4,9 +4,7 @@ use lantern_domain::{ParameterId, QuantityKind, UnitId};
 use lantern_profile::{ValidatedDeviceProfile, ValidatedParameter};
 use thiserror::Error;
 
-use crate::{
-    FrequencyClass, PollPlanError, ReadSubscription, SubscriberId, SubscriptionReason,
-};
+use crate::{FrequencyClass, PollPlanError, ReadSubscription, SubscriberId, SubscriptionReason};
 
 pub const MAX_SCOPE_CHANNELS: usize = 8;
 pub const MAX_SCOPE_PANELS: u8 = 4;
@@ -314,7 +312,9 @@ mod tests {
     use lantern_domain::{QuantityKind, UnitId};
     use lantern_profile::{ProfileFormat, parse_and_validate_profile};
 
-    use crate::{PollCadences, PollPlanner, PollPlannerConfig, ReadSubscription, SubscriptionReason};
+    use crate::{
+        PollCadences, PollPlanner, PollPlannerConfig, ReadSubscription, SubscriptionReason,
+    };
 
     use super::{
         AxisKey, ScopePanel, ScopeSelection, dashboard_subscriptions, default_dashboard_parameters,
@@ -465,7 +465,11 @@ parameters = ["frequency", "speed", "current"]
 
         let mut scope = ScopeSelection::default();
         scope
-            .add(&profile, dashboard[0].parameter_id().clone(), ScopePanel::new(1).expect("panel"))
+            .add(
+                &profile,
+                dashboard[0].parameter_id().clone(),
+                ScopePanel::new(1).expect("panel"),
+            )
             .expect("scope");
         let scope = scope_subscriptions(&profile, &scope).expect("scope subscriptions");
         assert_eq!(scope.len(), 1);
