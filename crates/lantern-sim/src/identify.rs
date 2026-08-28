@@ -1,14 +1,16 @@
 use std::{path::PathBuf, time::Duration};
 
 use lantern_app::{
-    AdapterIdentity, BusError, IdentificationAttempt, IdentificationRequest, MonotonicClock,
-    ReadBusPort, TokioMonotonicClock,
+    AdapterIdentity, BusError, IdentificationRequest, MonotonicClock, ReadBusPort,
+    TokioMonotonicClock,
 };
 use lantern_domain::{
     DeviceFingerprint, IdentificationMatch, IdentificationProbeResult, IdentificationReport,
     SessionId,
 };
 use lantern_profile::ValidatedDeviceProfile;
+
+pub use lantern_app::IdentificationAttempt;
 
 /// Simulator compatibility adapter around the production application identification use case.
 ///
