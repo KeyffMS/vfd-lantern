@@ -283,9 +283,12 @@ fn evidence_fingerprint(
     let mut digest = Sha256::new();
     digest.update(profile.profile_hash().to_hex().as_bytes());
     if let Some(stable_id) = &adapter.stable_id {
+        digest.update(b"stable-id:");
         digest.update(stable_id.to_string_lossy().as_bytes());
+    } else {
+        digest.update(b"canonical-device:");
+        digest.update(adapter.canonical_device.to_string_lossy().as_bytes());
     }
-    digest.update(adapter.canonical_device.to_string_lossy().as_bytes());
     if let Some(vendor_id) = adapter.vendor_id {
         digest.update(vendor_id.to_be_bytes());
     }
@@ -426,5 +429,85 @@ mod tests {
             TelemetryQuality::Timeout
         );
         assert!(attempt.diagnostics.probes[0].error.is_some());
+    }
+
+    #[tokio::test]
+    async fn stable_id_keeps_fingerprint_constant_across_kernel_device_renumbering() {
+        let profile = profile();
+        let raw = profile.probes()[0].expected_raw[0].clone();
+        let candidates = [Arc::clone(&profile)];
+        let first_adapter = AdapterIdentity {
+            stable_id: Some(PathBuf::from("/dev/serial/by-id/usb-vfd-demo")),
+            canonical_device: PathBuf::from("/dev/ttyUSB0"),
+            vendor_id: Some(0x1234),
+            product_id: Some(0x5678),
+            serial_number: Some("demo".to_owned()),
+        };
+        let second_adapter = AdapterIdentity {
+            canonical_device: PathBuf::from("/dev/ttyUSB7"),
+            ..first_adapter.clone()
+        };
+        let clock = ManualMonotonicClock::default();
+        let first = identify_profile_via_bus_with_clock(
+            &StaticBus(Ok(raw.clone())),
+            IdentificationRequest {
+                selected_profile: &profile,
+                candidate_profiles: &candidates,
+                adapter: &first_adapter,
+                session_id: SessionId::new(10),
+                slave_id: profile.protocol().default_link().slave_id,
+                timeout: Duration::from_secs(1),
+            },
+            &clock,
+        )
+        .await;
+        let second = identify_profile_via_bus_with_clock(
+            &StaticBus(Ok(raw)),
+            IdentificationRequest {
+                selected_profile: &profile,
+                candidate_profiles: &candidates,
+                adapter: &second_adapter,
+                session_id: SessionId::new(11),
+                slave_id: profile.protocol().default_link().slave_id,
+                timeout: Duration::from_secs(1),
+            },
+            &clock,
+        )
+        .await;
+        assert_eq!(
+            first.verified.expect("first verified").device.fingerprint,
+            second.verified.expect("second verified").device.fingerprint
+        );
+    }
+
+    #[tokio::test]
+    async fn another_matching_profile_makes_the_result_ambiguous_and_unverified() {
+        let profile = profile();
+        let source = std::str::from_utf8(include_bytes!("../../../profiles/example-vfd.toml"))
+            .expect("profile text")
+            .replacen("profile_id = \"example.vfd1000\"", "profile_id = \"example.vfd2000\"", 1);
+        let other = Arc::new(
+            parse_and_validate_profile(source.as_bytes(), ProfileFormat::Toml)
+                .expect("second matching profile"),
+        );
+        let raw = profile.probes()[0].expected_raw[0].clone();
+        let adapter = adapter();
+        let candidates = [Arc::clone(&profile), other];
+        let clock = ManualMonotonicClock::default();
+        let attempt = identify_profile_via_bus_with_clock(
+            &StaticBus(Ok(raw)),
+            IdentificationRequest {
+                selected_profile: &profile,
+                candidate_profiles: &candidates,
+                adapter: &adapter,
+                session_id: SessionId::new(12),
+                slave_id: profile.protocol().default_link().slave_id,
+                timeout: Duration::from_secs(1),
+            },
+            &clock,
+        )
+        .await;
+        assert_eq!(attempt.report.outcome, IdentificationMatch::Ambiguous);
+        assert!(attempt.verified.is_none());
     }
 }
