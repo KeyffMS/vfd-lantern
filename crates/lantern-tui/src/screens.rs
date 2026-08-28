@@ -93,13 +93,14 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
                     _ => "-".to_owned(),
                 };
                 lines.push(Line::from(format!(
-                    "{marker} {} stable={} present={} vid:pid={} serial={} driver={} product={}",
+                    "{marker} {} stable={} present={} vid:pid={} serial={} driver={} manufacturer={} product={}",
                     port.device_node,
                     stable,
                     port.present,
                     vendor_product,
                     port.serial_number.as_deref().unwrap_or("-"),
                     port.driver.as_deref().unwrap_or("-"),
+                    port.manufacturer.as_deref().unwrap_or("-"),
                     port.product.as_deref().unwrap_or("-"),
                 )));
             }
@@ -223,7 +224,7 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
             ));
             if let Some(port) = &connection.selected_port {
                 lines.push(Line::from(format!(
-                    "Adapter: {}{} stable={} vid:pid={} serial={} driver={} present={}",
+                    "Adapter: {}{} stable={} vid:pid={} serial={} driver={} manufacturer={} product={} present={}",
                     port.device_node,
                     if port.manual { " [Manual]" } else { "" },
                     port.stable_id.as_deref().unwrap_or("-"),
@@ -233,6 +234,8 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
                     },
                     port.serial_number.as_deref().unwrap_or("-"),
                     port.driver.as_deref().unwrap_or("-"),
+                    port.manufacturer.as_deref().unwrap_or("-"),
+                    port.product.as_deref().unwrap_or("-"),
                     port.present,
                 )));
             }
@@ -250,6 +253,21 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
                         profile.profile_hash,
                         profile.source_hash,
                     )));
+                    lines.push(Line::from(format!(
+                        "Identification probes ({}):",
+                        profile.identification_probes.len()
+                    )));
+                    for probe in &profile.identification_probes {
+                        lines.push(Line::from(format!(
+                            "  {} {} @ {}:{}+{} expected={:?}",
+                            probe.probe_id,
+                            probe.description,
+                            probe.table,
+                            probe.address,
+                            probe.count,
+                            probe.expected_raw,
+                        )));
+                    }
                 } else {
                     lines.push(Line::from(format!("Profile: {profile_id}")));
                 }
@@ -338,8 +356,12 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
                         lines.push(Line::from(format!("  probe error: {error}")));
                     }
                 }
-                if report.outcome != IdentificationMatch::Match {
-                    lines.push(Line::from("Verified session: NOT CREATED"));
+                if connection.step == ConnectionStep::Report {
+                    lines.push(Line::from(if report.outcome == IdentificationMatch::Match {
+                        "Verified session: NOT RETAINED"
+                    } else {
+                        "Verified session: NOT CREATED"
+                    }));
                 }
             }
             if let Some(path) = &connection.last_export {
