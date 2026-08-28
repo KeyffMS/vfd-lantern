@@ -382,13 +382,47 @@ fn profile_fields_match_filter(
 
 #[cfg(test)]
 mod tests {
-    use lantern_app::{MonitoringParameterView, ParameterId, QuantityKind, UnitId};
+    use std::path::PathBuf;
+
+    use lantern_app::{
+        PackagedProfilesManifestV1, ProfileRegistry, ProfileSource, ProfileSourceFormat,
+        ProfileSourceTier, monitoring_catalog,
+    };
 
     use super::{
         ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState,
         monitoring_parameter_matches_filter, profile_fields_match_filter,
     };
     use crate::{ScopeWindow, ScopeYRange};
+
+    fn monitoring_parameter() -> lantern_app::MonitoringParameterView {
+        let registry = ProfileRegistry::from_sources(
+            vec![ProfileSource {
+                path: PathBuf::from("example-vfd.toml"),
+                bytes: include_bytes!("../../../profiles/example-vfd.toml")
+                    .to_vec()
+                    .into_boxed_slice(),
+                format: ProfileSourceFormat::Toml,
+                tier: ProfileSourceTier::Explicit,
+            }],
+            &PackagedProfilesManifestV1 {
+                schema_version: 1,
+                build_id: "test".to_owned(),
+                profiles: Vec::new(),
+            },
+        )
+        .expect("registry");
+        let profile = registry
+            .entries()
+            .values()
+            .next()
+            .expect("profile")
+            .profile();
+        monitoring_catalog(profile)
+            .into_iter()
+            .find(|parameter| parameter.parameter_id.as_str() == "status.output_frequency")
+            .expect("monitoring parameter")
+    }
 
     #[test]
     fn ui_reducer_changes_only_presentation_state() {
@@ -436,17 +470,9 @@ mod tests {
 
     #[test]
     fn scope_search_normalizes_code_alias_quantity_and_unit() {
-        let parameter = MonitoringParameterView {
-            parameter_id: ParameterId::parse("status.output_frequency").expect("id"),
-            code: "D1.00".to_owned(),
-            name: "Output frequency".to_owned(),
-            quantity: QuantityKind::Frequency,
-            unit: UnitId::new(QuantityKind::Frequency, "hz").expect("unit"),
-            axis: crate::AxisKey::from_parameter_view_for_test(QuantityKind::Frequency, "hz"),
-            aliases: vec!["output_hz".to_owned()],
-        };
+        let parameter = monitoring_parameter();
         assert!(monitoring_parameter_matches_filter(&parameter, "D1.00"));
-        assert!(monitoring_parameter_matches_filter(&parameter, "output_hz"));
+        assert!(monitoring_parameter_matches_filter(&parameter, "status.output_frequency"));
         assert!(monitoring_parameter_matches_filter(&parameter, "frequency"));
         assert!(monitoring_parameter_matches_filter(&parameter, "hz"));
         assert!(!monitoring_parameter_matches_filter(&parameter, "rpm"));
