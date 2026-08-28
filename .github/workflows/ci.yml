@@ -63,25 +63,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Run tests
-        id: tests
-        continue-on-error: true
-        run: |
-          mkdir -p target/test-diagnostics
-          set -o pipefail
-          cargo test --workspace --all-features --locked 2>&1 | tee target/test-diagnostics/tests.log
-
-      - name: Upload test diagnostics
-        if: steps.tests.outcome == 'failure'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: test-diagnostics-amd64
-          path: target/test-diagnostics/tests.log
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Enforce tests
-        if: steps.tests.outcome == 'failure'
-        run: exit 1
+        run: cargo test --workspace --all-features --locked
 
       - name: Run connection process E2E
         run: cargo run --locked -p lantern-sim --example connection_process_acceptance
