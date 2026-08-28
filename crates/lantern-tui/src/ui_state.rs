@@ -147,11 +147,17 @@ pub enum UiAction {
     ScopeToggleCursor,
     ScopeCursorPrevious,
     ScopeCursorNext,
-    ScopeSetYRange { panel: u8, range: Option<ScopeYRange> },
+    ScopeSetYRange {
+        panel: u8,
+        range: Option<ScopeYRange>,
+    },
     ScopeResetView,
     OpenHelp,
     CloseModal,
-    Resize { width: u16, height: u16 },
+    Resize {
+        width: u16,
+        height: u16,
+    },
 }
 
 impl UiState {
