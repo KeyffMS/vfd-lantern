@@ -101,10 +101,14 @@ fn legacy_transport_error(attempt: &IdentificationAttempt) -> Option<BusError> {
             BusError::InvalidResponse
         }
         TelemetryQuality::DecodeError => BusError::InvalidFrameOrTransport,
-        TelemetryQuality::Unavailable if message == "permission denied" => BusError::PermissionDenied,
+        TelemetryQuality::Unavailable if message == "permission denied" => {
+            BusError::PermissionDenied
+        }
         TelemetryQuality::Unavailable if message == "serial port is busy" => BusError::PortBusy,
         TelemetryQuality::Unavailable if message == "request was cancelled" => BusError::Cancelled,
-        TelemetryQuality::Unavailable if message == "bounded bus queue is full" => BusError::QueueFull,
+        TelemetryQuality::Unavailable if message == "bounded bus queue is full" => {
+            BusError::QueueFull
+        }
         TelemetryQuality::Unavailable if message == "write started but its outcome is unknown" => {
             BusError::OutcomeUnknown
         }
