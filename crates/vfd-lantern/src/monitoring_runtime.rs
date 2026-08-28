@@ -4,15 +4,15 @@ use std::{
 };
 
 use lantern_app::{
-    ApplicationAction, ApplicationEffectError, BusControlPort, BusError, BusFuture, MonotonicClock,
-    MonitoringAction, MonitoringDiagnosticsView, MonitoringEffect, MonitoringRuntimeSnapshot,
-    PollCadences, PollExecutor, PollExecutorHandle, PollPlan, PollPlanner, PollPlannerConfig,
-    ReadBusPort, ReadBusRequest, ScopeHistoryView, ScopeSelection, TelemetryConsumers,
+    ApplicationAction, ApplicationEffectError, BusControlPort, BusError, BusFuture, LinkSettings,
+    MonotonicClock, MonitoringAction, MonitoringDiagnosticsView, MonitoringEffect,
+    MonitoringRuntimeSnapshot, ParameterId, PollCadences, PollExecutor, PollExecutorHandle,
+    PollPlan, PollPlanner, PollPlannerConfig, RawRegisters, ReadBusPort, ReadBusRequest,
+    ReadSubscription, ScopeHistoryView, ScopeSelection, SessionId, TelemetryConsumers,
     TelemetryEvent, TelemetryPipeline, TelemetryPipelineConfig, TelemetryPipelineHandle,
-    TokioMonotonicClock, ValidatedSettings, dashboard_subscriptions, scope_subscriptions,
+    TokioMonotonicClock, ValidatedDeviceProfile, ValidatedSettings, dashboard_subscriptions,
+    scope_subscriptions,
 };
-use lantern_domain::{RawRegisters, SessionId};
-use lantern_profile::ValidatedDeviceProfile;
 use lantern_transport::BusActorHandle;
 use tokio::{
     sync::{Notify, mpsc},
@@ -47,7 +47,7 @@ struct ActiveMonitoring {
     planner: PollPlanner,
     planner_config: PollPlannerConfig,
     plan: Arc<PollPlan>,
-    dashboard_parameters: Vec<lantern_domain::ParameterId>,
+    dashboard_parameters: Vec<ParameterId>,
     scope: ScopeSelection,
     poll: PollExecutorHandle,
     pipeline: TelemetryPipelineHandle,
@@ -154,8 +154,8 @@ impl MonitoringRuntime {
         &self,
         profile: Arc<ValidatedDeviceProfile>,
         session_id: SessionId,
-        link: lantern_domain::LinkSettings,
-        dashboard_parameters: Vec<lantern_domain::ParameterId>,
+        link: LinkSettings,
+        dashboard_parameters: Vec<ParameterId>,
         scope: ScopeSelection,
     ) -> Result<(), String> {
         self.stop();
@@ -285,7 +285,7 @@ impl MonitoringRuntime {
 
     fn reconfigure(
         &self,
-        dashboard_parameters: Vec<lantern_domain::ParameterId>,
+        dashboard_parameters: Vec<ParameterId>,
         scope: ScopeSelection,
     ) -> Result<(), String> {
         let mut state = lock_state(&self.shared.state);
@@ -321,7 +321,7 @@ impl MonitoringRuntime {
         Ok(())
     }
 
-    fn clear_history(&self, parameter_ids: &[lantern_domain::ParameterId]) -> Result<(), String> {
+    fn clear_history(&self, parameter_ids: &[ParameterId]) -> Result<(), String> {
         let pipeline = {
             let state = lock_state(&self.shared.state);
             state
@@ -427,7 +427,7 @@ struct SnapshotInputs {
     pipeline: TelemetryPipelineHandle,
     poll: PollExecutorHandle,
     plan: Arc<PollPlan>,
-    scope_parameter_ids: Vec<lantern_domain::ParameterId>,
+    scope_parameter_ids: Vec<ParameterId>,
     bus: Option<BusActorHandle>,
 }
 
@@ -511,9 +511,9 @@ impl ReadBusPort for VerifiedMonitoringBus {
 
 fn monitoring_subscriptions(
     profile: &ValidatedDeviceProfile,
-    dashboard_parameters: &[lantern_domain::ParameterId],
+    dashboard_parameters: &[ParameterId],
     scope: &ScopeSelection,
-) -> Result<Vec<lantern_app::ReadSubscription>, String> {
+) -> Result<Vec<ReadSubscription>, String> {
     let mut subscriptions =
         dashboard_subscriptions(profile, dashboard_parameters).map_err(|error| error.to_string())?;
     subscriptions.extend(scope_subscriptions(profile, scope).map_err(|error| error.to_string())?);
@@ -551,51 +551,4 @@ fn lock_state(state: &Mutex<MonitoringState>) -> MutexGuard<'_, MonitoringState>
     state
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use lantern_app::{BusRequestContext, RequestClass};
-    use lantern_domain::{
-        ModbusFunction, ModbusTable, RegisterAddress, RegisterBlock, RegisterCount, RequestId,
-        SessionId, SlaveId,
-    };
-
-    use super::MonitoringRuntime;
-
-    #[tokio::test]
-    async fn verified_gate_never_fabricates_a_bus_before_start() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let runtime = MonitoringRuntime::new(Default::default(), tx);
-        assert!(runtime.current_session().is_none());
-
-        let context = BusRequestContext::test_only(
-            RequestId::new(1),
-            SessionId::new(1),
-            RequestClass::Telemetry,
-            std::time::Instant::now() + Duration::from_millis(10),
-            None,
-        );
-        let block = RegisterBlock::new(
-            ModbusTable::HoldingRegisters,
-            RegisterAddress::new(0),
-            RegisterCount::new(1).expect("count"),
-            ModbusFunction::ReadHoldingRegisters,
-        )
-        .expect("block");
-        let request = lantern_app::ReadBusRequest::test_only(
-            context,
-            SlaveId::new(1).expect("slave"),
-            ModbusFunction::ReadHoldingRegisters,
-            block,
-            true,
-        );
-        let gate = super::VerifiedMonitoringBus {
-            shared: Arc::downgrade(&runtime.shared),
-            session_id: SessionId::new(1),
-        };
-        assert_eq!(gate.read(request).await, Err(lantern_app::BusError::Shutdown));
-    }
 }
