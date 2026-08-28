@@ -1,3 +1,5 @@
+use lantern_app::ProfileChoiceView;
+
 use crate::FormState;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -58,6 +60,12 @@ pub enum Focus {
     Modal,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConnectionEdit {
+    ManualPath,
+    ProfileSearch,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModalState {
     Help,
@@ -88,6 +96,8 @@ pub struct UiState {
     pub scroll_offset: usize,
     pub selected_index: usize,
     pub form: FormState,
+    pub connection_edit: Option<ConnectionEdit>,
+    pub profile_filter: String,
     pub modal: Option<ModalState>,
     pub viewport: Viewport,
 }
@@ -100,6 +110,8 @@ impl Default for UiState {
             scroll_offset: 0,
             selected_index: 0,
             form: FormState::default(),
+            connection_edit: None,
+            profile_filter: String::new(),
             modal: None,
             viewport: Viewport::default(),
         }
@@ -113,8 +125,17 @@ pub enum UiAction {
     PreviousScreen,
     ScrollUp,
     ScrollDown,
+    SelectionPrevious,
+    SelectionNext,
     FocusNext,
     FocusPrevious,
+    BeginManualPath(String),
+    BeginProfileSearch,
+    ApplyProfileSearch,
+    ClearProfileSearch,
+    InputChar(char),
+    Backspace,
+    CancelEdit,
     OpenHelp,
     CloseModal,
     Resize { width: u16, height: u16 },
@@ -126,11 +147,15 @@ impl UiState {
             UiAction::SelectScreen(screen) => {
                 self.screen = screen;
                 self.scroll_offset = 0;
+                self.selected_index = 0;
+                self.connection_edit = None;
             }
             UiAction::NextScreen => {
                 let next = (self.screen.index() + 1) % Screen::ALL.len();
                 self.screen = Screen::ALL[next];
                 self.scroll_offset = 0;
+                self.selected_index = 0;
+                self.connection_edit = None;
             }
             UiAction::PreviousScreen => {
                 let index = self.screen.index();
@@ -141,6 +166,8 @@ impl UiState {
                 };
                 self.screen = Screen::ALL[previous];
                 self.scroll_offset = 0;
+                self.selected_index = 0;
+                self.connection_edit = None;
             }
             UiAction::ScrollUp => {
                 self.scroll_offset = self.scroll_offset.saturating_sub(1);
@@ -148,11 +175,48 @@ impl UiState {
             UiAction::ScrollDown => {
                 self.scroll_offset = self.scroll_offset.saturating_add(1);
             }
+            UiAction::SelectionPrevious => {
+                self.selected_index = self.selected_index.saturating_sub(1);
+            }
+            UiAction::SelectionNext => {
+                self.selected_index = self.selected_index.saturating_add(1);
+            }
             UiAction::FocusNext | UiAction::FocusPrevious => {
                 self.focus = match self.focus {
                     Focus::Navigation => Focus::Content,
                     Focus::Content | Focus::Modal => Focus::Navigation,
                 };
+            }
+            UiAction::BeginManualPath(initial) => {
+                self.form.replace(initial);
+                self.connection_edit = Some(ConnectionEdit::ManualPath);
+                self.focus = Focus::Content;
+            }
+            UiAction::BeginProfileSearch => {
+                self.form.replace(self.profile_filter.clone());
+                self.connection_edit = Some(ConnectionEdit::ProfileSearch);
+                self.focus = Focus::Content;
+            }
+            UiAction::ApplyProfileSearch => {
+                self.profile_filter = self.form.value().trim().to_owned();
+                self.connection_edit = None;
+                self.form.clear();
+                self.selected_index = 0;
+                self.focus = Focus::Navigation;
+            }
+            UiAction::ClearProfileSearch => {
+                self.profile_filter.clear();
+                self.form.clear();
+                self.connection_edit = None;
+                self.selected_index = 0;
+                self.focus = Focus::Navigation;
+            }
+            UiAction::InputChar(character) => self.form.insert(character),
+            UiAction::Backspace => self.form.backspace(),
+            UiAction::CancelEdit => {
+                self.connection_edit = None;
+                self.form.clear();
+                self.focus = Focus::Navigation;
             }
             UiAction::OpenHelp => {
                 self.modal = Some(ModalState::Help);
@@ -173,9 +237,38 @@ impl UiState {
     }
 }
 
+pub(crate) fn profile_matches_filter(profile: &ProfileChoiceView, filter: &str) -> bool {
+    profile_fields_match_filter(
+        profile.profile_id.as_str(),
+        &profile.vendor,
+        &profile.family,
+        &profile.model,
+        filter,
+    )
+}
+
+fn profile_fields_match_filter(
+    profile_id: &str,
+    vendor: &str,
+    family: &str,
+    model: &str,
+    filter: &str,
+) -> bool {
+    let filter = filter.trim();
+    if filter.is_empty() {
+        return true;
+    }
+    let needle = filter.to_ascii_lowercase();
+    [profile_id, vendor, family, model]
+        .into_iter()
+        .any(|value| value.to_ascii_lowercase().contains(&needle))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Focus, ModalState, Screen, UiAction, UiState};
+    use super::{
+        ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState, profile_fields_match_filter,
+    };
 
     #[test]
     fn ui_reducer_changes_only_presentation_state() {
@@ -186,6 +279,58 @@ mod tests {
         assert_eq!(state.screen, Screen::Dashboard);
         assert_eq!(state.scroll_offset, 1);
         assert_eq!(state.focus, Focus::Content);
+    }
+
+    #[test]
+    fn manual_path_edit_is_presentation_only() {
+        let mut state = UiState::default();
+        state.apply(UiAction::BeginManualPath("/dev/ttyUSB".to_owned()));
+        state.apply(UiAction::InputChar('0'));
+        assert_eq!(state.connection_edit, Some(ConnectionEdit::ManualPath));
+        assert_eq!(state.form.value(), "/dev/ttyUSB0");
+        state.apply(UiAction::CancelEdit);
+        assert!(state.connection_edit.is_none());
+    }
+
+    #[test]
+    fn profile_search_is_case_insensitive_and_presentation_only() {
+        assert!(profile_fields_match_filter(
+            "example.vfd1000",
+            "Example Devices",
+            "Fictional",
+            "VFD 1000",
+            "devices",
+        ));
+        assert!(profile_fields_match_filter(
+            "example.vfd1000",
+            "Example Devices",
+            "Fictional",
+            "VFD 1000",
+            "VFD1000",
+        ));
+        assert!(profile_fields_match_filter(
+            "example.vfd1000",
+            "Example Devices",
+            "Fictional",
+            "VFD 1000",
+            "fictional",
+        ));
+        assert!(!profile_fields_match_filter(
+            "example.vfd1000",
+            "Example Devices",
+            "Fictional",
+            "VFD 1000",
+            "other",
+        ));
+
+        let mut state = UiState::default();
+        state.apply(UiAction::BeginProfileSearch);
+        for character in "vfd1000".chars() {
+            state.apply(UiAction::InputChar(character));
+        }
+        state.apply(UiAction::ApplyProfileSearch);
+        assert_eq!(state.profile_filter, "vfd1000");
+        assert!(state.connection_edit.is_none());
     }
 
     #[test]

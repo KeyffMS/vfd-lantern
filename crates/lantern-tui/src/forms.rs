@@ -24,6 +24,26 @@ impl FormState {
         self.cursor = self.value.len();
     }
 
+    pub fn insert(&mut self, character: char) {
+        if character.is_control() {
+            return;
+        }
+        self.value.insert(self.cursor, character);
+        self.cursor += character.len_utf8();
+    }
+
+    pub fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let previous = self.value[..self.cursor]
+            .char_indices()
+            .next_back()
+            .map_or(0, |(index, _)| index);
+        self.value.drain(previous..self.cursor);
+        self.cursor = previous;
+    }
+
     pub fn clear(&mut self) {
         self.value.clear();
         self.cursor = 0;

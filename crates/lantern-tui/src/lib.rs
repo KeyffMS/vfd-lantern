@@ -89,19 +89,19 @@ mod tests {
             .expect("draw");
         let text = buffer_text(terminal.backend().buffer());
         let semantic_snapshot = format!(
-            "title={}\nconnection={}\nprocess_off={}\nhelp={}\nclean_start={}",
+            "title={}\nconnection={}\nprocess_off={}\nhelp={}\npreconnect_no_open={}",
             text.contains("VFD Lantern"),
             text.contains("DISCONNECTED"),
             text.contains("authorization=N/A"),
             text.contains("? help"),
-            text.contains("no device scan")
+            text.contains("No serial open")
         );
         insta::assert_snapshot!(semantic_snapshot, @r###"
         title=true
         connection=true
         process_off=true
         help=true
-        clean_start=true
+        preconnect_no_open=true
         "###);
     }
 

@@ -2,6 +2,7 @@ use std::io;
 
 use crossterm::event::{Event, EventStream};
 use futures_util::StreamExt;
+use lantern_app::ApplicationView;
 
 use crate::{MappedAction, UiAction, UiState, map_key};
 
@@ -17,14 +18,18 @@ impl InputReader {
         }
     }
 
-    pub async fn next_action(&mut self, ui: &UiState) -> io::Result<MappedAction> {
+    pub async fn next_action(
+        &mut self,
+        ui: &UiState,
+        view: &ApplicationView,
+    ) -> io::Result<MappedAction> {
         loop {
             let event = self.events.next().await.ok_or_else(|| {
                 io::Error::new(io::ErrorKind::UnexpectedEof, "terminal event stream closed")
             })??;
             match event {
                 Event::Key(key) => {
-                    if let Some(action) = map_key(ui, key) {
+                    if let Some(action) = map_key(ui, view, key) {
                         return Ok(action);
                     }
                 }

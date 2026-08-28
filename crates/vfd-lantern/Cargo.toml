@@ -16,7 +16,11 @@ serde_json.workspace = true
 tokio.workspace = true
 lantern-app.workspace = true
 lantern-storage.workspace = true
+lantern-transport.workspace = true
 lantern-tui.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

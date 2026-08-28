@@ -16,12 +16,12 @@ use serde::Serialize;
 
 use crate::{
     AddressDocumentV1, AddressNotation, ByteOrderDocument, FaultDefinitionDocumentV1,
-    FaultSeverityDocument, FaultSourceKindDocument, MAX_FAULTS, MAX_PARAMETERS, MAX_PRESETS,
-    MAX_TEXT_BYTES, ModbusTableDocument, ParameterAccessDocument, ParameterDocumentV1,
-    ParityDocument, ProfileDocumentV1, ProfileError, ProfileHash, ReadBackDocumentV1,
-    RegisterEncodingDocument, RequiredDriveStateDocument, RestorePolicyDocument,
-    RoundingModeDocument, Rs485ModeDocument, SourceHash, TelemetryPresetDocumentV1,
-    WordOrderDocument, WriteFunctionDocument,
+    FaultSeverityDocument, FaultSourceKindDocument, HardwareVerificationDocumentV1, MAX_FAULTS,
+    MAX_PARAMETERS, MAX_PRESETS, MAX_TEXT_BYTES, ModbusTableDocument, ParameterAccessDocument,
+    ParameterDocumentV1, ParityDocument, ProfileDocumentV1, ProfileError, ProfileHash,
+    ReadBackDocumentV1, RegisterEncodingDocument, RequiredDriveStateDocument,
+    RestorePolicyDocument, RoundingModeDocument, Rs485ModeDocument, SourceHash,
+    TelemetryPresetDocumentV1, WordOrderDocument, WriteFunctionDocument,
 };
 
 mod build;
@@ -368,6 +368,12 @@ impl ValidatedDeviceProfile {
     #[must_use]
     pub fn restore_order(&self) -> &[ParameterId] {
         &self.restore_order
+    }
+
+    /// Returns immutable hardware-verification metadata from the validated source document.
+    #[must_use]
+    pub fn hardware_verification(&self) -> Option<&HardwareVerificationDocumentV1> {
+        self.normalized_document.hardware_verification.as_ref()
     }
 
     pub(crate) fn normalized_document(&self) -> &ProfileDocumentV1 {

@@ -14,7 +14,7 @@ lantern-profile.workspace = true
 lantern-app.workspace = true
 anyhow.workspace = true
 clap.workspace = true
-nix = { workspace = true, features = ["term"] }
+nix = { workspace = true, features = ["term", "signal", "process"] }
 rand_chacha.workspace = true
 rust_decimal.workspace = true
 serde.workspace = true

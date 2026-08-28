@@ -1,19 +1,16 @@
 use crate::{DeviceFingerprint, ProfileId, RawRegisters};
 
-/// Result of comparing all bounded identification probes with one profile.
+/// Result of comparing read-only identification probes with a profile.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum IdentificationMatch {
-    /// Every required probe matched exactly and the result is unique.
     Match,
-    /// At least one probe matched, but the complete identity was not proven.
     Partial,
-    /// A response was received, but required values did not match.
     Mismatch,
-    /// More than one profile matched the available evidence.
     Ambiguous,
+    Error,
 }
 
-/// Exact result of one read-only identification probe.
+/// Core domain result of one read-only identification probe.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IdentificationProbeResult {
     pub probe_id: String,
@@ -29,7 +26,7 @@ pub struct VerifiedDeviceIdentity {
     pub probes: Box<[IdentificationProbeResult]>,
 }
 
-/// Exportable identification report retained after failed identification.
+/// Minimal safety-relevant identification report retained by the session state machine.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IdentificationReport {
     pub profile_id: ProfileId,

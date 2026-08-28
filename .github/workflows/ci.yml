@@ -65,6 +65,9 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features --locked
 
+      - name: Run connection process E2E
+        run: cargo run --locked -p lantern-sim --example connection_process_acceptance
+
       - name: Run telemetry benchmark
         run: cargo run --locked --release -p lantern-app --example telemetry_pipeline_benchmark
 

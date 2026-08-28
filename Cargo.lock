@@ -909,6 +909,7 @@ dependencies = [
  "lantern-profile",
  "proptest",
  "serde",
+ "sha2 0.11.0",
  "thiserror 2.0.19",
  "tokio",
  "toml",
@@ -2445,8 +2446,10 @@ dependencies = [
  "clap",
  "lantern-app",
  "lantern-storage",
+ "lantern-transport",
  "lantern-tui",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

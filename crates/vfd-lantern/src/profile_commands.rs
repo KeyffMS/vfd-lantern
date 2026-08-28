@@ -14,6 +14,10 @@ use crate::cli::{ManifestArgs, ProfileCommand};
 const EMBEDDED_MANIFEST_JSON: &str = include_str!("../../../profiles/manifest/profiles-v1.json");
 const MAX_QUALIFICATION_INDEX_BYTES: usize = 4 * 1024 * 1024;
 
+pub(crate) fn embedded_manifest() -> Result<PackagedProfilesManifestV1> {
+    serde_json::from_str(EMBEDDED_MANIFEST_JSON).context("embedded profile manifest is invalid")
+}
+
 pub fn run(command: ProfileCommand) -> Result<()> {
     match command {
         ProfileCommand::List {
@@ -31,10 +35,6 @@ pub fn run(command: ProfileCommand) -> Result<()> {
         ProfileCommand::Hashes { path } => hashes(&path),
         ProfileCommand::Manifest(arguments) => build_manifest(arguments),
     }
-}
-
-fn embedded_manifest() -> Result<PackagedProfilesManifestV1> {
-    serde_json::from_str(EMBEDDED_MANIFEST_JSON).context("embedded profile manifest is invalid")
 }
 
 fn list(

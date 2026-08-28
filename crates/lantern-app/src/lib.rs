@@ -5,6 +5,8 @@
 mod application;
 mod bus;
 mod clock;
+mod connection;
+mod identification;
 mod poll;
 mod ports;
 mod profile_registry;
@@ -17,6 +19,9 @@ mod write_coordinator;
 pub use application::*;
 pub use bus::*;
 pub use clock::*;
+pub use connection::*;
+pub use identification::*;
+pub use lantern_domain::{IdentificationMatch, SlaveId};
 pub use poll::*;
 pub use ports::*;
 pub use profile_registry::*;
