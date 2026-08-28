@@ -266,6 +266,10 @@ pub struct ScopeAxisGroup {
 #[derive(Clone, Debug)]
 pub enum MonitoringAction {
     RuntimeSnapshot(MonitoringRuntimeSnapshot),
+    RuntimeFailed {
+        session_id: SessionId,
+        message: String,
+    },
     ToggleScopeParameter(ParameterId),
     MoveScopeParameter {
         parameter_id: ParameterId,
