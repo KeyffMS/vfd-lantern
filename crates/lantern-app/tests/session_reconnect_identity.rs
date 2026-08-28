@@ -87,7 +87,10 @@ fn reconnect_with_different_fingerprint_faults_and_closes_old_session_transport(
         verified: Some(verified("device.replacement")),
         port_identity: port(),
     });
-    assert_eq!(effects, vec![SessionEffect::ClosePort]);
+    assert_eq!(
+        effects,
+        vec![SessionEffect::StopPlanner, SessionEffect::ClosePort]
+    );
     let SessionState::Active(active) = machine.state() else {
         panic!("logical session remains present but faulted");
     };
