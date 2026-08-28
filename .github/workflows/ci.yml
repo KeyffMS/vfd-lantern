@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -36,10 +36,8 @@ jobs:
           pkg-config --exists openssl
           pkg-config --exists libudev
 
-      - name: Check out feature branch
+      - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
 
       - name: Install pinned Rust toolchain
         run: |
@@ -51,21 +49,6 @@ jobs:
           rustup default 1.97.1
           rustc --version
           cargo --version
-
-      - name: Apply final rustfmt for issue 13
-        run: cargo fmt --all
-
-      - name: Persist final rustfmt output
-        run: |
-          if git diff --quiet; then
-            echo 'rustfmt already clean'
-          else
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add crates/lantern-sim/examples/connection_process_e2e.rs crates/vfd-lantern/src/main.rs
-            git commit -m 'style(#13): format product E2E'
-            git push origin HEAD:${GITHUB_HEAD_REF}
-          fi
 
       - name: Validate lockfile and metadata
         run: cargo metadata --locked --format-version 1 --no-deps >/dev/null
