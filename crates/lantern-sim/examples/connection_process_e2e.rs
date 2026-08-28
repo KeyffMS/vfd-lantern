@@ -151,10 +151,31 @@ impl TerminalChild {
         let mut reader = master.try_clone().context("clone TUI PTY master")?;
         let reader_thread = thread::spawn(move || {
             let mut buffer = [0_u8; 4096];
+            let mut terminal_query_tail = Vec::new();
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
-                    Ok(count) => lock_output(&reader_output).extend_from_slice(&buffer[..count]),
+                    Ok(count) => {
+                        let chunk = &buffer[..count];
+                        lock_output(&reader_output).extend_from_slice(chunk);
+
+                        terminal_query_tail.extend_from_slice(chunk);
+                        let cursor_queries = terminal_query_tail
+                            .windows(4)
+                            .filter(|window| *window == b"\x1b[6n")
+                            .count();
+                        for _ in 0..cursor_queries {
+                            if reader.write_all(b"\x1b[1;1R").is_err() || reader.flush().is_err() {
+                                return;
+                            }
+                        }
+                        if cursor_queries > 0 {
+                            terminal_query_tail.clear();
+                        } else if terminal_query_tail.len() > 3 {
+                            let keep_from = terminal_query_tail.len() - 3;
+                            terminal_query_tail.drain(..keep_from);
+                        }
+                    }
                     Err(error) if error.raw_os_error() == Some(nix::libc::EIO) => break,
                     Err(_) => break,
                 }
