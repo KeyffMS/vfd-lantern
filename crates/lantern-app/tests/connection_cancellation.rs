@@ -163,6 +163,7 @@ fn selected_adapter_removal_during_identification_fails_closed_without_resume() 
     let view = state.view();
     assert_eq!(view.session().phase(), SessionPhaseView::Disconnected);
     assert_eq!(view.connection().step, ConnectionStep::Report);
+    assert!(view.active_session().is_none());
     assert!(
         view.connection()
             .failure
@@ -171,5 +172,4 @@ fn selected_adapter_removal_during_identification_fails_closed_without_resume() 
     );
     let report = view.connection().report.as_ref().expect("retained report");
     assert_eq!(report.outcome, IdentificationMatch::Error);
-    assert!(report.verified_session_was_not_created());
 }
