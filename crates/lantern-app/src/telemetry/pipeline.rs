@@ -166,6 +166,16 @@ impl TelemetryPipelineHandle {
         downsample_min_max(history.make_contiguous(), width)
     }
 
+    /// Clears only the requested bounded history channels. Latest values and polling remain intact.
+    pub fn clear_histories(&self, parameter_ids: &[ParameterId]) {
+        {
+            let mut state = lock_state(&self.shared.state);
+            state.clear_histories(parameter_ids);
+        }
+        self.shared.publish(Vec::new());
+        self.shared.changed.notify_one();
+    }
+
     #[cfg(test)]
     pub(crate) fn ingest_test_result(
         &self,
