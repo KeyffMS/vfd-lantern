@@ -32,6 +32,7 @@ struct LatestEntry {
 pub(super) struct PipelineCounters {
     pub(super) attempts: u64,
     pub(super) good_samples: u64,
+    pub(super) timeout_events: u64,
     pub(super) decode_errors: u64,
     pub(super) stale_transitions: u64,
     pub(super) disconnect_transitions: u64,
@@ -225,6 +226,9 @@ impl PipelineState {
         quality: TelemetryQuality,
         error: TelemetryAttemptError,
     ) -> TelemetryEvent {
+        if quality == TelemetryQuality::Timeout {
+            self.stats.timeout_events = self.stats.timeout_events.saturating_add(1);
+        }
         if matches!(
             error,
             TelemetryAttemptError::Decode(_)
@@ -377,6 +381,15 @@ impl PipelineState {
         self.history_bytes = self.history_bytes.saturating_add(bytes);
     }
 
+    pub(super) fn clear_histories(&mut self, parameter_ids: &[ParameterId]) {
+        for parameter_id in parameter_ids {
+            if let Some(history) = self.histories.get_mut(parameter_id) {
+                history.clear();
+            }
+        }
+        self.recalculate_history_bytes();
+    }
+
     pub(super) fn prune_histories(&mut self, now: MonotonicInstant) {
         let cutoff = now
             .as_nanos()
@@ -453,6 +466,7 @@ impl PipelineState {
             attempts: self.stats.attempts,
             good_samples: self.stats.good_samples,
             samples_per_second_milli,
+            timeout_events: self.stats.timeout_events,
             decode_errors: self.stats.decode_errors,
             stale_transitions: self.stats.stale_transitions,
             disconnect_transitions: self.stats.disconnect_transitions,
