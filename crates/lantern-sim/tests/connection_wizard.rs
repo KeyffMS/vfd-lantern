@@ -224,7 +224,9 @@ async fn explicit_connect_and_matching_probe_create_verified_read_only_session()
     let effects = identify_and_reduce(&mut opened).await;
     assert!(matches!(
         effects.as_slice(),
-        [ApplicationEffect::Monitoring(MonitoringEffect::Start { .. })]
+        [ApplicationEffect::Monitoring(
+            MonitoringEffect::Start { .. }
+        )]
     ));
     assert_eq!(opened.runtime.control().snapshot().request_count, 1);
     assert_eq!(
@@ -259,7 +261,9 @@ async fn enable_writes_still_finishes_matching_wizard_disarmed() {
     let effects = identify_and_reduce(&mut opened).await;
     assert!(matches!(
         effects.as_slice(),
-        [ApplicationEffect::Monitoring(MonitoringEffect::Start { .. })]
+        [ApplicationEffect::Monitoring(
+            MonitoringEffect::Start { .. }
+        )]
     ));
     let SessionState::Active(active) = opened.state.session().state() else {
         panic!("verified active session");
