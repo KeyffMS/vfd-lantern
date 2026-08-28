@@ -163,10 +163,9 @@ pub fn project_monitoring_view(
             .map(|snapshot| snapshot.histories.clone())
             .unwrap_or_default(),
         catalog: monitoring_catalog(profile),
-        diagnostics: snapshot.map_or_else(
-            MonitoringDiagnosticsView::default,
-            |snapshot| snapshot.diagnostics,
-        ),
+        diagnostics: snapshot.map_or_else(MonitoringDiagnosticsView::default, |snapshot| {
+            snapshot.diagnostics
+        }),
         error: error.map(str::to_owned),
     }
 }
