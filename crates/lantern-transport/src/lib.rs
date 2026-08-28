@@ -18,16 +18,13 @@ pub async fn open_serial_bus(
     request: lantern_app::SerialOpenRequest,
     profile_minimum_inter_frame_delay: std::time::Duration,
 ) -> Result<(BusActorHandle, tokio::task::JoinHandle<()>), lantern_app::SerialConnectError> {
-    let (_, handle, task) =
+    let (_identity, handle, task) =
         open_serial_bus_with_identity(request, profile_minimum_inter_frame_delay).await?;
     Ok((handle, task))
 }
 
-/// Opens the selected serial adapter and returns the identity verified at open time.
-///
-/// Manual paths intentionally return no fabricated stable-id, VID/PID, or serial metadata.
-/// Detected adapters preserve the expected identity only after `serial_open` has verified it
-/// before and after opening the descriptor.
+/// Opens the selected serial adapter, preserves the verified adapter identity,
+/// and starts its sole Modbus RTU actor.
 pub async fn open_serial_bus_with_identity(
     request: lantern_app::SerialOpenRequest,
     profile_minimum_inter_frame_delay: std::time::Duration,
@@ -49,20 +46,23 @@ pub async fn open_serial_bus_with_identity(
 
 /// Opens a serial bus using the application-owned monotonic clock.
 ///
-/// This compatibility entry point is used by deterministic PTY integration tests. Production
-/// connection-wizard callers use [`open_serial_bus_with_identity`].
+/// This entry point is used by deterministic PTY integration tests. Production
+/// callers use [`open_serial_bus`], which supplies [`lantern_app::TokioMonotonicClock`].
 pub async fn open_serial_bus_with_clock(
     request: lantern_app::SerialOpenRequest,
     profile_minimum_inter_frame_delay: std::time::Duration,
     clock: std::sync::Arc<dyn lantern_app::MonotonicClock>,
 ) -> Result<(BusActorHandle, tokio::task::JoinHandle<()>), lantern_app::SerialConnectError> {
-    let (_, handle, task) =
-        open_serial_bus_with_identity_and_clock(request, profile_minimum_inter_frame_delay, clock)
-            .await?;
+    let (_identity, handle, task) = open_serial_bus_with_identity_and_clock(
+        request,
+        profile_minimum_inter_frame_delay,
+        clock,
+    )
+    .await?;
     Ok((handle, task))
 }
 
-/// Identity-preserving variant used by the real #13 composition path and PTY E2E tests.
+/// Identity-preserving variant used by the production connection composition path and PTY E2E tests.
 pub async fn open_serial_bus_with_identity_and_clock(
     request: lantern_app::SerialOpenRequest,
     profile_minimum_inter_frame_delay: std::time::Duration,
