@@ -143,6 +143,7 @@ The #14 tests cover the following contracts incrementally:
 - bounded compression preserves an impulse and an explicit quality gap;
 - monitoring starts only after a Verified match;
 - Scope changes are application effects that rebuild the shared plan;
-- explicit disconnect stops the planner before closing transport.
+- explicit disconnect stops the planner before closing transport;
+- reconnect identity mismatch is covered both at the session reducer boundary and through the production PTY RTU stack, and stops the planner before closing the replacement transport.
 
 The pull request is accepted only after the repository's standard self-hosted amd64 gate passes build, rustfmt, Clippy with `-D warnings`, full tests, process E2E, telemetry benchmark, rustdoc, architecture checks and supply-chain checks.
