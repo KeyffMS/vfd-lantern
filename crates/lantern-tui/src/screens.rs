@@ -1,6 +1,4 @@
-use lantern_app::{
-    ApplicationView, ConnectionStep, IdentificationMatch, MonitoringView,
-};
+use lantern_app::{ApplicationView, ConnectionStep, IdentificationMatch, MonitoringView};
 use ratatui::{
     Frame,
     layout::Rect,

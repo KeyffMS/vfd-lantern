@@ -74,19 +74,28 @@ fn connected_ready_state() -> (ApplicationState, AdapterIdentity, ProfileId) {
     let connect = state.reduce(ApplicationAction::Connection(ConnectionAction::Connect));
     assert!(matches!(
         connect.as_slice(),
-        [ApplicationEffect::Connection(ConnectionEffect::OpenPort { .. })]
+        [ApplicationEffect::Connection(
+            ConnectionEffect::OpenPort { .. }
+        )]
     ));
     assert_eq!(state.view().session().phase(), SessionPhaseView::Connecting);
 
-    let opened = state.reduce(ApplicationAction::Connection(ConnectionAction::PortOpened {
-        identity: adapter.clone(),
-        kind: ConnectionAttemptKind::Initial,
-    }));
+    let opened = state.reduce(ApplicationAction::Connection(
+        ConnectionAction::PortOpened {
+            identity: adapter.clone(),
+            kind: ConnectionAttemptKind::Initial,
+        },
+    ));
     assert!(matches!(
         opened.as_slice(),
-        [ApplicationEffect::Connection(ConnectionEffect::Identify { .. })]
+        [ApplicationEffect::Connection(
+            ConnectionEffect::Identify { .. }
+        )]
     ));
-    assert_eq!(state.view().session().phase(), SessionPhaseView::Identifying);
+    assert_eq!(
+        state.view().session().phase(),
+        SessionPhaseView::Identifying
+    );
     assert!(state.view().monitoring().dashboard.is_empty());
 
     (state, adapter, profile_id)
@@ -175,15 +184,19 @@ fn monitoring_starts_only_after_verified_match_and_reconfigures_through_applicat
             if parameter_ids == &[parameter_id]
     ));
 
-    state.reduce(ApplicationAction::Monitoring(MonitoringAction::RuntimeFailed {
-        session_id: lantern_app::SessionId::new(session_id.get().saturating_add(1)),
-        message: "foreign".to_owned(),
-    }));
+    state.reduce(ApplicationAction::Monitoring(
+        MonitoringAction::RuntimeFailed {
+            session_id: lantern_app::SessionId::new(session_id.get().saturating_add(1)),
+            message: "foreign".to_owned(),
+        },
+    ));
     assert!(state.view().monitoring().error.is_none());
-    state.reduce(ApplicationAction::Monitoring(MonitoringAction::RuntimeFailed {
-        session_id,
-        message: "expected".to_owned(),
-    }));
+    state.reduce(ApplicationAction::Monitoring(
+        MonitoringAction::RuntimeFailed {
+            session_id,
+            message: "expected".to_owned(),
+        },
+    ));
     assert_eq!(state.view().monitoring().error.as_deref(), Some("expected"));
 }
 
@@ -208,6 +221,9 @@ fn explicit_disconnect_stops_monitoring_before_closing_transport() {
             ApplicationEffect::Connection(ConnectionEffect::ClosePort),
         ]
     ));
-    assert_eq!(state.view().session().phase(), SessionPhaseView::Disconnected);
+    assert_eq!(
+        state.view().session().phase(),
+        SessionPhaseView::Disconnected
+    );
     assert!(state.view().monitoring().catalog.is_empty());
 }
