@@ -49,42 +49,41 @@ pub struct IdentificationAttempt {
     pub diagnostics: IdentificationDiagnostics,
 }
 
+/// Immutable parameters for one bounded identification attempt.
+#[derive(Clone, Copy)]
+pub struct IdentificationRequest<'a> {
+    pub selected_profile: &'a ValidatedDeviceProfile,
+    pub candidate_profiles: &'a [Arc<ValidatedDeviceProfile>],
+    pub adapter: &'a AdapterIdentity,
+    pub session_id: SessionId,
+    pub slave_id: SlaveId,
+    pub timeout: Duration,
+}
+
 /// Performs only bounded, profile-declared read probes.
 ///
 /// The caller supplies the already-opened adapter identity. This function performs no scanning,
 /// guessing, fallback profile selection or writes.
 pub async fn identify_profile_via_bus(
     bus: &dyn ReadBusPort,
-    selected_profile: &ValidatedDeviceProfile,
-    candidate_profiles: &[Arc<ValidatedDeviceProfile>],
-    adapter: &AdapterIdentity,
-    session_id: SessionId,
-    slave_id: SlaveId,
-    timeout: Duration,
+    request: IdentificationRequest<'_>,
 ) -> IdentificationAttempt {
-    identify_profile_via_bus_with_clock(
-        bus,
+    identify_profile_via_bus_with_clock(bus, request, &TokioMonotonicClock).await
+}
+
+pub async fn identify_profile_via_bus_with_clock(
+    bus: &dyn ReadBusPort,
+    request: IdentificationRequest<'_>,
+    clock: &dyn MonotonicClock,
+) -> IdentificationAttempt {
+    let IdentificationRequest {
         selected_profile,
         candidate_profiles,
         adapter,
         session_id,
         slave_id,
         timeout,
-        &TokioMonotonicClock,
-    )
-    .await
-}
-
-pub async fn identify_profile_via_bus_with_clock(
-    bus: &dyn ReadBusPort,
-    selected_profile: &ValidatedDeviceProfile,
-    candidate_profiles: &[Arc<ValidatedDeviceProfile>],
-    adapter: &AdapterIdentity,
-    session_id: SessionId,
-    slave_id: SlaveId,
-    timeout: Duration,
-    clock: &dyn MonotonicClock,
-) -> IdentificationAttempt {
+    } = request;
     let started_at = clock.now();
     let mut core_results = Vec::with_capacity(selected_profile.probes().len());
     let mut diagnostics = Vec::with_capacity(selected_profile.probes().len());
@@ -342,7 +341,7 @@ mod tests {
         AdapterIdentity, BusError, BusFuture, ManualMonotonicClock, ReadBusPort, ReadBusRequest,
     };
 
-    use super::identify_profile_via_bus_with_clock;
+    use super::{IdentificationRequest, identify_profile_via_bus_with_clock};
 
     #[derive(Clone)]
     struct StaticBus(Result<RawRegisters, BusError>);
@@ -380,14 +379,18 @@ mod tests {
         let first = profile.probes().first().expect("probe");
         let raw = first.expected_raw.first().expect("expected").clone();
         let clock = ManualMonotonicClock::default();
+        let adapter = adapter();
+        let candidates = [Arc::clone(&profile)];
         let attempt = identify_profile_via_bus_with_clock(
             &StaticBus(Ok(raw)),
-            &profile,
-            &[Arc::clone(&profile)],
-            &adapter(),
-            SessionId::new(1),
-            profile.protocol().default_link().slave_id,
-            Duration::from_secs(1),
+            IdentificationRequest {
+                selected_profile: &profile,
+                candidate_profiles: &candidates,
+                adapter: &adapter,
+                session_id: SessionId::new(1),
+                slave_id: profile.protocol().default_link().slave_id,
+                timeout: Duration::from_secs(1),
+            },
             &clock,
         )
         .await;
@@ -401,14 +404,18 @@ mod tests {
     async fn timeout_is_preserved_as_error_diagnostics_and_never_verifies() {
         let profile = profile();
         let clock = ManualMonotonicClock::default();
+        let adapter = adapter();
+        let candidates = [Arc::clone(&profile)];
         let attempt = identify_profile_via_bus_with_clock(
             &StaticBus(Err(BusError::ResponseTimeout)),
-            &profile,
-            &[Arc::clone(&profile)],
-            &adapter(),
-            SessionId::new(2),
-            profile.protocol().default_link().slave_id,
-            Duration::from_secs(1),
+            IdentificationRequest {
+                selected_profile: &profile,
+                candidate_profiles: &candidates,
+                adapter: &adapter,
+                session_id: SessionId::new(2),
+                slave_id: profile.protocol().default_link().slave_id,
+                timeout: Duration::from_secs(1),
+            },
             &clock,
         )
         .await;
