@@ -23,7 +23,10 @@ pub use bus::*;
 pub use clock::*;
 pub use connection::*;
 pub use identification::*;
-pub use lantern_domain::{IdentificationMatch, SlaveId};
+pub use lantern_domain::{
+    IdentificationMatch, LinkSettings, ParameterId, RawRegisters, SessionId, SlaveId,
+};
+pub use lantern_profile::ValidatedDeviceProfile;
 pub use monitoring::*;
 pub use monitoring_projection::*;
 pub use poll::*;
