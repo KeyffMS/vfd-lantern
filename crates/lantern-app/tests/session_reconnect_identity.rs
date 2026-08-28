@@ -90,12 +90,15 @@ fn reconnect_with_different_fingerprint_faults_and_closes_old_session_transport(
     };
     assert_eq!(active.session_id, SessionId::new(44));
     assert!(matches!(
-        active.connectivity,
+        &active.connectivity,
         Connectivity::Faulted {
             cause: SessionFault::IdentityChanged
         }
     ));
-    assert!(!matches!(active.authorization, Authorization::Armed { .. }));
+    assert!(!matches!(
+        &active.authorization,
+        Authorization::Armed { .. }
+    ));
 }
 
 #[test]
