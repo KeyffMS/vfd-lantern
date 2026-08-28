@@ -8,6 +8,7 @@ mod panic_support;
 mod profile_commands;
 
 use std::{
+    future::pending,
     io::{self, IsTerminal},
     path::PathBuf,
     sync::Arc,
@@ -18,8 +19,8 @@ use anyhow::{Result, bail};
 use clap::Parser;
 use lantern_app::{
     ApplicationAction, ApplicationRuntime, ApplicationState, CliSettingsOverrides, ColorMode,
-    ConnectionAction, PortDiscoveryPort, ProfileRegistry, SessionInput, SessionPhaseView,
-    SettingsLoader, ValidatedSettings,
+    ConnectionAction, PortDiscoveryPort, PortEvent, PortEventReceiver, ProfileRegistry, SessionInput,
+    SessionPhaseView, SettingsLoader, ValidatedSettings,
 };
 use lantern_storage::{
     AppPaths, FilesystemProfileSource, FilesystemSettingsSource, ProfileLocations,
@@ -91,7 +92,7 @@ async fn main() -> Result<()> {
 async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
     let registry = load_product_registry(settings, paths)?;
     let discovery = Arc::new(UdevDiscovery::default());
-    let mut port_events = discovery.subscribe()?;
+    let mut port_events = discovery.subscribe().ok();
 
     let mut terminal = TerminalSession::enter(color_enabled(settings))?;
     let terminal_guard = terminal.guard();
@@ -114,7 +115,8 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
     let mut ui = UiState::default();
     terminal.initialize_viewport(&mut ui)?;
 
-    // Passive discovery only. The effect runner does not open a port here.
+    // Passive discovery only. Failure is represented in the connection view and never blocks
+    // a user-provided Manual path.
     application.dispatch(ApplicationAction::Connection(
         ConnectionAction::RefreshPorts,
     ))?;
@@ -148,12 +150,11 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
                 application.dispatch(action)?;
                 dirty = true;
             }
-            event = port_events.recv() => {
-                let Some(event) = event else {
-                    bail!("udev hotplug monitor closed unexpectedly");
-                };
-                application.dispatch(ApplicationAction::Connection(ConnectionAction::PortEvent(event)))?;
-                dirty = true;
+            event = next_port_event(&mut port_events) => {
+                if let Some(event) = event {
+                    application.dispatch(ApplicationAction::Connection(ConnectionAction::PortEvent(event)))?;
+                    dirty = true;
+                }
             }
             _ = sigint.recv() => {
                 application.dispatch(ApplicationAction::Session(SessionInput::Shutdown))?;
@@ -177,6 +178,19 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
 
     terminal.restore()?;
     Ok(())
+}
+
+async fn next_port_event(receiver: &mut Option<PortEventReceiver>) -> Option<PortEvent> {
+    match receiver {
+        Some(receiver) => match receiver.recv().await {
+            Some(event) => Some(event),
+            None => {
+                *receiver = None;
+                None
+            }
+        },
+        None => pending().await,
+    }
 }
 
 fn load_product_registry(
