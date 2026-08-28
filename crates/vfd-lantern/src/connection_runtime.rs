@@ -6,8 +6,9 @@ use std::{
 
 use lantern_app::{
     ApplicationAction, ApplicationEffect, ApplicationEffectError, BusControlPort, ConnectionAction,
-    ConnectionEffect, EffectRunner, IdentificationReportExportV1, PortDiscoveryPort, SessionEffect,
-    SessionInput, SlaveId, identification_error_attempt, identify_profile_via_bus,
+    ConnectionEffect, EffectRunner, IdentificationReportExportV1, IdentificationRequest,
+    PortDiscoveryPort, SessionEffect, SessionInput, SlaveId, identification_error_attempt,
+    identify_profile_via_bus,
 };
 use lantern_storage::create_new_synced;
 use lantern_transport::{BusActorHandle, UdevDiscovery, open_serial_bus_with_identity};
@@ -156,12 +157,14 @@ impl TuiEffectRunner {
                 tokio::spawn(async move {
                     let attempt = identify_profile_via_bus(
                         &bus,
-                        &profile,
-                        &candidates,
-                        &adapter,
-                        session_id,
-                        slave_id,
-                        timeout,
+                        IdentificationRequest {
+                            selected_profile: &profile,
+                            candidate_profiles: &candidates,
+                            adapter: &adapter,
+                            session_id,
+                            slave_id,
+                            timeout,
+                        },
                     )
                     .await;
                     if lock_runtime(&runtime).generation == generation {
