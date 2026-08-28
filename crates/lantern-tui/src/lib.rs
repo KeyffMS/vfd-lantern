@@ -5,6 +5,7 @@
 mod forms;
 mod input;
 mod keymap;
+mod monitoring_render;
 mod scope_state;
 mod screens;
 mod terminal_guard;
