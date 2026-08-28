@@ -1,13 +1,14 @@
 use std::time::Duration;
 
 use lantern_app::{
-    EngineeringValue, MonotonicInstant, ScopeHistoryPointView, ScopeHistoryView,
-    MonitoringValueView,
+    EngineeringValue, MonitoringValueView, MonotonicInstant, ScopeHistoryPointView,
+    ScopeHistoryView,
 };
 
 use crate::{ScopeUiState, ScopeWindow, ScopeYRange};
 
 const SPARK_LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+const SPARK_THRESHOLDS: [f64; 7] = [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875];
 
 #[must_use]
 pub(crate) fn format_monitoring_value(value: &MonitoringValueView) -> String {
@@ -98,7 +99,7 @@ pub(crate) fn visible_scope_points<'a>(
     let base_window = scope
         .window
         .duration()
-        .map(Duration::as_nanos)
+        .map(|duration| duration.as_nanos())
         .unwrap_or_else(|| latest.saturating_sub(first).max(1));
     let window = zoomed_window(base_window, scope.zoom_steps);
     let pan_unit = (window / 4).max(1);
@@ -241,10 +242,11 @@ pub(crate) fn scope_plot(
                     return '×';
                 }
                 let normalized = ((value - minimum) / span).clamp(0.0, 1.0);
-                let index = (normalized * f64::from((SPARK_LEVELS.len() - 1) as u32)).round();
-                SPARK_LEVELS[usize::try_from(index as u64)
-                    .unwrap_or(SPARK_LEVELS.len() - 1)
-                    .min(SPARK_LEVELS.len() - 1)]
+                let index = SPARK_THRESHOLDS
+                    .iter()
+                    .position(|threshold| normalized < *threshold)
+                    .unwrap_or(SPARK_LEVELS.len() - 1);
+                SPARK_LEVELS[index]
             }
         })
         .collect()
