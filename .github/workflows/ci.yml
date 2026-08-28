@@ -61,12 +61,14 @@ jobs:
         continue-on-error: true
         run: cargo fmt --all -- --check
 
-      - name: Apply rustfmt on PR head
+      - name: Apply rustfmt on exact PR head
         if: >-
           steps.fmt_check.outcome == 'failure' &&
           github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository
         run: |
+          git fetch --no-tags --depth=1 origin "${GITHUB_HEAD_REF}"
+          git checkout --force --detach FETCH_HEAD
           cargo fmt --all
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
