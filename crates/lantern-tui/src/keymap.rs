@@ -5,7 +5,7 @@ use lantern_app::{
     ApplicationAction, ApplicationView, ConnectionAction, ConnectionStep, SessionInput,
 };
 
-use crate::{ConnectionEdit, Screen, UiAction, UiState};
+use crate::{ConnectionEdit, Screen, UiAction, UiState, profile_matches_filter};
 
 #[derive(Clone, Debug)]
 pub enum MappedAction {
@@ -23,7 +23,7 @@ pub struct KeyBinding {
     pub description: &'static str,
 }
 
-pub const HELP_BINDINGS: [KeyBinding; 18] = [
+pub const HELP_BINDINGS: [KeyBinding; 20] = [
     KeyBinding {
         key: "1..9",
         description: "select top-level screen",
@@ -59,6 +59,14 @@ pub const HELP_BINDINGS: [KeyBinding; 18] = [
     KeyBinding {
         key: "m",
         description: "enter manual device path",
+    },
+    KeyBinding {
+        key: "/",
+        description: "search profiles by vendor/family/model/id",
+    },
+    KeyBinding {
+        key: "x",
+        description: "clear profile search",
     },
     KeyBinding {
         key: "b / p / d / t",
@@ -115,18 +123,27 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
         return Some(shutdown_action());
     }
 
-    if ui.connection_edit == Some(ConnectionEdit::ManualPath) {
-        return match key.code {
-            KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
-            KeyCode::Enter => Some(MappedAction::Combined {
-                ui: UiAction::CancelEdit,
-                application: Box::new(ApplicationAction::Connection(
-                    ConnectionAction::SelectManualPath(PathBuf::from(ui.form.value())),
-                )),
-            }),
-            KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
-            KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
-            _ => None,
+    if let Some(edit) = ui.connection_edit {
+        return match edit {
+            ConnectionEdit::ManualPath => match key.code {
+                KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
+                KeyCode::Enter => Some(MappedAction::Combined {
+                    ui: UiAction::CancelEdit,
+                    application: Box::new(ApplicationAction::Connection(
+                        ConnectionAction::SelectManualPath(PathBuf::from(ui.form.value())),
+                    )),
+                }),
+                KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
+                KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
+                _ => None,
+            },
+            ConnectionEdit::ProfileSearch => match key.code {
+                KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
+                KeyCode::Enter => Some(MappedAction::Ui(UiAction::ApplyProfileSearch)),
+                KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
+                KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
+                _ => None,
+            },
         };
     }
 
@@ -183,6 +200,10 @@ fn map_connection_key(
             _ => None,
         },
         ConnectionStep::Profile => match key.code {
+            KeyCode::Char('/') => Some(MappedAction::Ui(UiAction::BeginProfileSearch)),
+            KeyCode::Char('x') if !ui.profile_filter.is_empty() => {
+                Some(MappedAction::Ui(UiAction::ClearProfileSearch))
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 Some(MappedAction::Ui(UiAction::SelectionPrevious))
             }
@@ -247,11 +268,16 @@ fn selected_port_action(ui: &UiState, view: &ApplicationView) -> Option<MappedAc
 }
 
 fn selected_profile_action(ui: &UiState, view: &ApplicationView) -> Option<MappedAction> {
-    let profiles = &view.connection().profiles;
+    let profiles = view
+        .connection()
+        .profiles
+        .iter()
+        .filter(|profile| profile_matches_filter(profile, &ui.profile_filter))
+        .collect::<Vec<_>>();
     let index = ui.selected_index.min(profiles.len().saturating_sub(1));
-    profiles
-        .get(index)
-        .map(|profile| connection_action(ConnectionAction::SelectProfile(profile.profile_id.clone())))
+    profiles.get(index).map(|profile| {
+        connection_action(ConnectionAction::SelectProfile(profile.profile_id.clone()))
+    })
 }
 
 fn connection_action(action: ConnectionAction) -> MappedAction {
@@ -273,7 +299,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use lantern_app::ApplicationView;
 
-    use crate::{ConnectionEdit, ModalState, UiState};
+    use crate::{ConnectionEdit, ModalState, UiAction, UiState};
 
     use super::{MappedAction, keymap_is_collision_free, map_key};
 
@@ -314,6 +340,20 @@ mod tests {
     }
 
     #[test]
+    fn profile_search_mode_treats_q_as_filter_text_not_shutdown() {
+        let ui = UiState {
+            connection_edit: Some(ConnectionEdit::ProfileSearch),
+            ..UiState::default()
+        };
+        let view = ApplicationView::default();
+        let q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        assert!(matches!(
+            map_key(&ui, &view, q),
+            Some(MappedAction::Ui(UiAction::InputChar('q')))
+        ));
+    }
+
+    #[test]
     fn quit_is_an_application_action_not_ui_state() {
         let ui = UiState::default();
         let view = ApplicationView::default();
@@ -323,6 +363,4 @@ mod tests {
             Some(MappedAction::Application(_))
         ));
     }
-
-    use crate::UiAction;
 }
