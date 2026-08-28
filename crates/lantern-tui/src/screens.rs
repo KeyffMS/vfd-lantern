@@ -6,7 +6,9 @@ use ratatui::{
     widgets::{Block, Paragraph, Wrap},
 };
 
-use crate::{ConnectionEdit, HELP_BINDINGS, Screen, Theme, UiState};
+use crate::{
+    ConnectionEdit, HELP_BINDINGS, Screen, Theme, UiState, profile_matches_filter,
+};
 
 pub fn render_screen(
     frame: &mut Frame<'_>,
@@ -77,9 +79,13 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
 
     match connection.step {
         ConnectionStep::Port => {
-            lines.push(Line::from("Select adapter: j/k, Enter. r refreshes passive udev snapshot; m enters Manual path."));
+            lines.push(Line::from(
+                "Select adapter: j/k, Enter. r refreshes passive udev snapshot; m enters Manual path.",
+            ));
             if connection.ports.is_empty() {
-                lines.push(Line::from("No detected serial adapters in the current passive snapshot."));
+                lines.push(Line::from(
+                    "No detected serial adapters in the current passive snapshot.",
+                ));
             }
             for (index, port) in connection.ports.iter().enumerate() {
                 let marker = selection_marker(index, ui.selected_index);
@@ -109,18 +115,38 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
                     "Enter accepts the path; Esc cancels. No hardware metadata is fabricated.",
                 ));
             } else if let Some(prefill) = &connection.manual_path_prefill {
-                lines.push(Line::from(format!("CLI --device prefill: {prefill} (not opened automatically)")));
+                lines.push(Line::from(format!(
+                    "CLI --device prefill: {prefill} (not opened automatically)"
+                )));
             }
         }
         ConnectionStep::Profile => {
-            lines.push(Line::from("Select one validated profile: j/k, Enter. Esc returns to adapters."));
-            if connection.profiles.is_empty() {
-                lines.push(Line::from("No validated profiles are available."));
+            lines.push(Line::from(
+                "Select one validated profile: j/k, Enter. / searches vendor/family/model/profile ID; x clears; Esc returns.",
+            ));
+            let active_filter = if ui.connection_edit == Some(ConnectionEdit::ProfileSearch) {
+                ui.form.value()
+            } else {
+                &ui.profile_filter
+            };
+            if ui.connection_edit == Some(ConnectionEdit::ProfileSearch) {
+                lines.push(Line::from(format!("Profile search: {active_filter}_")));
+                lines.push(Line::from("Enter applies the search; Esc keeps the previous filter."));
+            } else if !ui.profile_filter.is_empty() {
+                lines.push(Line::from(format!("Profile filter: {:?}", ui.profile_filter)));
             }
-            for (index, profile) in connection.profiles.iter().enumerate() {
+            let profiles = connection
+                .profiles
+                .iter()
+                .filter(|profile| profile_matches_filter(profile, active_filter))
+                .collect::<Vec<_>>();
+            if profiles.is_empty() {
+                lines.push(Line::from("No validated profiles match the current search."));
+            }
+            for (index, profile) in profiles.into_iter().enumerate() {
                 let marker = selection_marker(index, ui.selected_index);
                 lines.push(Line::from(format!(
-                    "{marker} {} — {} {} {} rev={} origin={:?}",
+                    "{marker} {} — {} {} {} schema=v1 rev={} origin={:?}",
                     profile.profile_id,
                     profile.vendor,
                     profile.family,
@@ -141,7 +167,10 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
                         } else {
                             verification.firmware.join(",")
                         },
-                        verification.qualification_report_id.as_deref().unwrap_or("-")
+                        verification
+                            .qualification_report_id
+                            .as_deref()
+                            .unwrap_or("-")
                     )));
                 }
             }
@@ -169,32 +198,67 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
                         .collect::<Vec<_>>()
                         .join(", ")
                 )));
-                lines.push(Line::from(format!("Allowed parity: {:?}", link.allowed_parities)));
-                lines.push(Line::from(format!("Allowed data bits: {:?}", link.allowed_data_bits)));
-                lines.push(Line::from(format!("Allowed stop bits: {:?}", link.allowed_stop_bits)));
+                lines.push(Line::from(format!(
+                    "Allowed parity: {:?}",
+                    link.allowed_parities
+                )));
+                lines.push(Line::from(format!(
+                    "Allowed data bits: {:?}",
+                    link.allowed_data_bits
+                )));
+                lines.push(Line::from(format!(
+                    "Allowed stop bits: {:?}",
+                    link.allowed_stop_bits
+                )));
             }
         }
         ConnectionStep::Summary => {
-            lines.push(Line::from("Connection summary — this is still read-only and no port is open."));
+            lines.push(Line::from(
+                "Connection summary — this is still read-only and no port is open.",
+            ));
             if let Some(port) = &connection.selected_port {
                 lines.push(Line::from(format!(
-                    "Adapter: {}{}",
+                    "Adapter: {}{} stable={} vid:pid={} serial={} driver={} present={}",
                     port.device_node,
-                    if port.manual { " [Manual]" } else { "" }
+                    if port.manual { " [Manual]" } else { "" },
+                    port.stable_id.as_deref().unwrap_or("-"),
+                    match (port.vendor_id, port.product_id) {
+                        (Some(vendor), Some(product)) => format!("{vendor:04x}:{product:04x}"),
+                        _ => "-".to_owned(),
+                    },
+                    port.serial_number.as_deref().unwrap_or("-"),
+                    port.driver.as_deref().unwrap_or("-"),
+                    port.present,
                 )));
             }
-            lines.push(Line::from(format!(
-                "Profile: {}",
-                connection.selected_profile_id.as_deref().unwrap_or("-")
-            )));
+            if let Some(profile_id) = connection.selected_profile_id.as_deref() {
+                if let Some(profile) = connection
+                    .profiles
+                    .iter()
+                    .find(|profile| profile.profile_id.as_str() == profile_id)
+                {
+                    lines.push(Line::from(format!(
+                        "Profile: {} origin={:?} schema=v1 rev={} profile_hash={} source_hash={}",
+                        profile.profile_id,
+                        profile.origin,
+                        profile.revision,
+                        profile.profile_hash,
+                        profile.source_hash,
+                    )));
+                } else {
+                    lines.push(Line::from(format!("Profile: {profile_id}")));
+                }
+            }
             if let Some(link) = &connection.link {
                 lines.push(Line::from(format!(
-                    "Link: {} {:?} {:?} {:?}, slave {}",
+                    "Link: baud={} parity={:?} data={:?} stop={:?} slave={} timeout={}ms rs485={:?}",
                     link.current.baud_rate.get(),
                     link.current.parity,
                     link.current.data_bits,
                     link.current.stop_bits,
                     link.current.slave_id.get(),
+                    link.current.response_timeout.as_millis(),
+                    link.current.rs485_mode,
                 )));
             }
             lines.push(Line::from(""));
@@ -203,22 +267,34 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
             ));
         }
         ConnectionStep::Connecting => {
-            lines.push(Line::from("Opening and verifying the selected serial adapter…"));
+            lines.push(Line::from(
+                "Opening and verifying the selected serial adapter…",
+            ));
             lines.push(Line::from("Esc cancels and closes any opened adapter."));
         }
         ConnectionStep::Identifying => {
-            lines.push(Line::from("Running only profile-declared read-only identification probes…"));
-            lines.push(Line::from("Esc cancels. No write and no telemetry polling is reachable here."));
+            lines.push(Line::from(
+                "Running only profile-declared read-only identification probes…",
+            ));
+            lines.push(Line::from(
+                "Esc cancels. No write and no telemetry polling is reachable here.",
+            ));
         }
         ConnectionStep::Report | ConnectionStep::Connected => {
             if connection.step == ConnectionStep::Connected {
-                lines.push(Line::from("MATCH — Verified read-only session established."));
-                lines.push(Line::from("Writes remain PROCESS DISABLED or DISARMED; the wizard never arms them."));
+                lines.push(Line::from(
+                    "MATCH — Verified read-only session established.",
+                ));
+                lines.push(Line::from(
+                    "Writes remain PROCESS DISABLED or DISARMED; the wizard never arms them.",
+                ));
             } else {
                 lines.push(Line::from(
                     "Identification did not establish a Verified session. There is no 'continue anyway' path.",
                 ));
-                lines.push(Line::from("Esc returns to adapter selection; e exports this report offline."));
+                lines.push(Line::from(
+                    "Esc returns to adapter selection; e exports this report offline.",
+                ));
             }
             if let Some(report) = &connection.report {
                 lines.push(Line::from(format!(
@@ -248,7 +324,10 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
                         "  expected={:?} raw={:?} engineering={}",
                         probe.expected_raw,
                         probe.raw,
-                        probe.engineering.as_deref().unwrap_or("N/A (raw-only probe)")
+                        probe
+                            .engineering
+                            .as_deref()
+                            .unwrap_or("N/A (raw-only probe)")
                     )));
                     if let Some(error) = &probe.error {
                         lines.push(Line::from(format!("  probe error: {error}")));
@@ -272,11 +351,7 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
 }
 
 fn selection_marker(index: usize, selected: usize) -> &'static str {
-    if index == selected {
-        ">"
-    } else {
-        " "
-    }
+    if index == selected { ">" } else { " " }
 }
 
 fn planned_lines(
