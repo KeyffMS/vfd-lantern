@@ -1,19 +1,21 @@
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use lantern_app::{
     ApplicationAction, ApplicationEffect, ApplicationEffectError, BusControlPort, ConnectionAction,
     ConnectionEffect, EffectRunner, IdentificationReportExportV1, IdentificationRequest,
-    PortDiscoveryPort, SessionEffect, SessionInput, SlaveId, identification_error_attempt,
-    identify_profile_via_bus,
+    PortDiscoveryPort, PortSelection, SessionEffect, SessionFault, SessionInput, SlaveId,
+    identification_error_attempt, identify_profile_via_bus,
 };
 use lantern_storage::create_new_synced;
 use lantern_transport::{BusActorHandle, UdevDiscovery, open_serial_bus_with_identity};
 use lantern_tui::TerminalGuard;
 use tokio::{sync::mpsc, task::JoinHandle};
+
+const MANUAL_PATH_WATCH_INTERVAL: Duration = Duration::from_millis(50);
 
 struct ActiveBus {
     handle: BusActorHandle,
@@ -71,6 +73,14 @@ impl TuiEffectRunner {
                 kind,
             } => {
                 let slave_id = request.settings.slave_id;
+                let manual_watch_path = if request.expected_identity.is_none() {
+                    match &request.selection {
+                        PortSelection::Manual(path) => Some(path.clone()),
+                        PortSelection::StableId(_) => None,
+                    }
+                } else {
+                    None
+                };
                 let generation = {
                     let mut state = lock_runtime(&self.runtime);
                     state.generation = state.generation.saturating_add(1);
@@ -102,6 +112,14 @@ impl TuiEffectRunner {
                                 let _ = tx.send(ApplicationAction::Connection(
                                     ConnectionAction::PortOpened { identity, kind },
                                 ));
+                                if let Some(path) = manual_watch_path {
+                                    spawn_manual_path_watch(
+                                        Arc::clone(&runtime),
+                                        tx.clone(),
+                                        generation,
+                                        path,
+                                    );
+                                }
                             } else {
                                 handle.shutdown();
                             }
@@ -262,6 +280,32 @@ fn send_action(
     sender
         .send(action)
         .map_err(|_| ApplicationEffectError("application action channel closed".to_owned()))
+}
+
+fn spawn_manual_path_watch(
+    runtime: Arc<Mutex<RuntimeState>>,
+    sender: mpsc::UnboundedSender<ApplicationAction>,
+    generation: u64,
+    path: PathBuf,
+) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(MANUAL_PATH_WATCH_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if lock_runtime(&runtime).generation != generation {
+                return;
+            }
+            if !path.exists() {
+                let _ = sender.send(ApplicationAction::Session(SessionInput::TransportLost {
+                    cause: SessionFault::PortRemoved,
+                    now: Instant::now(),
+                }));
+                return;
+            }
+        }
+    });
 }
 
 fn close_runtime_bus(runtime: &Arc<Mutex<RuntimeState>>) {
