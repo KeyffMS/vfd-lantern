@@ -7,8 +7,9 @@ use std::{
 use lantern_app::{
     ApplicationAction, ApplicationEffect, ApplicationState, Authorization, BusControlPort,
     ConnectionAction, ConnectionAttemptKind, ConnectionEffect, ConnectionStep, IdentificationMatch,
-    PackagedProfilesManifestV1, ProfileRegistry, ProfileSource, ProfileSourceFormat,
-    ProfileSourceTier, SessionPhaseView, SessionState, TelemetryQuality, identify_profile_via_bus,
+    IdentificationRequest, PackagedProfilesManifestV1, ProfileRegistry, ProfileSource,
+    ProfileSourceFormat, ProfileSourceTier, SessionPhaseView, SessionState, TelemetryQuality,
+    identify_profile_via_bus,
 };
 use lantern_profile::ValidatedDeviceProfile;
 use lantern_sim::{
@@ -83,6 +84,7 @@ struct OpenedAttempt {
     profile: Arc<ValidatedDeviceProfile>,
     candidates: Vec<Arc<ValidatedDeviceProfile>>,
     session_id: lantern_domain::SessionId,
+    slave_id: lantern_domain::SlaveId,
     timeout: Duration,
 }
 
@@ -102,7 +104,7 @@ async fn open_via_wizard(extra: &str, process_writes_enabled: bool) -> OpenedAtt
     assert!(
         state
             .reduce(ApplicationAction::Connection(
-                ConnectionAction::SelectManualPath(runtime.client_path().to_path_buf(),)
+                ConnectionAction::SelectManualPath(runtime.client_path().to_path_buf())
             ))
             .is_empty()
     );
@@ -132,6 +134,7 @@ async fn open_via_wizard(extra: &str, process_writes_enabled: bool) -> OpenedAtt
         panic!("explicit Connect must be the first transport effect: {effects:?}");
     };
     assert_eq!(*kind, ConnectionAttemptKind::Initial);
+    let slave_id = request.settings.slave_id;
     let (identity, bus, bus_task) =
         open_serial_bus_with_identity(request.clone(), *minimum_inter_frame_delay)
             .await
@@ -168,6 +171,7 @@ async fn open_via_wizard(extra: &str, process_writes_enabled: bool) -> OpenedAtt
         profile: Arc::clone(profile),
         candidates: candidates.clone(),
         session_id: *session_id,
+        slave_id,
         timeout: *timeout,
     }
 }
@@ -175,12 +179,14 @@ async fn open_via_wizard(extra: &str, process_writes_enabled: bool) -> OpenedAtt
 async fn identify_and_reduce(opened: &mut OpenedAttempt) -> Vec<ApplicationEffect> {
     let attempt = identify_profile_via_bus(
         &opened.bus,
-        &opened.profile,
-        &opened.candidates,
-        &opened.identity,
-        opened.session_id,
-        opened.profile.protocol().default_link().slave_id,
-        opened.timeout,
+        IdentificationRequest {
+            selected_profile: &opened.profile,
+            candidate_profiles: &opened.candidates,
+            adapter: &opened.identity,
+            session_id: opened.session_id,
+            slave_id: opened.slave_id,
+            timeout: opened.timeout,
+        },
     )
     .await;
     opened.state.reduce(ApplicationAction::Connection(
