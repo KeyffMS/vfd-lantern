@@ -60,7 +60,25 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        id: clippy
+        continue-on-error: true
+        run: |
+          mkdir -p target/clippy
+          set -o pipefail
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings 2>&1 | tee target/clippy/clippy.log
+
+      - name: Upload Clippy diagnostics
+        if: steps.clippy.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clippy-diagnostics-amd64
+          path: target/clippy/clippy.log
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Enforce Clippy
+        if: steps.clippy.outcome == 'failure'
+        run: exit 1
 
       - name: Run tests
         run: cargo test --workspace --all-features --locked
