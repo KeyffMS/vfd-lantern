@@ -24,7 +24,8 @@ pub use clock::*;
 pub use connection::*;
 pub use identification::*;
 pub use lantern_domain::{
-    IdentificationMatch, LinkSettings, ParameterId, RawRegisters, SessionId, SlaveId,
+    EngineeringValue, IdentificationMatch, LinkSettings, MonotonicInstant, ParameterId,
+    QuantityKind, RawRegisters, SessionId, SlaveId, TelemetryQuality, UnitId,
 };
 pub use lantern_profile::ValidatedDeviceProfile;
 pub use monitoring::*;
