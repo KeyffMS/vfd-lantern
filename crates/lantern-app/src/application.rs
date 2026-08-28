@@ -9,9 +9,9 @@ use crate::{
     ConnectionEffect, ConnectionFailure, ConnectionStep, ConnectionWizardState,
     ConnectionWizardView, Connectivity, MonitoringAction, MonitoringEffect,
     MonitoringRuntimeSnapshot, MonitoringView, OperationState, ProfileRegistry, ScopeSelection,
-    SerialConnectError, SessionEffect, SessionFault, SessionInput, SessionState, SessionStateMachine,
-    default_dashboard_parameters, identification_error_attempt, identification_report_export,
-    project_monitoring_view,
+    SerialConnectError, SessionEffect, SessionFault, SessionInput, SessionState,
+    SessionStateMachine, default_dashboard_parameters, identification_error_attempt,
+    identification_report_export, project_monitoring_view,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -184,11 +184,7 @@ impl ApplicationState {
                 let changed = if self.monitoring.scope.contains(&parameter_id) {
                     self.monitoring.scope.remove(&parameter_id)
                 } else {
-                    match self
-                        .monitoring
-                        .scope
-                        .add_auto(&profile, parameter_id)
-                    {
+                    match self.monitoring.scope.add_auto(&profile, parameter_id) {
                         Ok(_) => true,
                         Err(error) => {
                             self.monitoring.error = Some(error.to_string());
@@ -645,9 +641,9 @@ impl ApplicationState {
                     self.connection.step = ConnectionStep::Connected;
                     self.connection.failure = None;
                     if let Some(session_id) = self.session.session_id() {
-                        translated.push(ApplicationEffect::Monitoring(
-                            MonitoringEffect::Resume { session_id },
-                        ));
+                        translated.push(ApplicationEffect::Monitoring(MonitoringEffect::Resume {
+                            session_id,
+                        }));
                     }
                 } else {
                     self.connection.step = ConnectionStep::Report;

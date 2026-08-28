@@ -369,9 +369,7 @@ fn selected_scope_parameter<'a>(
         .iter()
         .filter(|parameter| monitoring_parameter_matches_filter(parameter, &ui.scope_filter))
         .collect::<Vec<_>>();
-    let index = ui
-        .selected_index
-        .min(parameters.len().saturating_sub(1));
+    let index = ui.selected_index.min(parameters.len().saturating_sub(1));
     parameters.get(index).copied()
 }
 
@@ -390,7 +388,11 @@ fn selected_scope_move_action(ui: &UiState, view: &ApplicationView) -> Option<Ma
         .scope
         .iter()
         .find(|channel| channel.value.parameter_id == parameter.parameter_id)?;
-    let next_panel = if channel.panel >= 4 { 1 } else { channel.panel + 1 };
+    let next_panel = if channel.panel >= 4 {
+        1
+    } else {
+        channel.panel + 1
+    };
     let panel = ScopePanel::new(next_panel).ok()?;
     Some(monitoring_action(MonitoringAction::MoveScopeParameter {
         parameter_id: parameter.parameter_id.clone(),

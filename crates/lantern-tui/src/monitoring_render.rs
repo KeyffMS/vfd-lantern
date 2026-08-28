@@ -88,13 +88,7 @@ pub(crate) fn visible_scope_points<'a>(
     let latest = scope
         .pause_anchor_nanos
         .or_else(|| captured_at.map(MonotonicInstant::as_nanos))
-        .unwrap_or_else(|| {
-            history
-                .points
-                .last()
-                .map(point_time)
-                .unwrap_or_default()
-        });
+        .unwrap_or_else(|| history.points.last().map(point_time).unwrap_or_default());
     let first = history.points.first().map(point_time).unwrap_or(latest);
     let base_window = scope
         .window
@@ -289,7 +283,9 @@ fn point_time(point: &ScopeHistoryPointView) -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use lantern_app::{MonotonicInstant, ScopeHistoryPointView, ScopeHistoryView, TelemetryQuality};
+    use lantern_app::{
+        MonotonicInstant, ScopeHistoryPointView, ScopeHistoryView, TelemetryQuality,
+    };
 
     use super::{compress_scope_points, scope_range, visible_scope_points};
     use crate::{ScopeUiState, ScopeWindow};
@@ -312,11 +308,8 @@ mod tests {
             ..ScopeUiState::default()
         };
         scope.toggle_pause(20);
-        let visible = visible_scope_points(
-            &history,
-            &scope,
-            Some(MonotonicInstant::from_nanos(30)),
-        );
+        let visible =
+            visible_scope_points(&history, &scope, Some(MonotonicInstant::from_nanos(30)));
         assert_eq!(visible.len(), 2);
         assert_eq!(scope.pause_anchor_nanos, Some(20));
     }
@@ -354,8 +347,10 @@ mod tests {
             ScopeHistoryPointView::Value { value_bits, .. }
                 if f64::from_bits(*value_bits) == 1000.0
         )));
-        assert!(compressed
-            .iter()
-            .any(|point| matches!(point, ScopeHistoryPointView::Gap { .. })));
+        assert!(
+            compressed
+                .iter()
+                .any(|point| matches!(point, ScopeHistoryPointView::Gap { .. }))
+        );
     }
 }

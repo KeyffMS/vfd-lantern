@@ -5,13 +5,12 @@ use std::{
 
 use lantern_app::{
     ApplicationAction, ApplicationEffectError, BusControlPort, BusError, BusFuture, LinkSettings,
-    MonotonicClock, MonitoringAction, MonitoringDiagnosticsView, MonitoringEffect,
-    MonitoringRuntimeSnapshot, ParameterId, PollCadences, PollExecutor, PollExecutorHandle,
-    PollPlan, PollPlanner, PollPlannerConfig, RawRegisters, ReadBusPort, ReadBusRequest,
-    ReadSubscription, ScopeHistoryView, ScopeSelection, SessionId, TelemetryConsumers,
-    TelemetryEvent, TelemetryPipeline, TelemetryPipelineConfig, TelemetryPipelineHandle,
-    TokioMonotonicClock, ValidatedDeviceProfile, ValidatedSettings, dashboard_subscriptions,
-    scope_subscriptions,
+    MonitoringAction, MonitoringDiagnosticsView, MonitoringEffect, MonitoringRuntimeSnapshot,
+    MonotonicClock, ParameterId, PollCadences, PollExecutor, PollExecutorHandle, PollPlan,
+    PollPlanner, PollPlannerConfig, RawRegisters, ReadBusPort, ReadBusRequest, ReadSubscription,
+    ScopeHistoryView, ScopeSelection, SessionId, TelemetryConsumers, TelemetryEvent,
+    TelemetryPipeline, TelemetryPipelineConfig, TelemetryPipelineHandle, TokioMonotonicClock,
+    ValidatedDeviceProfile, ValidatedSettings, dashboard_subscriptions, scope_subscriptions,
 };
 use lantern_transport::BusActorHandle;
 use tokio::{
@@ -119,9 +118,7 @@ impl MonitoringRuntime {
                 dashboard_parameters,
                 scope,
             } => self.reconfigure(dashboard_parameters, scope),
-            MonitoringEffect::ClearHistory { parameter_ids } => {
-                self.clear_history(&parameter_ids)
-            }
+            MonitoringEffect::ClearHistory { parameter_ids } => self.clear_history(&parameter_ids),
             MonitoringEffect::Stop => {
                 self.stop();
                 Ok(())
@@ -391,7 +388,9 @@ impl MonitoringRuntime {
                         ScopeHistoryView::from_render(parameter_id, points)
                     })
                     .collect();
-                let bus = inputs.bus.map_or_else(Default::default, |bus| bus.statistics());
+                let bus = inputs
+                    .bus
+                    .map_or_else(Default::default, |bus| bus.statistics());
                 let poll = inputs.poll.statistics();
                 let pipeline = inputs.pipeline.statistics();
                 let snapshot = MonitoringRuntimeSnapshot {
@@ -431,7 +430,10 @@ struct SnapshotInputs {
     bus: Option<BusActorHandle>,
 }
 
-fn snapshot_inputs(shared: &Arc<MonitoringShared>, session_id: SessionId) -> Option<SnapshotInputs> {
+fn snapshot_inputs(
+    shared: &Arc<MonitoringShared>,
+    session_id: SessionId,
+) -> Option<SnapshotInputs> {
     let state = lock_state(&shared.state);
     let active = state
         .active
@@ -514,8 +516,8 @@ fn monitoring_subscriptions(
     dashboard_parameters: &[ParameterId],
     scope: &ScopeSelection,
 ) -> Result<Vec<ReadSubscription>, String> {
-    let mut subscriptions =
-        dashboard_subscriptions(profile, dashboard_parameters).map_err(|error| error.to_string())?;
+    let mut subscriptions = dashboard_subscriptions(profile, dashboard_parameters)
+        .map_err(|error| error.to_string())?;
     subscriptions.extend(scope_subscriptions(profile, scope).map_err(|error| error.to_string())?);
     Ok(subscriptions)
 }
@@ -530,7 +532,9 @@ fn validate_monitoring_plan(plan: &PollPlan) -> Result<(), String> {
         .map(|item| format!("{}:{:?}", item.parameter_id(), item.reason()))
         .collect::<Vec<_>>()
         .join(", ");
-    Err(format!("monitoring plan rejected subscriptions: {rejected}"))
+    Err(format!(
+        "monitoring plan rejected subscriptions: {rejected}"
+    ))
 }
 
 fn drain_consumers(consumers: TelemetryConsumers) -> Vec<JoinHandle<()>> {

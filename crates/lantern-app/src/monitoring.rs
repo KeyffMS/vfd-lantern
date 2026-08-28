@@ -555,7 +555,9 @@ parameters = ["frequency", "speed", "current"]
                 .expect("same axis panel"),
             frequency_panel
         );
-        let speed_panel = selection.add_auto(&profile, speed.clone()).expect("speed panel");
+        let speed_panel = selection
+            .add_auto(&profile, speed.clone())
+            .expect("speed panel");
         assert_eq!(speed_panel.get(), 2);
         assert!(matches!(
             selection.move_to_panel(&profile, &speed, frequency_panel),

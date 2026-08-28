@@ -472,7 +472,10 @@ mod tests {
     fn scope_search_normalizes_code_alias_quantity_and_unit() {
         let parameter = monitoring_parameter();
         assert!(monitoring_parameter_matches_filter(&parameter, "D1.00"));
-        assert!(monitoring_parameter_matches_filter(&parameter, "status.output_frequency"));
+        assert!(monitoring_parameter_matches_filter(
+            &parameter,
+            "status.output_frequency"
+        ));
         assert!(monitoring_parameter_matches_filter(&parameter, "frequency"));
         assert!(monitoring_parameter_matches_filter(&parameter, "hz"));
         assert!(!monitoring_parameter_matches_filter(&parameter, "rpm"));
