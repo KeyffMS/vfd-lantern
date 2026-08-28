@@ -8,12 +8,14 @@ use lantern_app::{
     ApplicationAction, ApplicationEffect, ApplicationEffectError, BusControlPort, ConnectionAction,
     ConnectionEffect, EffectRunner, IdentificationReportExportV1, IdentificationRequest,
     PortDiscoveryPort, PortSelection, SessionEffect, SessionFault, SessionInput, SlaveId,
-    identification_error_attempt, identify_profile_via_bus,
+    ValidatedSettings, identification_error_attempt, identify_profile_via_bus,
 };
 use lantern_storage::create_new_synced;
 use lantern_transport::{BusActorHandle, UdevDiscovery, open_serial_bus_with_identity};
 use lantern_tui::TerminalGuard;
 use tokio::{sync::mpsc, task::JoinHandle};
+
+use crate::monitoring_runtime::MonitoringRuntime;
 
 const MANUAL_PATH_WATCH_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -35,6 +37,7 @@ pub struct TuiEffectRunner {
     action_tx: mpsc::UnboundedSender<ApplicationAction>,
     discovery: Arc<UdevDiscovery>,
     runtime: Arc<Mutex<RuntimeState>>,
+    monitoring: MonitoringRuntime,
     diagnostics_directory: PathBuf,
 }
 
@@ -45,12 +48,15 @@ impl TuiEffectRunner {
         action_tx: mpsc::UnboundedSender<ApplicationAction>,
         discovery: Arc<UdevDiscovery>,
         diagnostics_directory: PathBuf,
+        settings: ValidatedSettings,
     ) -> Self {
+        let monitoring = MonitoringRuntime::new(settings, action_tx.clone());
         Self {
             terminal_guard,
             action_tx,
             discovery,
             runtime: Arc::new(Mutex::new(RuntimeState::default())),
+            monitoring,
             diagnostics_directory,
         }
     }
@@ -87,6 +93,7 @@ impl TuiEffectRunner {
                     state.generation
                 };
                 let runtime = Arc::clone(&self.runtime);
+                let monitoring = self.monitoring.clone();
                 let tx = self.action_tx.clone();
                 tokio::spawn(async move {
                     match open_serial_bus_with_identity(request, minimum_inter_frame_delay).await {
@@ -109,6 +116,7 @@ impl TuiEffectRunner {
                                 }
                             };
                             if accepted {
+                                monitoring.bus_opened(handle.clone());
                                 let _ = tx.send(ApplicationAction::Connection(
                                     ConnectionAction::PortOpened { identity, kind },
                                 ));
@@ -198,6 +206,7 @@ impl TuiEffectRunner {
                 Ok(())
             }
             ConnectionEffect::ClosePort => {
+                self.monitoring.bus_closed();
                 close_runtime_bus(&self.runtime);
                 Ok(())
             }
@@ -245,11 +254,15 @@ impl TuiEffectRunner {
                 .restore()
                 .map_err(|error| ApplicationEffectError(error.to_string())),
             SessionEffect::ShutdownBusActor => {
+                self.monitoring.bus_closed();
                 close_runtime_bus(&self.runtime);
                 Ok(())
             }
+            SessionEffect::StopPlanner => {
+                self.monitoring.stop();
+                Ok(())
+            }
             SessionEffect::AbortOperation
-            | SessionEffect::StopPlanner
             | SessionEffect::FinalizeStorage
             | SessionEffect::FinalizeLogs => Ok(()),
             SessionEffect::OpenPort
@@ -268,6 +281,7 @@ impl EffectRunner for TuiEffectRunner {
     fn execute(&mut self, effect: ApplicationEffect) -> Result<(), ApplicationEffectError> {
         match effect {
             ApplicationEffect::Connection(effect) => self.execute_connection(effect),
+            ApplicationEffect::Monitoring(effect) => self.monitoring.execute(effect),
             ApplicationEffect::Session(effect) => self.execute_session(effect),
         }
     }
