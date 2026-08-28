@@ -238,28 +238,36 @@ impl UiState {
 }
 
 pub(crate) fn profile_matches_filter(profile: &ProfileChoiceView, filter: &str) -> bool {
+    profile_fields_match_filter(
+        profile.profile_id.as_str(),
+        &profile.vendor,
+        &profile.family,
+        &profile.model,
+        filter,
+    )
+}
+
+fn profile_fields_match_filter(
+    profile_id: &str,
+    vendor: &str,
+    family: &str,
+    model: &str,
+    filter: &str,
+) -> bool {
     let filter = filter.trim();
     if filter.is_empty() {
         return true;
     }
     let needle = filter.to_ascii_lowercase();
-    [
-        profile.profile_id.as_str(),
-        profile.vendor.as_str(),
-        profile.family.as_str(),
-        profile.model.as_str(),
-    ]
-    .into_iter()
-    .any(|value| value.to_ascii_lowercase().contains(&needle))
+    [profile_id, vendor, family, model]
+        .into_iter()
+        .any(|value| value.to_ascii_lowercase().contains(&needle))
 }
 
 #[cfg(test)]
 mod tests {
-    use lantern_app::{ProfileChoiceView, ProfileOrigin};
-    use lantern_domain::ProfileId;
-
     use super::{
-        ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState, profile_matches_filter,
+        ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState, profile_fields_match_filter,
     };
 
     #[test]
@@ -286,21 +294,34 @@ mod tests {
 
     #[test]
     fn profile_search_is_case_insensitive_and_presentation_only() {
-        let profile = ProfileChoiceView {
-            profile_id: ProfileId::parse("example.vfd1000").expect("profile ID"),
-            vendor: "Example Devices".to_owned(),
-            family: "Fictional".to_owned(),
-            model: "VFD 1000".to_owned(),
-            revision: 1,
-            origin: ProfileOrigin::Explicit,
-            profile_hash: "profile-hash".to_owned(),
-            source_hash: "source-hash".to_owned(),
-            hardware_verification: None,
-        };
-        assert!(profile_matches_filter(&profile, "devices"));
-        assert!(profile_matches_filter(&profile, "VFD1000"));
-        assert!(profile_matches_filter(&profile, "fictional"));
-        assert!(!profile_matches_filter(&profile, "other"));
+        assert!(profile_fields_match_filter(
+            "example.vfd1000",
+            "Example Devices",
+            "Fictional",
+            "VFD 1000",
+            "devices",
+        ));
+        assert!(profile_fields_match_filter(
+            "example.vfd1000",
+            "Example Devices",
+            "Fictional",
+            "VFD 1000",
+            "VFD1000",
+        ));
+        assert!(profile_fields_match_filter(
+            "example.vfd1000",
+            "Example Devices",
+            "Fictional",
+            "VFD 1000",
+            "fictional",
+        ));
+        assert!(!profile_fields_match_filter(
+            "example.vfd1000",
+            "Example Devices",
+            "Fictional",
+            "VFD 1000",
+            "other",
+        ));
 
         let mut state = UiState::default();
         state.apply(UiAction::BeginProfileSearch);
