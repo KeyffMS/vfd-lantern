@@ -132,6 +132,16 @@ pub struct HardwareVerificationView {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IdentificationProbePlanView {
+    pub probe_id: String,
+    pub description: String,
+    pub table: String,
+    pub address: u16,
+    pub count: u16,
+    pub expected_raw: Vec<Vec<u16>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProfileChoiceView {
     pub profile_id: ProfileId,
     pub vendor: String,
@@ -141,6 +151,7 @@ pub struct ProfileChoiceView {
     pub origin: ProfileOrigin,
     pub profile_hash: String,
     pub source_hash: String,
+    pub identification_probes: Vec<IdentificationProbePlanView>,
     pub hardware_verification: Option<HardwareVerificationView>,
 }
 
@@ -594,6 +605,22 @@ fn profile_view(id: &ProfileId, entry: &crate::ProfileRegistryEntry) -> ProfileC
         origin: entry.origin(),
         profile_hash: profile.profile_hash().to_hex(),
         source_hash: profile.source_hash().to_hex(),
+        identification_probes: profile
+            .probes()
+            .iter()
+            .map(|probe| IdentificationProbePlanView {
+                probe_id: probe.id.clone(),
+                description: probe.description.clone(),
+                table: format!("{:?}", probe.block.table()),
+                address: probe.block.start().get(),
+                count: probe.block.count().get(),
+                expected_raw: probe
+                    .expected_raw
+                    .iter()
+                    .map(|raw| raw.as_slice().to_vec())
+                    .collect(),
+            })
+            .collect(),
         hardware_verification: profile.hardware_verification().map(|verification| {
             HardwareVerificationView {
                 method: verification.method.clone(),
