@@ -297,6 +297,7 @@ pub enum MonitoringEffect {
     ClearHistory {
         parameter_ids: Vec<ParameterId>,
     },
+    Stop,
 }
 
 #[derive(Debug, Error, Clone, Eq, PartialEq)]
