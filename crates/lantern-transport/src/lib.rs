@@ -53,12 +53,9 @@ pub async fn open_serial_bus_with_clock(
     profile_minimum_inter_frame_delay: std::time::Duration,
     clock: std::sync::Arc<dyn lantern_app::MonotonicClock>,
 ) -> Result<(BusActorHandle, tokio::task::JoinHandle<()>), lantern_app::SerialConnectError> {
-    let (_identity, handle, task) = open_serial_bus_with_identity_and_clock(
-        request,
-        profile_minimum_inter_frame_delay,
-        clock,
-    )
-    .await?;
+    let (_identity, handle, task) =
+        open_serial_bus_with_identity_and_clock(request, profile_minimum_inter_frame_delay, clock)
+            .await?;
     Ok((handle, task))
 }
 

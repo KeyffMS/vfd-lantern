@@ -76,7 +76,10 @@ fn reconnect_with_different_fingerprint_faults_and_closes_old_session_transport(
     });
     assert!(matches!(
         lost_effects.as_slice(),
-        [SessionEffect::ClosePort, SessionEffect::ScheduleReconnect { .. }]
+        [
+            SessionEffect::ClosePort,
+            SessionEffect::ScheduleReconnect { .. }
+        ]
     ));
 
     let effects = machine.transition(SessionInput::ReconnectIdentificationFinished {

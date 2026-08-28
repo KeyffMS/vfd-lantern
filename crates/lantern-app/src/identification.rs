@@ -485,7 +485,11 @@ mod tests {
         let profile = profile();
         let source = std::str::from_utf8(include_bytes!("../../../profiles/example-vfd.toml"))
             .expect("profile text")
-            .replacen("profile_id = \"example.vfd1000\"", "profile_id = \"example.vfd2000\"", 1);
+            .replacen(
+                "profile_id = \"example.vfd1000\"",
+                "profile_id = \"example.vfd2000\"",
+                1,
+            );
         let other = Arc::new(
             parse_and_validate_profile(source.as_bytes(), ProfileFormat::Toml)
                 .expect("second matching profile"),
