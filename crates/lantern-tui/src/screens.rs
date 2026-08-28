@@ -1,5 +1,5 @@
 use lantern_app::{
-    ApplicationView, ConnectionStep, IdentificationMatch, MonitoringView, SessionPhaseView,
+    ApplicationView, ConnectionStep, IdentificationMatch, MonitoringView,
 };
 use ratatui::{
     Frame,

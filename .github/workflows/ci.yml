@@ -1,32 +1,100 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  apply-clippy-fix:
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    name: Apply isolated #14 Clippy fix
+  rust:
+    name: Debian 13 / Rust 1.97.1 / amd64
     runs-on: [self-hosted]
 
     steps:
+      - name: Verify runner platform
+        run: |
+          test "$(uname -m)" = "x86_64"
+          . /etc/os-release
+          test "$ID" = "debian"
+          test "${VERSION_ID%%.*}" = "13"
+          printf 'runner=%s os=%s %s arch=%s\n' "$RUNNER_NAME" "$NAME" "$VERSION_ID" "$(uname -m)"
+
+      - name: Verify runner prerequisites
+        run: |
+          command -v git
+          command -v cc
+          command -v make
+          command -v pkg-config
+          command -v rustup
+          pkg-config --exists openssl
+          pkg-config --exists libudev
+
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Apply exact fix and restore standard CI
+      - name: Install pinned Rust toolchain
         run: |
-          git fetch --no-tags --depth=1 origin \
-            "+refs/heads/${GITHUB_HEAD_REF}:refs/remotes/origin/${GITHUB_HEAD_REF}" \
-            "+refs/heads/main:refs/remotes/origin/main"
-          git checkout --force --detach "refs/remotes/origin/${GITHUB_HEAD_REF}"
-          sed -i 's/, SessionPhaseView//' crates/lantern-tui/src/screens.rs
-          git show refs/remotes/origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
-          git diff --check
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add crates/lantern-tui/src/screens.rs .github/workflows/ci.yml
-          git commit -m 'fix(#14): remove unused Scope screen import'
-          git push origin "HEAD:${GITHUB_HEAD_REF}"
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --component llvm-tools-preview
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
+
+      - name: Validate lockfile and metadata
+        run: cargo metadata --locked --format-version 1 --no-deps >/dev/null
+
+      - name: Build workspace
+        run: cargo build --workspace --all-features --locked
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace --all-features --locked
+
+      - name: Run connection process E2E
+        run: cargo run --locked -p lantern-sim --example connection_process_acceptance
+
+      - name: Run telemetry benchmark
+        run: cargo run --locked --release -p lantern-app --example telemetry_pipeline_benchmark
+
+      - name: Build documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --no-deps --locked
+
+      - name: Check architecture boundaries
+        run: sh scripts/check-architecture.sh
+
+      - name: Install pinned supply-chain tools
+        run: |
+          export CARGO_INSTALL_ROOT="$HOME/.cache/vfd-lantern-cargo-tools"
+          export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
+          sh scripts/install-cargo-tools.sh supply-chain
+
+      - name: Check supply chain
+        env:
+          CARGO_VET_REPORT: target/supply-chain/cargo-vet-summary-amd64.json
+        run: sh scripts/check-supply-chain.sh
+
+      - name: Upload supply-chain report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: supply-chain-amd64
+          path: target/supply-chain
+          if-no-files-found: warn
+          retention-days: 14
