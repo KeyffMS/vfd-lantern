@@ -1,6 +1,7 @@
 use std::{
     fs::{self, File},
     io::{BufRead as _, BufReader, Read as _, Write as _},
+    os::unix::fs::symlink,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
@@ -379,6 +380,10 @@ fn main() -> Result<()> {
             .with_context(|| format!("process E2E case {}", outcome.name()))?;
         println!("process-e2e {} ok", outcome.name());
     }
+
+    run_reconnect_identity_change_case(&simulator, &product)
+        .context("process E2E case reconnect-identity-change")?;
+    println!("process-e2e reconnect-identity-change ok");
     Ok(())
 }
 
@@ -476,24 +481,7 @@ fn run_case(
     thread::sleep(SCREEN_SETTLE);
     product.quit_and_wait()?;
     let records = simulator.stop_and_read_log()?;
-    ensure!(
-        records.len() == outcome.expected_requests(),
-        "{} sent {} Modbus requests; expected exactly {} bounded identification reads",
-        outcome.name(),
-        records.len(),
-        outcome.expected_requests()
-    );
-    ensure!(
-        records
-            .iter()
-            .all(|record| matches!(record.function, 3 | 4)),
-        "{} emitted a non-read Modbus function: {:?}",
-        outcome.name(),
-        records
-            .iter()
-            .map(|record| record.function)
-            .collect::<Vec<_>>()
-    );
+    assert_read_only_request_count(outcome.name(), &records, outcome.expected_requests())?;
 
     if matches!(outcome, ExpectedOutcome::MismatchWithExport) {
         let reports = environment.exported_reports()?;
@@ -507,6 +495,91 @@ fn run_case(
             "unexpected exported report: {report}"
         );
     }
+    Ok(())
+}
+
+fn run_reconnect_identity_change_case(
+    simulator_binary: &Path,
+    product_binary: &Path,
+) -> Result<()> {
+    let environment = CaseEnvironment::new()?;
+    let selected_profile = environment.root.path().join("selected-vfd.toml");
+    fs::write(&selected_profile, fs::read_to_string(reference_profile())?)?;
+    let profile = lantern_sim::load_profile(&selected_profile)?;
+    let scenario = environment.root.path().join("reconnect.toml");
+    fs::write(
+        &scenario,
+        scenario_source(
+            &selected_profile,
+            &profile,
+            ExpectedOutcome::MatchProcessOff,
+        ),
+    )?;
+
+    let first = SimulatorProcess::spawn(
+        simulator_binary,
+        &selected_profile,
+        &scenario,
+        environment.root.path().join("simulator-first.jsonl"),
+    )?;
+    let second = SimulatorProcess::spawn(
+        simulator_binary,
+        &selected_profile,
+        &scenario,
+        environment.root.path().join("simulator-second.jsonl"),
+    )?;
+    let manual_link = environment.root.path().join("manual-vfd");
+    symlink(&first.handshake.pty, &manual_link).context("link first simulated adapter")?;
+
+    let arguments = vec![
+        "--profile".to_owned(),
+        selected_profile.to_string_lossy().into_owned(),
+        "--device".to_owned(),
+        manual_link.to_string_lossy().into_owned(),
+        "--no-color".to_owned(),
+    ];
+    let mut product = TerminalChild::spawn(product_binary, &arguments, &environment)?;
+    drive_wizard_to_connect(&mut product)?;
+    product.wait_for("Verified read-only session established")?;
+    product.wait_for("PROCESS-OFF")?;
+
+    fs::remove_file(&manual_link).context("remove selected manual adapter path")?;
+    product.wait_for("RECONNECTING")?;
+    symlink(&second.handshake.pty, &manual_link).context("link replacement simulated adapter")?;
+
+    let first_records = first.stop_and_read_log()?;
+    product.wait_for("reconnect identity did not match the verified session")?;
+    product.wait_for("FAULTED")?;
+    product.assert_not_contains("authorization=ARMED")?;
+
+    thread::sleep(SCREEN_SETTLE);
+    product.quit_and_wait()?;
+    let second_records = second.stop_and_read_log()?;
+    assert_read_only_request_count("reconnect-initial", &first_records, 1)?;
+    assert_read_only_request_count("reconnect-replacement", &second_records, 1)?;
+    Ok(())
+}
+
+fn assert_read_only_request_count(
+    case: &str,
+    records: &[LogRecord],
+    expected: usize,
+) -> Result<()> {
+    ensure!(
+        records.len() == expected,
+        "{case} sent {} Modbus requests; expected exactly {expected} bounded identification reads",
+        records.len()
+    );
+    ensure!(
+        records
+            .iter()
+            .all(|record| matches!(record.function, 3 | 4)),
+        "{case} emitted a non-read Modbus function: {:?}",
+        records
+            .iter()
+            .map(|record| record.function)
+            .collect::<Vec<_>>()
+    );
     Ok(())
 }
 
