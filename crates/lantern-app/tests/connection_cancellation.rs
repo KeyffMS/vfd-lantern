@@ -4,7 +4,8 @@ use lantern_app::{
     AdapterIdentity, ApplicationAction, ApplicationEffect, ApplicationState, ConnectionAction,
     ConnectionEffect, ConnectionStep, IdentificationMatch, PackagedProfilesManifestV1, PortEvent,
     PortEventKind, PortPresence, PortSelection, PortSnapshot, ProfileRegistry, ProfileSource,
-    ProfileSourceFormat, ProfileSourceTier, SerialPortDescriptor, SerialPortOrigin, SessionPhaseView,
+    ProfileSourceFormat, ProfileSourceTier, SerialPortDescriptor, SerialPortOrigin,
+    SessionPhaseView,
 };
 
 fn registry() -> Arc<ProfileRegistry> {
@@ -70,11 +71,7 @@ fn state_at_summary() -> (ApplicationState, SerialPortDescriptor) {
         state
             .reduce(ApplicationAction::Connection(
                 ConnectionAction::SelectDetectedPort(PortSelection::StableId(
-                    descriptor
-                        .identity
-                        .stable_id
-                        .clone()
-                        .expect("stable id"),
+                    descriptor.identity.stable_id.clone().expect("stable id"),
                 ))
             ))
             .is_empty()
@@ -101,7 +98,9 @@ fn cancel_while_connecting_closes_transport_and_returns_disconnected() {
     let connect = state.reduce(ApplicationAction::Connection(ConnectionAction::Connect));
     assert!(matches!(
         connect.as_slice(),
-        [ApplicationEffect::Connection(ConnectionEffect::OpenPort { .. })]
+        [ApplicationEffect::Connection(
+            ConnectionEffect::OpenPort { .. }
+        )]
     ));
     assert_eq!(state.view().session().phase(), SessionPhaseView::Connecting);
 
@@ -110,7 +109,10 @@ fn cancel_while_connecting_closes_transport_and_returns_disconnected() {
         effect,
         ApplicationEffect::Connection(ConnectionEffect::ClosePort)
     )));
-    assert_eq!(state.view().session().phase(), SessionPhaseView::Disconnected);
+    assert_eq!(
+        state.view().session().phase(),
+        SessionPhaseView::Disconnected
+    );
     assert_eq!(state.view().connection().step, ConnectionStep::Port);
 }
 
@@ -118,22 +120,32 @@ fn cancel_while_connecting_closes_transport_and_returns_disconnected() {
 fn cancel_while_identifying_closes_transport_and_returns_disconnected() {
     let (mut state, descriptor) = state_at_summary();
     let _ = state.reduce(ApplicationAction::Connection(ConnectionAction::Connect));
-    let identify = state.reduce(ApplicationAction::Connection(ConnectionAction::PortOpened {
-        identity: descriptor.identity,
-        kind: lantern_app::ConnectionAttemptKind::Initial,
-    }));
+    let identify = state.reduce(ApplicationAction::Connection(
+        ConnectionAction::PortOpened {
+            identity: descriptor.identity,
+            kind: lantern_app::ConnectionAttemptKind::Initial,
+        },
+    ));
     assert!(matches!(
         identify.as_slice(),
-        [ApplicationEffect::Connection(ConnectionEffect::Identify { .. })]
+        [ApplicationEffect::Connection(
+            ConnectionEffect::Identify { .. }
+        )]
     ));
-    assert_eq!(state.view().session().phase(), SessionPhaseView::Identifying);
+    assert_eq!(
+        state.view().session().phase(),
+        SessionPhaseView::Identifying
+    );
 
     let cancel = state.reduce(ApplicationAction::Connection(ConnectionAction::Cancel));
     assert!(cancel.iter().any(|effect| matches!(
         effect,
         ApplicationEffect::Connection(ConnectionEffect::ClosePort)
     )));
-    assert_eq!(state.view().session().phase(), SessionPhaseView::Disconnected);
+    assert_eq!(
+        state.view().session().phase(),
+        SessionPhaseView::Disconnected
+    );
     assert_eq!(state.view().connection().step, ConnectionStep::Port);
 }
 
@@ -141,11 +153,16 @@ fn cancel_while_identifying_closes_transport_and_returns_disconnected() {
 fn selected_adapter_removal_during_identification_fails_closed_without_resume() {
     let (mut state, descriptor) = state_at_summary();
     let _ = state.reduce(ApplicationAction::Connection(ConnectionAction::Connect));
-    let _ = state.reduce(ApplicationAction::Connection(ConnectionAction::PortOpened {
-        identity: descriptor.identity.clone(),
-        kind: lantern_app::ConnectionAttemptKind::Initial,
-    }));
-    assert_eq!(state.view().session().phase(), SessionPhaseView::Identifying);
+    let _ = state.reduce(ApplicationAction::Connection(
+        ConnectionAction::PortOpened {
+            identity: descriptor.identity.clone(),
+            kind: lantern_app::ConnectionAttemptKind::Initial,
+        },
+    ));
+    assert_eq!(
+        state.view().session().phase(),
+        SessionPhaseView::Identifying
+    );
 
     let mut removed = descriptor;
     removed.presence = PortPresence::Removed;
