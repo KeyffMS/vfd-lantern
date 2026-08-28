@@ -1,10 +1,13 @@
-use std::{collections::BTreeSet, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
-use lantern_domain::{ParameterId, QuantityKind, UnitId};
+use lantern_domain::{LinkSettings, ParameterId, QuantityKind, SessionId, UnitId};
 use lantern_profile::{ValidatedDeviceProfile, ValidatedParameter};
 use thiserror::Error;
 
-use crate::{FrequencyClass, PollPlanError, ReadSubscription, SubscriberId, SubscriptionReason};
+use crate::{
+    FrequencyClass, MonitoringRuntimeSnapshot, PollPlanError, ReadSubscription, SubscriberId,
+    SubscriptionReason,
+};
 
 pub const MAX_SCOPE_CHANNELS: usize = 8;
 pub const MAX_SCOPE_PANELS: u8 = 4;
@@ -47,6 +50,7 @@ pub struct MonitoringParameterView {
     pub quantity: QuantityKind,
     pub unit: UnitId,
     pub axis: AxisKey,
+    pub aliases: Vec<String>,
 }
 
 impl MonitoringParameterView {
@@ -59,6 +63,7 @@ impl MonitoringParameterView {
             quantity: parameter.quantity().clone(),
             unit: parameter.unit().clone(),
             axis: AxisKey::from_parameter(parameter),
+            aliases: Vec::new(),
         }
     }
 }
@@ -112,30 +117,80 @@ impl ScopeSelection {
         &self.channels
     }
 
+    #[must_use]
+    pub fn contains(&self, parameter_id: &ParameterId) -> bool {
+        self.channels
+            .iter()
+            .any(|channel| &channel.parameter_id == parameter_id)
+    }
+
+    #[must_use]
+    pub fn panel_for(&self, parameter_id: &ParameterId) -> Option<ScopePanel> {
+        self.channels
+            .iter()
+            .find(|channel| &channel.parameter_id == parameter_id)
+            .map(ScopeChannel::panel)
+    }
+
     pub fn add(
         &mut self,
         profile: &ValidatedDeviceProfile,
         parameter_id: ParameterId,
         panel: ScopePanel,
     ) -> Result<bool, MonitoringError> {
-        if profile.parameter(&parameter_id).is_none() {
-            return Err(MonitoringError::UnknownParameter(parameter_id));
-        }
-        if self
-            .channels
-            .iter()
-            .any(|channel| channel.parameter_id == parameter_id)
-        {
+        let parameter = profile
+            .parameter(&parameter_id)
+            .ok_or_else(|| MonitoringError::UnknownParameter(parameter_id.clone()))?;
+        if self.contains(&parameter_id) {
             return Ok(false);
         }
         if self.channels.len() >= MAX_SCOPE_CHANNELS {
             return Err(MonitoringError::TooManyScopeChannels);
+        }
+        let axis = AxisKey::from_parameter(parameter);
+        if self.channels.iter().any(|channel| {
+            channel.panel == panel
+                && profile
+                    .parameter(&channel.parameter_id)
+                    .is_some_and(|existing| AxisKey::from_parameter(existing) != axis)
+        }) {
+            return Err(MonitoringError::IncompatiblePanelAxis(panel.get()));
         }
         self.channels.push(ScopeChannel {
             parameter_id,
             panel,
         });
         Ok(true)
+    }
+
+    /// Adds a channel to an existing compatible panel or to the first empty panel.
+    pub fn add_auto(
+        &mut self,
+        profile: &ValidatedDeviceProfile,
+        parameter_id: ParameterId,
+    ) -> Result<ScopePanel, MonitoringError> {
+        if let Some(panel) = self.panel_for(&parameter_id) {
+            return Ok(panel);
+        }
+        let parameter = profile
+            .parameter(&parameter_id)
+            .ok_or_else(|| MonitoringError::UnknownParameter(parameter_id.clone()))?;
+        let axis = AxisKey::from_parameter(parameter);
+        if let Some(panel) = self.channels.iter().find_map(|channel| {
+            let existing = profile.parameter(&channel.parameter_id)?;
+            (AxisKey::from_parameter(existing) == axis).then_some(channel.panel)
+        }) {
+            self.add(profile, parameter_id, panel)?;
+            return Ok(panel);
+        }
+        for panel_number in 1..=MAX_SCOPE_PANELS {
+            let panel = ScopePanel::new(panel_number)?;
+            if self.channels.iter().all(|channel| channel.panel != panel) {
+                self.add(profile, parameter_id, panel)?;
+                return Ok(panel);
+            }
+        }
+        Err(MonitoringError::NoFreeScopePanel)
     }
 
     pub fn remove(&mut self, parameter_id: &ParameterId) -> bool {
@@ -147,9 +202,23 @@ impl ScopeSelection {
 
     pub fn move_to_panel(
         &mut self,
+        profile: &ValidatedDeviceProfile,
         parameter_id: &ParameterId,
         panel: ScopePanel,
     ) -> Result<(), MonitoringError> {
+        let parameter = profile
+            .parameter(parameter_id)
+            .ok_or_else(|| MonitoringError::UnknownParameter(parameter_id.clone()))?;
+        let axis = AxisKey::from_parameter(parameter);
+        if self.channels.iter().any(|channel| {
+            &channel.parameter_id != parameter_id
+                && channel.panel == panel
+                && profile
+                    .parameter(&channel.parameter_id)
+                    .is_some_and(|existing| AxisKey::from_parameter(existing) != axis)
+        }) {
+            return Err(MonitoringError::IncompatiblePanelAxis(panel.get()));
+        }
         let channel = self
             .channels
             .iter_mut()
@@ -194,12 +263,48 @@ pub struct ScopeAxisGroup {
     pub parameters: Vec<ParameterId>,
 }
 
+#[derive(Clone, Debug)]
+pub enum MonitoringAction {
+    RuntimeSnapshot(MonitoringRuntimeSnapshot),
+    ToggleScopeParameter(ParameterId),
+    MoveScopeParameter {
+        parameter_id: ParameterId,
+        panel: ScopePanel,
+    },
+    ClearScopeHistory,
+}
+
+#[derive(Clone, Debug)]
+pub enum MonitoringEffect {
+    Start {
+        profile: Arc<ValidatedDeviceProfile>,
+        session_id: SessionId,
+        link: LinkSettings,
+        dashboard_parameters: Vec<ParameterId>,
+        scope: ScopeSelection,
+    },
+    Resume {
+        session_id: SessionId,
+    },
+    Reconfigure {
+        dashboard_parameters: Vec<ParameterId>,
+        scope: ScopeSelection,
+    },
+    ClearHistory {
+        parameter_ids: Vec<ParameterId>,
+    },
+}
+
 #[derive(Debug, Error, Clone, Eq, PartialEq)]
 pub enum MonitoringError {
     #[error("Scope panel must be in 1..={MAX_SCOPE_PANELS}; got {0}")]
     InvalidPanel(u8),
     #[error("Scope supports at most {MAX_SCOPE_CHANNELS} channels")]
     TooManyScopeChannels,
+    #[error("Scope panel {0} already contains a different quantity/unit axis")]
+    IncompatiblePanelAxis(u8),
+    #[error("Scope has no free panel for another quantity/unit axis")]
+    NoFreeScopePanel,
     #[error("parameter {0} is not present in the active validated profile")]
     UnknownParameter(ParameterId),
     #[error("monitoring subscription is invalid: {0}")]
@@ -226,7 +331,16 @@ pub fn monitoring_catalog(profile: &ValidatedDeviceProfile) -> Vec<MonitoringPar
     profile
         .parameters()
         .values()
-        .map(MonitoringParameterView::from_parameter)
+        .map(|parameter| {
+            let mut view = MonitoringParameterView::from_parameter(parameter);
+            view.aliases = profile
+                .aliases()
+                .iter()
+                .filter(|(_, target)| *target == parameter.id())
+                .map(|(alias, _)| alias.clone())
+                .collect();
+            view
+        })
         .collect()
 }
 
@@ -317,8 +431,8 @@ mod tests {
     };
 
     use super::{
-        AxisKey, ScopePanel, ScopeSelection, dashboard_subscriptions, default_dashboard_parameters,
-        resolve_monitoring_parameter, scope_subscriptions,
+        AxisKey, MonitoringError, ScopePanel, ScopeSelection, dashboard_subscriptions,
+        default_dashboard_parameters, resolve_monitoring_parameter, scope_subscriptions,
     };
 
     const PROFILE: &str = r#"
@@ -419,35 +533,32 @@ parameters = ["frequency", "speed", "current"]
     }
 
     #[test]
-    fn equal_quantity_and_unit_share_exactly_one_scope_axis() {
+    fn scope_auto_panel_never_overlays_incompatible_axes() {
         let profile = profile();
         let mut selection = ScopeSelection::default();
-        let panel = ScopePanel::new(1).expect("panel");
-        selection
-            .add(
-                &profile,
-                lantern_domain::ParameterId::parse("frequency").expect("id"),
-                panel,
-            )
-            .expect("add");
-        selection
-            .add(
-                &profile,
-                lantern_domain::ParameterId::parse("frequency_alt").expect("id"),
-                panel,
-            )
-            .expect("add");
-        selection
-            .add(
-                &profile,
-                lantern_domain::ParameterId::parse("speed").expect("id"),
-                panel,
-            )
-            .expect("add");
-        let groups = selection.axis_groups(&profile, panel);
-        assert_eq!(groups.len(), 2);
+        let frequency = lantern_domain::ParameterId::parse("frequency").expect("id");
+        let frequency_alt = lantern_domain::ParameterId::parse("frequency_alt").expect("id");
+        let speed = lantern_domain::ParameterId::parse("speed").expect("id");
+
+        let frequency_panel = selection
+            .add_auto(&profile, frequency.clone())
+            .expect("frequency panel");
+        assert_eq!(frequency_panel.get(), 1);
+        assert_eq!(
+            selection
+                .add_auto(&profile, frequency_alt)
+                .expect("same axis panel"),
+            frequency_panel
+        );
+        let speed_panel = selection.add_auto(&profile, speed.clone()).expect("speed panel");
+        assert_eq!(speed_panel.get(), 2);
+        assert!(matches!(
+            selection.move_to_panel(&profile, &speed, frequency_panel),
+            Err(MonitoringError::IncompatiblePanelAxis(1))
+        ));
+        let groups = selection.axis_groups(&profile, frequency_panel);
+        assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].parameters.len(), 2);
-        assert_eq!(groups[1].parameters.len(), 1);
     }
 
     #[test]
@@ -465,11 +576,7 @@ parameters = ["frequency", "speed", "current"]
 
         let mut scope = ScopeSelection::default();
         scope
-            .add(
-                &profile,
-                dashboard[0].parameter_id().clone(),
-                ScopePanel::new(1).expect("panel"),
-            )
+            .add_auto(&profile, dashboard[0].parameter_id().clone())
             .expect("scope");
         let scope = scope_subscriptions(&profile, &scope).expect("scope subscriptions");
         assert_eq!(scope.len(), 1);
