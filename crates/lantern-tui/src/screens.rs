@@ -357,11 +357,13 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
                     }
                 }
                 if connection.step == ConnectionStep::Report {
-                    lines.push(Line::from(if report.outcome == IdentificationMatch::Match {
-                        "Verified session: NOT RETAINED"
-                    } else {
-                        "Verified session: NOT CREATED"
-                    }));
+                    lines.push(Line::from(
+                        if report.outcome == IdentificationMatch::Match {
+                            "Verified session: NOT RETAINED"
+                        } else {
+                            "Verified session: NOT CREATED"
+                        },
+                    ));
                 }
             }
             if let Some(path) = &connection.last_export {
