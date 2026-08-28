@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use lantern_domain::{
     EngineeringValue, MonotonicInstant, ParameterId, QuantityKind, TelemetryQuality, UnitId,
@@ -6,7 +6,8 @@ use lantern_domain::{
 use lantern_profile::{ValidatedDeviceProfile, ValidatedParameter};
 
 use crate::{
-    AxisKey, LatestValue, LatestValues, MonitoringError, MonitoringParameterView, ScopeSelection,
+    AxisKey, LatestValue, LatestValues, MonitoringError, MonitoringParameterView,
+    RenderHistoryPoint, ScopeSelection, monitoring_catalog,
 };
 
 /// Immutable value presentation shared by Dashboard and Scope.
@@ -31,6 +32,143 @@ pub struct ScopeChannelView {
     pub panel: u8,
     pub axis: AxisKey,
     pub value: MonitoringValueView,
+}
+
+/// Render-safe history point. Numeric values retain f64 bits so the immutable application view can
+/// remain Eq while conversion to floating point stays at the rendering boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ScopeHistoryPointView {
+    Value {
+        monotonic_time: MonotonicInstant,
+        value_bits: u64,
+    },
+    Gap {
+        monotonic_time: MonotonicInstant,
+        quality: TelemetryQuality,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScopeHistoryView {
+    pub parameter_id: ParameterId,
+    pub points: Vec<ScopeHistoryPointView>,
+}
+
+impl ScopeHistoryView {
+    #[must_use]
+    pub fn from_render(
+        parameter_id: ParameterId,
+        points: impl IntoIterator<Item = RenderHistoryPoint>,
+    ) -> Self {
+        Self {
+            parameter_id,
+            points: points
+                .into_iter()
+                .map(|point| match point {
+                    RenderHistoryPoint::Value {
+                        monotonic_time,
+                        value,
+                    } => ScopeHistoryPointView::Value {
+                        monotonic_time,
+                        value_bits: value.to_bits(),
+                    },
+                    RenderHistoryPoint::Gap {
+                        monotonic_time,
+                        quality,
+                    } => ScopeHistoryPointView::Gap {
+                        monotonic_time,
+                        quality,
+                    },
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MonitoringDiagnosticsView {
+    pub round_trip_p95_micros: Option<u64>,
+    pub plan_utilization_ppm: u32,
+    pub bus_utilization_ppm: u32,
+    pub timeout_events: u64,
+    pub queue_full: u64,
+    pub poll_deadlines_skipped: u64,
+    pub poll_results_dropped: u64,
+    pub csv_drops: u64,
+    pub fault_drops: u64,
+    pub diagnostics_drops: u64,
+}
+
+/// Bounded snapshot emitted by the composition root. `LatestValues` remains authoritative; history
+/// is already downsampled by the telemetry pipeline and diagnostics are scalar snapshots.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MonitoringRuntimeSnapshot {
+    pub latest: Arc<LatestValues>,
+    pub histories: Vec<ScopeHistoryView>,
+    pub diagnostics: MonitoringDiagnosticsView,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MonitoringView {
+    pub dashboard: Vec<MonitoringValueView>,
+    pub scope: Vec<ScopeChannelView>,
+    pub histories: Vec<ScopeHistoryView>,
+    pub catalog: Vec<MonitoringParameterView>,
+    pub diagnostics: MonitoringDiagnosticsView,
+    pub error: Option<String>,
+}
+
+/// Builds the complete immutable monitoring projection consumed by the TUI.
+#[must_use]
+pub fn project_monitoring_view(
+    profile: &ValidatedDeviceProfile,
+    dashboard_parameters: &[ParameterId],
+    selection: &ScopeSelection,
+    snapshot: Option<&MonitoringRuntimeSnapshot>,
+    error: Option<&str>,
+) -> MonitoringView {
+    let latest = snapshot.map(|snapshot| snapshot.latest.as_ref());
+    let captured_at = latest.map_or(MonotonicInstant::from_nanos(0), LatestValues::captured_at);
+    let dashboard = dashboard_parameters
+        .iter()
+        .filter_map(|parameter_id| {
+            let parameter = profile.parameter(parameter_id)?;
+            Some(project_value(
+                parameter,
+                latest.and_then(|latest| latest.value(parameter_id)),
+                captured_at,
+            ))
+        })
+        .collect();
+    let scope = selection
+        .channels()
+        .iter()
+        .filter_map(|channel| {
+            let parameter = profile.parameter(channel.parameter_id())?;
+            Some(ScopeChannelView {
+                panel: channel.panel().get(),
+                axis: AxisKey::from_parameter(parameter),
+                value: project_value(
+                    parameter,
+                    latest.and_then(|latest| latest.value(channel.parameter_id())),
+                    captured_at,
+                ),
+            })
+        })
+        .collect();
+    MonitoringView {
+        dashboard,
+        scope,
+        histories: snapshot
+            .map(|snapshot| snapshot.histories.clone())
+            .unwrap_or_default(),
+        catalog: monitoring_catalog(profile),
+        diagnostics: snapshot.map_or_else(
+            MonitoringDiagnosticsView::default,
+            |snapshot| snapshot.diagnostics,
+        ),
+        error: error.map(str::to_owned),
+    }
 }
 
 /// Projects Dashboard values from one immutable telemetry snapshot and validated profile metadata.
@@ -89,31 +227,26 @@ pub fn search_monitoring_catalog(
     query: &str,
 ) -> Vec<MonitoringParameterView> {
     let query = query.trim().to_ascii_lowercase();
-    profile
-        .parameters()
-        .values()
-        .filter(|parameter| query.is_empty() || parameter_matches(profile, parameter, &query))
-        .map(MonitoringParameterView::from_parameter)
+    monitoring_catalog(profile)
+        .into_iter()
+        .filter(|parameter| query.is_empty() || parameter_view_matches(parameter, &query))
         .collect()
 }
 
-fn parameter_matches(
-    profile: &ValidatedDeviceProfile,
-    parameter: &ValidatedParameter,
-    query: &str,
-) -> bool {
-    parameter.id().as_str().to_ascii_lowercase().contains(query)
-        || parameter.code().to_ascii_lowercase().contains(query)
-        || parameter.name().to_ascii_lowercase().contains(query)
+fn parameter_view_matches(parameter: &MonitoringParameterView, query: &str) -> bool {
+    parameter
+        .parameter_id
+        .as_str()
+        .to_ascii_lowercase()
+        .contains(query)
+        || parameter.code.to_ascii_lowercase().contains(query)
+        || parameter.name.to_ascii_lowercase().contains(query)
+        || parameter.unit.as_str().to_ascii_lowercase().contains(query)
+        || quantity_search_key(&parameter.quantity).contains(query)
         || parameter
-            .unit()
-            .as_str()
-            .to_ascii_lowercase()
-            .contains(query)
-        || quantity_search_key(parameter.quantity()).contains(query)
-        || profile.aliases().iter().any(|(alias, target)| {
-            target == parameter.id() && alias.to_ascii_lowercase().contains(query)
-        })
+            .aliases
+            .iter()
+            .any(|alias| alias.to_ascii_lowercase().contains(query))
 }
 
 fn quantity_search_key(quantity: &QuantityKind) -> String {
