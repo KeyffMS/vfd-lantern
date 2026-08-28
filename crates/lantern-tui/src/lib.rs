@@ -5,6 +5,7 @@
 mod forms;
 mod input;
 mod keymap;
+mod scope_state;
 mod screens;
 mod terminal_guard;
 mod theme;
@@ -15,6 +16,7 @@ pub use forms::*;
 pub use input::*;
 pub use keymap::*;
 pub use lantern_app::ApplicationView;
+pub use scope_state::*;
 pub use terminal_guard::*;
 pub use theme::*;
 pub use ui_state::*;

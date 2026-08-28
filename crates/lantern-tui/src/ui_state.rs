@@ -1,6 +1,6 @@
 use lantern_app::ProfileChoiceView;
 
-use crate::FormState;
+use crate::{FormState, ScopeUiState, ScopeYRange};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Screen {
@@ -98,6 +98,7 @@ pub struct UiState {
     pub form: FormState,
     pub connection_edit: Option<ConnectionEdit>,
     pub profile_filter: String,
+    pub scope: ScopeUiState,
     pub modal: Option<ModalState>,
     pub viewport: Viewport,
 }
@@ -112,6 +113,7 @@ impl Default for UiState {
             form: FormState::default(),
             connection_edit: None,
             profile_filter: String::new(),
+            scope: ScopeUiState::default(),
             modal: None,
             viewport: Viewport::default(),
         }
@@ -136,6 +138,17 @@ pub enum UiAction {
     InputChar(char),
     Backspace,
     CancelEdit,
+    ScopeTogglePause,
+    ScopeNextWindow,
+    ScopePanBackward,
+    ScopePanForward,
+    ScopeZoomIn,
+    ScopeZoomOut,
+    ScopeToggleCursor,
+    ScopeCursorPrevious,
+    ScopeCursorNext,
+    ScopeSetYRange { panel: u8, range: Option<ScopeYRange> },
+    ScopeResetView,
     OpenHelp,
     CloseModal,
     Resize { width: u16, height: u16 },
@@ -218,6 +231,45 @@ impl UiState {
                 self.form.clear();
                 self.focus = Focus::Navigation;
             }
+            UiAction::ScopeTogglePause => {
+                self.scope.paused = !self.scope.paused;
+            }
+            UiAction::ScopeNextWindow => {
+                self.scope.window = self.scope.window.next();
+            }
+            UiAction::ScopePanBackward => {
+                self.scope.pan_steps = self.scope.pan_steps.saturating_sub(1);
+            }
+            UiAction::ScopePanForward => {
+                self.scope.pan_steps = self.scope.pan_steps.saturating_add(1);
+            }
+            UiAction::ScopeZoomIn => {
+                self.scope.zoom_steps = self.scope.zoom_steps.saturating_add(1);
+            }
+            UiAction::ScopeZoomOut => {
+                self.scope.zoom_steps = self.scope.zoom_steps.saturating_sub(1);
+            }
+            UiAction::ScopeToggleCursor => {
+                self.scope.cursor_index = if self.scope.cursor_index.is_some() {
+                    None
+                } else {
+                    Some(0)
+                };
+            }
+            UiAction::ScopeCursorPrevious => {
+                if let Some(index) = &mut self.scope.cursor_index {
+                    *index = index.saturating_sub(1);
+                }
+            }
+            UiAction::ScopeCursorNext => {
+                if let Some(index) = &mut self.scope.cursor_index {
+                    *index = index.saturating_add(1);
+                }
+            }
+            UiAction::ScopeSetYRange { panel, range } => {
+                self.scope.set_y_range(panel, range);
+            }
+            UiAction::ScopeResetView => self.scope.reset_view(),
             UiAction::OpenHelp => {
                 self.modal = Some(ModalState::Help);
                 self.focus = Focus::Modal;
@@ -269,6 +321,7 @@ mod tests {
     use super::{
         ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState, profile_fields_match_filter,
     };
+    use crate::{ScopeWindow, ScopeYRange};
 
     #[test]
     fn ui_reducer_changes_only_presentation_state() {
@@ -279,6 +332,38 @@ mod tests {
         assert_eq!(state.screen, Screen::Dashboard);
         assert_eq!(state.scroll_offset, 1);
         assert_eq!(state.focus, Focus::Content);
+    }
+
+    #[test]
+    fn scope_controls_are_presentation_only_and_persist_across_screens() {
+        let mut state = UiState {
+            screen: Screen::Scope,
+            ..UiState::default()
+        };
+        state.apply(UiAction::ScopeTogglePause);
+        state.apply(UiAction::ScopeNextWindow);
+        state.apply(UiAction::ScopePanBackward);
+        state.apply(UiAction::ScopeZoomIn);
+        state.apply(UiAction::ScopeToggleCursor);
+        state.apply(UiAction::ScopeCursorNext);
+        state.apply(UiAction::ScopeSetYRange {
+            panel: 1,
+            range: ScopeYRange::new(0.0, 100.0),
+        });
+        assert!(state.scope.paused);
+        assert_eq!(state.scope.window, ScopeWindow::FiveMinutes);
+        assert_eq!(state.scope.pan_steps, -1);
+        assert_eq!(state.scope.zoom_steps, 1);
+        assert_eq!(state.scope.cursor_index, Some(1));
+        assert!(state.scope.y_ranges.contains_key(&1));
+
+        state.apply(UiAction::SelectScreen(Screen::Dashboard));
+        state.apply(UiAction::SelectScreen(Screen::Scope));
+        assert!(state.scope.paused);
+        assert_eq!(state.scope.pan_steps, -1);
+
+        state.apply(UiAction::ScopeResetView);
+        assert_eq!(state.scope, crate::ScopeUiState::default());
     }
 
     #[test]
