@@ -121,8 +121,8 @@ fn matching_attempt(registry: &ProfileRegistry, profile_id: &ProfileId) -> Ident
         diagnostics: IdentificationDiagnostics {
             profile_id: profile_id.as_str().to_owned(),
             outcome: IdentificationMatch::Match,
-            probes: Vec::new(),
-            fingerprint_candidate: Some(fingerprint.as_str().to_owned()),
+            probes: Box::new([]),
+            fingerprint_candidate: Some(fingerprint.clone()),
             profile_hash: profile.profile_hash().to_hex(),
             elapsed: Duration::ZERO,
             error: None,
