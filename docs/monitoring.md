@@ -127,7 +127,7 @@ The Scope render model:
 
 Monitoring snapshots are emitted no faster than the configured render rate. Settings validation caps that rate at 10 FPS.
 
-The permanent self-hosted performance gate renders a 120×40 `TestBackend` with eight active channels, four panels and 512 retained points per channel. It uses 40 warm-up frames and 400 measured release-mode frames. The enforced #25 budget is p95 <20 ms and p99 <33 ms. CI run #751 measured p95 841 µs and p99 877 µs; the unchanged benchmark gate passed again on subsequent final acceptance runs.
+The permanent self-hosted performance gate renders a 120×40 `TestBackend` with eight active channels, four panels and 512 retained points per channel. It uses 40 warm-up frames and 400 measured release-mode frames. The enforced #25 budget is p95 <20 ms and p99 <33 ms. The accepted feature run measured p95 841 µs and p99 877 µs; the unchanged benchmark gate is rerun on every subsequent feature head.
 
 ## Runtime consumers
 
