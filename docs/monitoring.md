@@ -127,7 +127,7 @@ The Scope render model:
 
 Monitoring snapshots are emitted no faster than the configured render rate. Settings validation caps that rate at 10 FPS.
 
-The permanent self-hosted performance gate renders a 120×40 `TestBackend` with eight active channels, four panels and 512 retained points per channel. It uses 40 warm-up frames and 400 measured release-mode frames. The enforced #25 budget is p95 <20 ms and p99 <33 ms. CI run #751 measured p95 841 µs and p99 877 µs; the unchanged benchmark gate passed again on final acceptance run #752.
+The permanent self-hosted performance gate renders a 120×40 `TestBackend` with eight active channels, four panels and 512 retained points per channel. It uses 40 warm-up frames and 400 measured release-mode frames. The enforced #25 budget is p95 <20 ms and p99 <33 ms. CI run #751 measured p95 841 µs and p99 877 µs; the unchanged benchmark gate passed again on subsequent final acceptance runs.
 
 ## Runtime consumers
 
@@ -156,4 +156,4 @@ The #14 tests cover the following contracts incrementally:
 - process E2E requires zero Modbus traffic before explicit Connect; a successful Match then requires exactly one identification probe plus the first normal-cadence monitoring read, while fail-closed identification cases retain their exact probe-only request counts and every observed request remains a read function;
 - the 120×40 / eight-channel / four-panel release benchmark is a permanent CI gate against the #25 p95/p99 render budget.
 
-Final #14 acceptance was verified by self-hosted CI #752 on `vfd-lantern-podman-01`: build, rustfmt, Clippy `-D warnings`, full tests, process E2E, telemetry benchmark, Scope render benchmark, rustdoc, architecture checks and full supply-chain checks all passed.
+Final #14 acceptance requires the standard self-hosted amd64 gate on the exact merge head: build, rustfmt, Clippy `-D warnings`, full tests, process E2E, telemetry benchmark, Scope render benchmark, rustdoc, architecture checks and full supply-chain checks.
