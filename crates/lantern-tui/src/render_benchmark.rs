@@ -1,4 +1,7 @@
-use std::{hint::black_box, time::{Duration, Instant}};
+use std::{
+    hint::black_box,
+    time::{Duration, Instant},
+};
 
 use lantern_app::{
     MonotonicInstant, ParameterId, ScopeHistoryPointView, ScopeHistoryView, TelemetryQuality,
@@ -219,13 +222,8 @@ mod tests {
             cursor_index: Some(128),
             ..ScopeUiState::default()
         };
-        render_benchmark_frame(
-            &mut terminal,
-            &histories,
-            &scope,
-            benchmark_captured_at(),
-        )
-        .expect("benchmark frame");
+        render_benchmark_frame(&mut terminal, &histories, &scope, benchmark_captured_at())
+            .expect("benchmark frame");
         let text = buffer_text(terminal.backend().buffer());
         for panel in 1..=4 {
             assert!(text.contains(&format!("Panel {panel}")));

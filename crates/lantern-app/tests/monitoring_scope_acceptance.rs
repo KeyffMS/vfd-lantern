@@ -297,8 +297,5 @@ fn dashboard_scope_and_csv_share_one_physical_poll_demand() {
     assert_eq!(plan.blocks()[0].parameters()[0].subscribers().len(), 3);
     assert!(plan.blocks()[0].parameters()[0].history_required());
     assert_eq!(plan.blocks()[0].period(), Duration::from_millis(100));
-    assert_eq!(
-        plan.blocks()[0].maximum_age(),
-        Duration::from_millis(500)
-    );
+    assert_eq!(plan.blocks()[0].maximum_age(), Duration::from_millis(500));
 }
