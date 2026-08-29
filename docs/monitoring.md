@@ -37,7 +37,7 @@ An explicit user disconnect, shutdown or reconnect identity change stops the mon
 
 Dashboard values come from the active validated profile's telemetry preset. Scope channels are session-local and limited to eight active parameters in at most four panels.
 
-Dashboard subscriptions request normal-frequency latest values without history. Active Scope channels request fast-frequency values with history. Both subscription sets are compiled together by the same `PollPlanner`. If Dashboard and Scope request the same `ParameterId`, the planner retains the distinct subscribers/freshness requirements but emits one physical read demand at the strictest required cadence.
+Dashboard subscriptions request normal-frequency latest values without history. Active Scope channels request fast-frequency values with history. Both subscription sets are compiled together by the same `PollPlanner`. If Dashboard, Scope and CSV request the same `ParameterId`, the planner retains the distinct subscribers/freshness requirements but emits one physical read demand at the strictest required cadence.
 
 A monitoring plan with rejected subscriptions is not silently accepted. The runtime reports the rejection through the application monitoring error projection.
 
@@ -53,6 +53,8 @@ Channels may share a panel only when both quantity and unit are identical. This 
 - `Frequency/hz` never shares a panel with `RotationalSpeed/rpm`;
 - the same quantity with a different unit uses a separate panel;
 - custom quantities/units share only when their stable IDs are identical.
+
+Display labels never participate in axis identity. Two parameters with the same name but different quantity/unit remain incompatible.
 
 There is no automatic unit conversion in 1.0.
 
@@ -91,7 +93,7 @@ The Scope catalog is derived only from the active validated profile. Search matc
 - `QuantityKind`;
 - `UnitId`.
 
-Register addresses are deliberately not part of the search surface.
+Register addresses are deliberately not part of the search surface. Full, partial and zero alias sets are covered by acceptance tests.
 
 `Enter` toggles the selected catalog parameter through `MonitoringAction`, which causes an application-owned subscription change. Moving a channel between panels is also validated in the application layer so incompatible quantity/unit axes cannot be overlaid.
 
@@ -125,6 +127,8 @@ The Scope render model:
 
 Monitoring snapshots are emitted no faster than the configured render rate. Settings validation caps that rate at 10 FPS.
 
+The permanent self-hosted performance gate renders a 120×40 `TestBackend` with eight active channels, four panels and 512 retained points per channel. It uses 40 warm-up frames and 400 measured release-mode frames. The enforced #25 budget is p95 <20 ms and p99 <33 ms. On final #14 CI run #751 (`2c180ed82f1a05762eff148a6be609d99c17b492`) the measured result was p95 841 µs and p99 877 µs.
+
 ## Runtime consumers
 
 Until their owning roadmap issues are implemented, the telemetry pipeline's CSV, fault and diagnostics event receivers are actively drained by the composition root. This prevents artificial queue drops without introducing placeholder persistence or fault semantics. Their real consumers remain owned by their later roadmap issues.
@@ -135,16 +139,21 @@ The #14 tests cover the following contracts incrementally:
 
 - Hz and rpm are different semantic axes;
 - incompatible axes cannot share one Scope panel;
+- Scope accepts exactly eight channels across four panels and rejects a ninth channel;
+- equal display labels cannot merge different quantity/unit axes;
+- full, partial and zero alias sets preserve semantic catalog/search behavior;
 - Dashboard/Scope subscriber deduplication occurs in `PollPlanner` while preserving freshness/history requirements;
+- Dashboard + Scope + CSV for the same parameter compile to one physical poll demand with all three subscribers preserved;
 - last-good values survive bad current quality in the immutable projection;
 - catalog search uses semantic profile metadata and not Modbus addresses;
 - pause freezes only the render anchor;
-- autoscale ignores gaps/NaN/infinity;
+- autoscale ignores gaps/NaN/infinity and gives a constant finite signal a bounded range;
 - bounded compression preserves an impulse and an explicit quality gap;
 - monitoring starts only after a Verified match;
 - Scope changes are application effects that rebuild the shared plan;
 - explicit disconnect stops the planner before closing transport;
 - reconnect identity mismatch is covered both at the session reducer boundary and through the production PTY RTU stack, and stops the planner before closing the replacement transport;
-- process E2E requires zero Modbus traffic before explicit Connect; a successful Match then requires exactly one identification probe plus the first normal-cadence monitoring read, while fail-closed identification cases retain their exact probe-only request counts and every observed request remains a read function.
+- process E2E requires zero Modbus traffic before explicit Connect; a successful Match then requires exactly one identification probe plus the first normal-cadence monitoring read, while fail-closed identification cases retain their exact probe-only request counts and every observed request remains a read function;
+- the 120×40 / eight-channel / four-panel release benchmark is a permanent CI gate against the #25 p95/p99 render budget.
 
-The pull request is accepted only after the repository's standard self-hosted amd64 gate passes build, rustfmt, Clippy with `-D warnings`, full tests, process E2E, telemetry benchmark, rustdoc, architecture checks and supply-chain checks.
+Final #14 acceptance was verified by self-hosted CI #751 on `vfd-lantern-podman-01`: build, rustfmt, Clippy `-D warnings`, full tests, process E2E, telemetry benchmark, Scope render benchmark, rustdoc, architecture checks and full supply-chain checks all passed.
