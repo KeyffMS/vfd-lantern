@@ -133,6 +133,34 @@ scale = { multiplier = "1", divisor = "10", offset = "0", decimal_places = 1 }
     source
 }
 
+fn assert_alias_case(aliases: &[(&str, &str)], expected_a: usize, expected_b: usize) {
+    let registry = registry(alias_profile_source(aliases), "scope-aliases.toml");
+    let profile = registry
+        .entries()
+        .values()
+        .next()
+        .expect("profile")
+        .profile();
+    let catalog = monitoring_catalog(profile);
+    let a = catalog
+        .iter()
+        .find(|parameter| parameter.parameter_id.as_str() == "a")
+        .expect("a");
+    let b = catalog
+        .iter()
+        .find(|parameter| parameter.parameter_id.as_str() == "b")
+        .expect("b");
+    assert_eq!(a.aliases.len(), expected_a);
+    assert_eq!(b.aliases.len(), expected_b);
+    assert_eq!(search_monitoring_catalog(profile, "First").len(), 1);
+    assert_eq!(search_monitoring_catalog(profile, "hz").len(), 2);
+    if expected_a == 1 {
+        assert_eq!(search_monitoring_catalog(profile, "first_alias").len(), 1);
+    } else {
+        assert!(search_monitoring_catalog(profile, "first_alias").is_empty());
+    }
+}
+
 #[test]
 fn scope_accepts_exactly_eight_channels_across_four_panels_and_rejects_ninth() {
     let registry = registry(limit_profile_source(), "scope-limits.toml");
@@ -209,39 +237,9 @@ fn identical_labels_do_not_merge_different_quantity_unit_axes() {
 
 #[test]
 fn full_partial_and_zero_alias_sets_keep_catalog_semantic() {
-    let cases: [(&[(&str, &str)], usize, usize); 3] = [
-        (&[("first_alias", "a"), ("second_alias", "b")], 1, 1),
-        (&[("first_alias", "a")], 1, 0),
-        (&[], 0, 0),
-    ];
-
-    for (aliases, expected_a, expected_b) in cases {
-        let registry = registry(alias_profile_source(aliases), "scope-aliases.toml");
-        let profile = registry
-            .entries()
-            .values()
-            .next()
-            .expect("profile")
-            .profile();
-        let catalog = monitoring_catalog(profile);
-        let a = catalog
-            .iter()
-            .find(|parameter| parameter.parameter_id.as_str() == "a")
-            .expect("a");
-        let b = catalog
-            .iter()
-            .find(|parameter| parameter.parameter_id.as_str() == "b")
-            .expect("b");
-        assert_eq!(a.aliases.len(), expected_a);
-        assert_eq!(b.aliases.len(), expected_b);
-        assert_eq!(search_monitoring_catalog(profile, "First").len(), 1);
-        assert_eq!(search_monitoring_catalog(profile, "hz").len(), 2);
-        if expected_a == 1 {
-            assert_eq!(search_monitoring_catalog(profile, "first_alias").len(), 1);
-        } else {
-            assert!(search_monitoring_catalog(profile, "first_alias").is_empty());
-        }
-    }
+    assert_alias_case(&[("first_alias", "a"), ("second_alias", "b")], 1, 1);
+    assert_alias_case(&[("first_alias", "a")], 1, 0);
+    assert_alias_case(&[], 0, 0);
 }
 
 #[test]
