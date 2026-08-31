@@ -129,11 +129,13 @@ pub(super) fn validate_parameter(
     })
 }
 
+type EditorMetadata = (BTreeMap<i64, String>, BTreeMap<u8, String>);
+
 fn validate_editor_metadata(
     document: &ParameterDocumentV1,
     encoding: RegisterEncoding,
     base: &str,
-) -> Result<(BTreeMap<i64, String>, BTreeMap<u8, String>), ProfileError> {
+) -> Result<EditorMetadata, ProfileError> {
     let enum_maximum = match encoding {
         RegisterEncoding::Enum16 => Some(i64::from(u16::MAX)),
         RegisterEncoding::Enum32 => Some(i64::from(u32::MAX)),

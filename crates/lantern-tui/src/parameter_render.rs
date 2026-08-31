@@ -380,7 +380,7 @@ mod tests {
         RequiredDriveState, RestorePolicy, UnitId, WordOrder,
     };
 
-    use crate::{ParameterUiState, UiState, filtered_parameters};
+    use crate::{UiState, filtered_parameters};
 
     #[test]
     fn virtual_render_filter_does_not_depend_on_modbus_address_text() {
@@ -422,7 +422,6 @@ mod tests {
             ..ParameterBrowserView::default()
         };
         let mut ui = UiState::default();
-        ui.parameters = ParameterUiState::default();
         ui.parameters.filters.search = "40002".to_owned();
         assert!(filtered_parameters(&browser, &ui.parameters).is_empty());
         ui.parameters.filters.search = "output_hz".to_owned();

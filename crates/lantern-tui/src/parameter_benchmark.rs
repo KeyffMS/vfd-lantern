@@ -59,11 +59,16 @@ pub fn benchmark_parameter_browser_20000() -> Result<ParameterBrowserBenchmarkRe
     let browser = benchmark_browser();
     let backend = TestBackend::new(BENCHMARK_WIDTH, BENCHMARK_HEIGHT);
     let mut terminal = Terminal::new(backend).map_err(|error| error.to_string())?;
-    let mut ui = UiState::default();
-    ui.screen = Screen::Parameters;
-    ui.viewport.width = BENCHMARK_WIDTH;
-    ui.viewport.height = BENCHMARK_HEIGHT;
-    ui.parameters = ParameterUiState::default();
+    let mut ui = UiState {
+        screen: Screen::Parameters,
+        viewport: crate::Viewport {
+            width: BENCHMARK_WIDTH,
+            height: BENCHMARK_HEIGHT,
+            ..crate::Viewport::default()
+        },
+        parameters: ParameterUiState::default(),
+        ..UiState::default()
+    };
     let mut samples = Vec::with_capacity(MEASURED_FRAMES);
     let mut maximum_virtual_window = 0;
 

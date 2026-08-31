@@ -233,17 +233,19 @@ fn current_editor_text(value: Option<&EngineeringValue>) -> String {
         Some(EngineeringValue::Fixed(value)) => value.normalize().to_string(),
         Some(EngineeringValue::Float32Bits(bits)) => {
             let value = f32::from_bits(*bits);
-            value
-                .is_finite()
-                .then(|| value.to_string())
-                .unwrap_or_default()
+            if value.is_finite() {
+                value.to_string()
+            } else {
+                String::new()
+            }
         }
         Some(EngineeringValue::Float64Bits(bits)) => {
             let value = f64::from_bits(*bits);
-            value
-                .is_finite()
-                .then(|| value.to_string())
-                .unwrap_or_default()
+            if value.is_finite() {
+                value.to_string()
+            } else {
+                String::new()
+            }
         }
         Some(EngineeringValue::EnumRaw(_)) | Some(EngineeringValue::BitfieldRaw(_)) | None => {
             String::new()
