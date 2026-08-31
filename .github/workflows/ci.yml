@@ -15,7 +15,7 @@ concurrency:
 jobs:
   rust:
     name: Debian 13 / Rust 1.97.1 / amd64
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
 
     steps:
       - name: Verify runner platform
