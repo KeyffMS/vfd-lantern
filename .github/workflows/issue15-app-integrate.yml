@@ -21,11 +21,13 @@ jobs:
         run: |
           set -euo pipefail
           rustc --edition=2024 .github/issue15_edit.rs -o /tmp/issue15_edit
+          rustc --edition=2024 .github/issue15_fix.rs -o /tmp/issue15_fix
           /tmp/issue15_edit
+          /tmp/issue15_fix
           cargo fmt --all
           cargo check --workspace --all-features --locked
           cargo test --locked -p lantern-app --all-features
-          git rm .github/workflows/issue15-app-integrate.yml .github/issue15_edit.rs
+          git rm .github/workflows/issue15-app-integrate.yml .github/issue15_edit.rs .github/issue15_fix.rs
           git add -A
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
