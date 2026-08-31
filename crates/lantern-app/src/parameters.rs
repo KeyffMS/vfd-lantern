@@ -1,14 +1,16 @@
-use std::{collections::{BTreeMap, BTreeSet}, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+    time::Duration,
+};
 
+use lantern_domain::Decimal;
 use lantern_domain::{
     ByteOrder, DeviceFingerprint, EngineeringValue, ModbusFunction, ModbusTable, MonotonicInstant,
     ParameterAccess, ParameterId, QuantityKind, RawRegisters, RegisterEncoding, RequiredDriveState,
     RestorePolicy, SessionId, TelemetryQuality, WordOrder, WriteIntent,
 };
-use lantern_profile::{
-    AddressNotation, ReadBackPolicy, ValidatedDeviceProfile, ValidatedParameter,
-};
-use rust_decimal::Decimal;
+use lantern_profile::{ReadBackPolicy, ValidatedDeviceProfile, ValidatedParameter};
 use thiserror::Error;
 
 use crate::{
@@ -188,15 +190,21 @@ pub fn parameter_catalog(profile: &ValidatedDeviceProfile) -> Arc<[ParameterDesc
     let mut groups = BTreeMap::<ParameterId, Vec<ParameterGroupView>>::new();
     for group in profile.groups() {
         for parameter_id in group.parameters.iter() {
-            groups.entry(parameter_id.clone()).or_default().push(ParameterGroupView {
-                id: group.id.clone(),
-                name: group.name.clone(),
-            });
+            groups
+                .entry(parameter_id.clone())
+                .or_default()
+                .push(ParameterGroupView {
+                    id: group.id.clone(),
+                    name: group.name.clone(),
+                });
         }
     }
     let mut aliases = BTreeMap::<ParameterId, Vec<String>>::new();
     for (alias, parameter_id) in profile.aliases() {
-        aliases.entry(parameter_id.clone()).or_default().push(alias.clone());
+        aliases
+            .entry(parameter_id.clone())
+            .or_default()
+            .push(alias.clone());
     }
 
     profile
@@ -243,7 +251,7 @@ fn descriptor_from_parameter(
         })
         .collect::<Vec<_>>();
     let block = parameter.block();
-    let source_address_notation = address_notation_label(parameter.source_address_notation()).to_owned();
+    let source_address_notation = parameter.source_address_notation().to_owned();
     let read_back = read_back_label(parameter.read_back());
     let search_text = normalized_search_text(
         parameter,
@@ -269,8 +277,12 @@ fn descriptor_from_parameter(
         word_order: parameter.codec().word_order(),
         quantity: parameter.quantity().clone(),
         unit: parameter.unit().clone(),
-        minimum: parameter.minimum().map(|value| value.normalize().to_string()),
-        maximum: parameter.maximum().map(|value| value.normalize().to_string()),
+        minimum: parameter
+            .minimum()
+            .map(|value| value.normalize().to_string()),
+        maximum: parameter
+            .maximum()
+            .map(|value| value.normalize().to_string()),
         step: parameter.step().map(|value| value.normalize().to_string()),
         access,
         risk,
@@ -289,15 +301,24 @@ fn descriptor_from_parameter(
 fn editor_kind(parameter: &ValidatedParameter) -> (ParameterEditorKind, Option<String>) {
     match parameter.access() {
         ParameterAccess::ReadOnly => {
-            return (ParameterEditorKind::Unavailable, Some("read-only".to_owned()));
+            return (
+                ParameterEditorKind::Unavailable,
+                Some("read-only".to_owned()),
+            );
         }
         ParameterAccess::Dangerous => {
-            return (ParameterEditorKind::Unavailable, Some("Dangerous has no manual editor".to_owned()));
+            return (
+                ParameterEditorKind::Unavailable,
+                Some("Dangerous has no manual editor".to_owned()),
+            );
         }
         ParameterAccess::WritableWhenStopped | ParameterAccess::Commissioning => {}
     }
     if parameter.write_function().is_none() {
-        return (ParameterEditorKind::Unavailable, Some("profile defines no write function".to_owned()));
+        return (
+            ParameterEditorKind::Unavailable,
+            Some("profile defines no write function".to_owned()),
+        );
     }
     match parameter.codec().encoding() {
         RegisterEncoding::Unsigned16
@@ -310,7 +331,9 @@ fn editor_kind(parameter: &ValidatedParameter) -> (ParameterEditorKind, Option<S
         | RegisterEncoding::Bcd32 => (ParameterEditorKind::Fixed, None),
         RegisterEncoding::Float32 => (ParameterEditorKind::Float32, None),
         RegisterEncoding::Float64 => (ParameterEditorKind::Float64, None),
-        RegisterEncoding::Enum16 | RegisterEncoding::Enum32 if !parameter.enum_values().is_empty() => {
+        RegisterEncoding::Enum16 | RegisterEncoding::Enum32
+            if !parameter.enum_values().is_empty() =>
+        {
             (ParameterEditorKind::Enum, None)
         }
         RegisterEncoding::Enum16 | RegisterEncoding::Enum32 => (
@@ -361,15 +384,6 @@ fn normalized_search_text(
     fields.join(" ").to_ascii_lowercase()
 }
 
-fn address_notation_label(notation: AddressNotation) -> &'static str {
-    match notation {
-        AddressNotation::PduZeroBased => "pdu_zero_based",
-        AddressNotation::ProtocolOneBased => "protocol_one_based",
-        AddressNotation::Modicon5Digit => "modicon_5_digit",
-        AddressNotation::Modicon6Digit => "modicon_6_digit",
-    }
-}
-
 fn read_back_label(policy: &ReadBackPolicy) -> String {
     match policy {
         ReadBackPolicy::ExactRaw => "exact_raw".to_owned(),
@@ -416,7 +430,9 @@ pub fn parameter_browser_subscriptions(
     let mut result = Vec::new();
     for parameter_id in visible.iter().take(MAX_PARAMETER_BROWSER_VISIBLE) {
         if profile.parameter(parameter_id).is_none() {
-            return Err(ParameterBrowserError::UnknownParameter(parameter_id.clone()));
+            return Err(ParameterBrowserError::UnknownParameter(
+                parameter_id.clone(),
+            ));
         }
         if !unique.insert(parameter_id.clone()) {
             continue;
@@ -450,13 +466,19 @@ pub fn prepare_parameter_intent(
         .parameter(parameter_id)
         .ok_or_else(|| ParameterBrowserError::UnknownParameter(parameter_id.clone()))?;
     match parameter.access() {
-        ParameterAccess::ReadOnly => return Err(ParameterBrowserError::ReadOnly(parameter_id.clone())),
-        ParameterAccess::Dangerous => return Err(ParameterBrowserError::Dangerous(parameter_id.clone())),
+        ParameterAccess::ReadOnly => {
+            return Err(ParameterBrowserError::ReadOnly(parameter_id.clone()));
+        }
+        ParameterAccess::Dangerous => {
+            return Err(ParameterBrowserError::Dangerous(parameter_id.clone()));
+        }
         ParameterAccess::WritableWhenStopped | ParameterAccess::Commissioning => {}
     }
     let (editor, _) = editor_kind(parameter);
     if editor == ParameterEditorKind::Unavailable {
-        return Err(ParameterBrowserError::EditorUnavailable(parameter_id.clone()));
+        return Err(ParameterBrowserError::EditorUnavailable(
+            parameter_id.clone(),
+        ));
     }
     let current = latest
         .value(parameter_id)
@@ -592,9 +614,9 @@ fn validate_constraints(
     }
     if let Some(step) = parameter.step() {
         let origin = parameter.minimum().unwrap_or(Decimal::ZERO);
-        let delta = value
-            .checked_sub(origin)
-            .ok_or_else(|| ParameterBrowserError::InvalidInput("range arithmetic overflow".to_owned()))?;
+        let delta = value.checked_sub(origin).ok_or_else(|| {
+            ParameterBrowserError::InvalidInput("range arithmetic overflow".to_owned())
+        })?;
         if delta % step != Decimal::ZERO {
             return Err(ParameterBrowserError::StepMismatch);
         }
@@ -623,12 +645,20 @@ mod tests {
         .expect("profile");
         let catalog = parameter_catalog(&profile);
         assert!(!catalog.is_empty());
-        assert!(catalog.iter().all(|entry| entry.access == ParameterAccess::ReadOnly));
-        assert!(catalog
-            .iter()
-            .all(|entry| entry.editor == ParameterEditorKind::Unavailable));
-        assert!(catalog
-            .iter()
-            .any(|entry| entry.encoding == RegisterEncoding::Unsigned16));
+        assert!(
+            catalog
+                .iter()
+                .all(|entry| entry.access == ParameterAccess::ReadOnly)
+        );
+        assert!(
+            catalog
+                .iter()
+                .all(|entry| entry.editor == ParameterEditorKind::Unavailable)
+        );
+        assert!(
+            catalog
+                .iter()
+                .any(|entry| entry.encoding == RegisterEncoding::Unsigned16)
+        );
     }
 }

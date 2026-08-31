@@ -79,6 +79,24 @@ impl RegisterCodec {
         })
     }
 
+    /// Returns the validated register encoding.
+    #[must_use]
+    pub const fn encoding(&self) -> RegisterEncoding {
+        self.encoding
+    }
+
+    /// Returns byte ordering inside one 16-bit register.
+    #[must_use]
+    pub const fn byte_order(&self) -> ByteOrder {
+        self.byte_order
+    }
+
+    /// Returns word ordering for multi-register values.
+    #[must_use]
+    pub const fn word_order(&self) -> WordOrder {
+        self.word_order
+    }
+
     /// Decodes registers into one authoritative engineering value.
     pub fn decode(&self, registers: &[u16]) -> Result<EngineeringValue, CodecError> {
         self.validate_width(registers.len())?;

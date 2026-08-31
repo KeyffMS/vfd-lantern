@@ -49,8 +49,12 @@ pub struct ValidatedParameter {
     code: String,
     name: String,
     description: String,
+    source_address_notation: String,
+    source_address_value: u32,
     block: RegisterBlock,
     codec: RegisterCodec,
+    enum_values: BTreeMap<i64, String>,
+    bit_flags: BTreeMap<u8, String>,
     quantity: QuantityKind,
     unit: UnitId,
     access: ParameterAccess,
@@ -89,6 +93,16 @@ impl ValidatedParameter {
     }
 
     #[must_use]
+    #[must_use]
+    pub fn source_address_notation(&self) -> &str {
+        &self.source_address_notation
+    }
+
+    #[must_use]
+    pub const fn source_address_value(&self) -> u32 {
+        self.source_address_value
+    }
+
     pub const fn block(&self) -> RegisterBlock {
         self.block
     }
@@ -99,6 +113,16 @@ impl ValidatedParameter {
     }
 
     #[must_use]
+    #[must_use]
+    pub fn enum_values(&self) -> &BTreeMap<i64, String> {
+        &self.enum_values
+    }
+
+    #[must_use]
+    pub fn bit_flags(&self) -> &BTreeMap<u8, String> {
+        &self.bit_flags
+    }
+
     pub fn quantity(&self) -> &QuantityKind {
         &self.quantity
     }
