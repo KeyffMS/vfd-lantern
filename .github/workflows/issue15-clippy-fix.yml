@@ -25,7 +25,7 @@ jobs:
           sed -i 's/) -> Result<(BTreeMap<i64, String>, BTreeMap<u8, String>), ProfileError> {/) -> Result<EditorMetadata, ProfileError> {/' "$file"
 
           bench=crates/lantern-tui/src/parameter_benchmark.rs
-          sed -i 's/    let mut ui = UiState::default();/    let mut ui = UiState {\n        screen: Screen::Parameters,\n        viewport: crate::Viewport {\n            width: BENCHMARK_WIDTH,\n            height: BENCHMARK_HEIGHT,\n            ..crate::Viewport::default()\n        },\n        parameters: ParameterUiState::default(),\n        ..UiState::default()\n    };/' "$bench"
+          sed -i '0,/    let mut ui = UiState::default();/s//    let mut ui = UiState {\n        screen: Screen::Parameters,\n        viewport: crate::Viewport {\n            width: BENCHMARK_WIDTH,\n            height: BENCHMARK_HEIGHT,\n            ..crate::Viewport::default()\n        },\n        parameters: ParameterUiState::default(),\n        ..UiState::default()\n    };/' "$bench"
           sed -i '/^    ui\.screen = Screen::Parameters;$/d;/^    ui\.viewport\.width = BENCHMARK_WIDTH;$/d;/^    ui\.viewport\.height = BENCHMARK_HEIGHT;$/d;/^    ui\.parameters = ParameterUiState::default();$/d' "$bench"
 
           keymap=crates/lantern-tui/src/parameter_keymap.rs
