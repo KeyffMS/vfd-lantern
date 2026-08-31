@@ -1,6 +1,5 @@
 use std::{
     hint::black_box,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
