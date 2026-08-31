@@ -20,15 +20,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('crates/lantern-profile/src/validate/build/parameter.rs')
-          text = path.read_text()
-          old = '''fn validate_editor_metadata(\n    document: &ParameterDocumentV1,\n    encoding: RegisterEncoding,\n    base: &str,\n) -> Result<(BTreeMap<i64, String>, BTreeMap<u8, String>), ProfileError> {'''
-          new = '''type EditorMetadata = (BTreeMap<i64, String>, BTreeMap<u8, String>);\n\nfn validate_editor_metadata(\n    document: &ParameterDocumentV1,\n    encoding: RegisterEncoding,\n    base: &str,\n) -> Result<EditorMetadata, ProfileError> {'''
-          assert text.count(old) == 1
-          path.write_text(text.replace(old, new))
-          PY
+          file=crates/lantern-profile/src/validate/build/parameter.rs
+          sed -i '/^fn validate_editor_metadata(/i type EditorMetadata = (BTreeMap<i64, String>, BTreeMap<u8, String>);\n' "$file"
+          sed -i 's/) -> Result<(BTreeMap<i64, String>, BTreeMap<u8, String>), ProfileError> {/) -> Result<EditorMetadata, ProfileError> {/' "$file"
           cargo fmt --all
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
           git rm .github/workflows/issue15-clippy-fix.yml
