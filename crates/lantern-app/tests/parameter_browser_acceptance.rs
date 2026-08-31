@@ -1,8 +1,8 @@
 use std::fmt::Write as _;
 
 use lantern_app::{
-    MAX_PARAMETER_BROWSER_VISIBLE, ParameterEditorKind, ParameterRiskView, parameter_browser_subscriptions,
-    parameter_catalog,
+    MAX_PARAMETER_BROWSER_VISIBLE, ParameterEditorKind, ParameterRiskView,
+    parameter_browser_subscriptions, parameter_catalog,
 };
 use lantern_profile::{MAX_PROFILE_BYTES, ProfileFormat, parse_and_validate_profile};
 
