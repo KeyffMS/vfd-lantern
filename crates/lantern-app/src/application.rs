@@ -1,16 +1,37 @@
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
-use lantern_domain::{IdentificationMatch, ProfileId, SessionId, SlaveId};
+use lantern_domain::{IdentificationMatch, ParameterId, ProfileId, SessionId, SlaveId};
 use lantern_profile::ValidatedDeviceProfile;
 use thiserror::Error;
 
 use crate::{
     AuditHealth, Authorization, BusError, ConnectionAction, ConnectionAttemptKind,
     ConnectionEffect, ConnectionFailure, ConnectionStep, ConnectionWizardState,
-    ConnectionWizardView, Connectivity, OperationState, ProfileRegistry, SerialConnectError,
-    SessionEffect, SessionFault, SessionInput, SessionState, SessionStateMachine,
-    identification_error_attempt, identification_report_export,
+    ConnectionWizardView, Connectivity, MonitoringAction, MonitoringEffect,
+    MonitoringRuntimeSnapshot, MonitoringView, OperationState, ProfileRegistry, ScopeSelection,
+    SerialConnectError, SessionEffect, SessionFault, SessionInput, SessionState,
+    SessionStateMachine, default_dashboard_parameters, identification_error_attempt,
+    identification_report_export, project_monitoring_view,
 };
+
+#[derive(Clone, Debug, Default)]
+struct ApplicationMonitoringState {
+    dashboard_parameters: Vec<ParameterId>,
+    scope: ScopeSelection,
+    snapshot: Option<MonitoringRuntimeSnapshot>,
+    error: Option<String>,
+}
+
+impl ApplicationMonitoringState {
+    fn for_profile(profile: &ValidatedDeviceProfile) -> Self {
+        Self {
+            dashboard_parameters: default_dashboard_parameters(profile),
+            scope: ScopeSelection::default(),
+            snapshot: None,
+            error: None,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ApplicationState {
@@ -18,6 +39,7 @@ pub struct ApplicationState {
     registry: Arc<ProfileRegistry>,
     session: SessionStateMachine,
     connection: ConnectionWizardState,
+    monitoring: ApplicationMonitoringState,
 }
 
 impl Default for ApplicationState {
@@ -27,6 +49,7 @@ impl Default for ApplicationState {
             registry: Arc::new(ProfileRegistry::default()),
             session: SessionStateMachine::new(false),
             connection: ConnectionWizardState::default(),
+            monitoring: ApplicationMonitoringState::default(),
         }
     }
 }
@@ -49,11 +72,29 @@ impl ApplicationState {
             registry,
             session: SessionStateMachine::new(process_writes_enabled),
             connection: ConnectionWizardState::new(suggested_device, suggested_slave),
+            monitoring: ApplicationMonitoringState::default(),
         }
     }
 
     #[must_use]
     pub fn view(&self) -> ApplicationView {
+        let monitoring = if self.session.session_id().is_some() {
+            self.active_profile
+                .as_ref()
+                .and_then(|id| self.registry.get(id))
+                .map(|entry| {
+                    project_monitoring_view(
+                        entry.profile(),
+                        &self.monitoring.dashboard_parameters,
+                        &self.monitoring.scope,
+                        self.monitoring.snapshot.as_ref(),
+                        self.monitoring.error.as_deref(),
+                    )
+                })
+                .unwrap_or_default()
+        } else {
+            MonitoringView::default()
+        };
         ApplicationView {
             active_profile: self.active_profile.clone(),
             registry_profile_ids: self
@@ -66,6 +107,7 @@ impl ApplicationState {
             connection: self
                 .connection
                 .view(&self.registry, self.active_profile.as_ref()),
+            monitoring,
         }
     }
 
@@ -90,6 +132,7 @@ impl ApplicationState {
                     self.active_profile = None;
                     self.connection.link = None;
                     self.connection.step = ConnectionStep::Profile;
+                    self.monitoring = ApplicationMonitoringState::default();
                 }
                 self.registry = registry;
                 Vec::new()
@@ -99,9 +142,105 @@ impl ApplicationState {
                 Vec::new()
             }
             ApplicationAction::Connection(action) => self.reduce_connection(action),
+            ApplicationAction::Monitoring(action) => self.reduce_monitoring(action),
             ApplicationAction::Session(input) => {
                 let effects = self.session.transition(input);
+                if matches!(
+                    self.session.state(),
+                    SessionState::Disconnected { .. } | SessionState::ShuttingDown
+                ) {
+                    self.monitoring = ApplicationMonitoringState::default();
+                }
                 self.translate_session_effects(effects)
+            }
+        }
+    }
+
+    fn reduce_monitoring(&mut self, action: MonitoringAction) -> Vec<ApplicationEffect> {
+        match action {
+            MonitoringAction::RuntimeSnapshot(snapshot) => {
+                if self.session.session_id() == Some(snapshot.latest.session_id()) {
+                    self.monitoring.snapshot = Some(snapshot);
+                    self.monitoring.error = None;
+                }
+                Vec::new()
+            }
+            MonitoringAction::RuntimeFailed {
+                session_id,
+                message,
+            } => {
+                if self.session.session_id() == Some(session_id) {
+                    self.monitoring.error = Some(message);
+                }
+                Vec::new()
+            }
+            MonitoringAction::ToggleScopeParameter(parameter_id) => {
+                let Some(profile) = self.selected_profile() else {
+                    return Vec::new();
+                };
+                if self.session.session_id().is_none() {
+                    return Vec::new();
+                }
+                let changed = if self.monitoring.scope.contains(&parameter_id) {
+                    self.monitoring.scope.remove(&parameter_id)
+                } else {
+                    match self.monitoring.scope.add_auto(&profile, parameter_id) {
+                        Ok(_) => true,
+                        Err(error) => {
+                            self.monitoring.error = Some(error.to_string());
+                            return Vec::new();
+                        }
+                    }
+                };
+                if !changed {
+                    return Vec::new();
+                }
+                self.monitoring.error = None;
+                vec![ApplicationEffect::Monitoring(
+                    MonitoringEffect::Reconfigure {
+                        dashboard_parameters: self.monitoring.dashboard_parameters.clone(),
+                        scope: self.monitoring.scope.clone(),
+                    },
+                )]
+            }
+            MonitoringAction::MoveScopeParameter {
+                parameter_id,
+                panel,
+            } => {
+                let Some(profile) = self.selected_profile() else {
+                    return Vec::new();
+                };
+                if let Err(error) =
+                    self.monitoring
+                        .scope
+                        .move_to_panel(&profile, &parameter_id, panel)
+                {
+                    self.monitoring.error = Some(error.to_string());
+                    return Vec::new();
+                }
+                self.monitoring.error = None;
+                vec![ApplicationEffect::Monitoring(
+                    MonitoringEffect::Reconfigure {
+                        dashboard_parameters: self.monitoring.dashboard_parameters.clone(),
+                        scope: self.monitoring.scope.clone(),
+                    },
+                )]
+            }
+            MonitoringAction::ClearScopeHistory => {
+                let parameter_ids = self
+                    .monitoring
+                    .scope
+                    .channels()
+                    .iter()
+                    .map(|channel| channel.parameter_id().clone())
+                    .collect::<Vec<_>>();
+                if parameter_ids.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![ApplicationEffect::Monitoring(
+                        MonitoringEffect::ClearHistory { parameter_ids },
+                    )]
+                }
             }
         }
     }
@@ -317,6 +456,7 @@ impl ApplicationState {
         self.connection.step = ConnectionStep::Connecting;
         self.connection.failure = None;
         self.connection.last_identification = None;
+        self.monitoring = ApplicationMonitoringState::default();
         let session_effects = self.session.transition(SessionInput::Connect);
         debug_assert_eq!(session_effects, vec![SessionEffect::OpenPort]);
         vec![ApplicationEffect::Connection(effect)]
@@ -333,6 +473,9 @@ impl ApplicationState {
         self.connection.step = ConnectionStep::Port;
         self.connection.pending_session_id = None;
         self.connection.failure = None;
+        if matches!(self.session.state(), SessionState::Disconnected { .. }) {
+            self.monitoring = ApplicationMonitoringState::default();
+        }
         self.translate_session_effects(effects)
     }
 
@@ -449,19 +592,37 @@ impl ApplicationState {
                         verified,
                         session_id,
                     });
+                let mut translated = self.translate_session_effects(effects);
                 if outcome == IdentificationMatch::Match
                     && matches!(self.session.state(), SessionState::Active(_))
                 {
                     self.connection.step = ConnectionStep::Connected;
                     self.connection.failure = None;
+                    if let (Some(profile), Some(link)) =
+                        (self.selected_profile(), self.connection.link)
+                    {
+                        self.monitoring = ApplicationMonitoringState::for_profile(&profile);
+                        translated.push(ApplicationEffect::Monitoring(MonitoringEffect::Start {
+                            profile,
+                            session_id,
+                            link,
+                            dashboard_parameters: self.monitoring.dashboard_parameters.clone(),
+                            scope: self.monitoring.scope.clone(),
+                        }));
+                    } else {
+                        self.monitoring.error = Some(
+                            "Verified session is missing profile/link monitoring inputs".to_owned(),
+                        );
+                    }
                 } else {
                     self.connection.step = ConnectionStep::Report;
                     self.connection.failure = Some(ConnectionFailure::Identification(
                         report_error
                             .unwrap_or_else(|| format!("identification result is {outcome:?}")),
                     ));
+                    self.monitoring = ApplicationMonitoringState::default();
                 }
-                self.translate_session_effects(effects)
+                translated
             }
             ConnectionAttemptKind::Reconnect => {
                 let effects =
@@ -471,6 +632,7 @@ impl ApplicationState {
                             verified,
                             port_identity,
                         });
+                let mut translated = self.translate_session_effects(effects);
                 if matches!(
                     self.session.state(),
                     SessionState::Active(active)
@@ -478,6 +640,11 @@ impl ApplicationState {
                 ) {
                     self.connection.step = ConnectionStep::Connected;
                     self.connection.failure = None;
+                    if let Some(session_id) = self.session.session_id() {
+                        translated.push(ApplicationEffect::Monitoring(MonitoringEffect::Resume {
+                            session_id,
+                        }));
+                    }
                 } else {
                     self.connection.step = ConnectionStep::Report;
                     self.connection.failure = Some(ConnectionFailure::Identification(
@@ -486,7 +653,7 @@ impl ApplicationState {
                         }),
                     ));
                 }
-                self.translate_session_effects(effects)
+                translated
             }
         }
     }
@@ -699,6 +866,7 @@ pub struct ApplicationView {
     registry_profile_ids: Vec<String>,
     session: SessionView,
     connection: ConnectionWizardView,
+    monitoring: MonitoringView,
 }
 
 impl Default for ApplicationView {
@@ -708,6 +876,7 @@ impl Default for ApplicationView {
             registry_profile_ids: Vec::new(),
             session: SessionView::empty(SessionPhaseView::Disconnected),
             connection: ConnectionWizardState::default().view(&ProfileRegistry::default(), None),
+            monitoring: MonitoringView::default(),
         }
     }
 }
@@ -737,6 +906,11 @@ impl ApplicationView {
     pub const fn connection(&self) -> &ConnectionWizardView {
         &self.connection
     }
+
+    #[must_use]
+    pub const fn monitoring(&self) -> &MonitoringView {
+        &self.monitoring
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -744,12 +918,14 @@ pub enum ApplicationAction {
     ReplaceRegistry(Arc<ProfileRegistry>),
     SelectProfile(ProfileId),
     Connection(ConnectionAction),
+    Monitoring(MonitoringAction),
     Session(SessionInput),
 }
 
 #[derive(Clone, Debug)]
 pub enum ApplicationEffect {
     Connection(ConnectionEffect),
+    Monitoring(MonitoringEffect),
     Session(SessionEffect),
 }
 
@@ -913,6 +1089,7 @@ mod tests {
         assert!(view.active_session().is_none());
         assert!(view.session().port().is_none());
         assert!(view.session().profile_hash().is_none());
+        assert!(view.monitoring().dashboard.is_empty());
     }
 
     #[test]
@@ -921,5 +1098,6 @@ mod tests {
         assert_eq!(view.session().phase(), SessionPhaseView::Disconnected);
         assert!(view.active_profile_id().is_none());
         assert!(view.registry_profile_ids().is_empty());
+        assert!(view.monitoring().catalog.is_empty());
     }
 }

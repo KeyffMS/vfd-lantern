@@ -409,7 +409,10 @@ impl SessionStateMachine {
                 active.authorization =
                     disarmed_for_process(process_writes_enabled, DisarmReason::TransportLost);
                 active.operation = OperationState::Idle;
-                transition(SessionState::Active(active), vec![SessionEffect::ClosePort])
+                transition(
+                    SessionState::Active(active),
+                    vec![SessionEffect::StopPlanner, SessionEffect::ClosePort],
+                )
             }
             (
                 SessionState::Active(mut active),
@@ -601,7 +604,11 @@ fn disconnect_effects(operation_active: bool) -> Vec<SessionEffect> {
     if operation_active {
         effects.push(SessionEffect::AbortOperation);
     }
-    effects.extend([SessionEffect::CancelReconnect, SessionEffect::ClosePort]);
+    effects.extend([
+        SessionEffect::CancelReconnect,
+        SessionEffect::StopPlanner,
+        SessionEffect::ClosePort,
+    ]);
     effects
 }
 
@@ -791,6 +798,20 @@ mod tests {
     }
 
     #[test]
+    fn explicit_disconnect_stops_planner_before_closing_port() {
+        let mut machine = active_machine();
+        assert_eq!(
+            machine.transition(SessionInput::Disconnect),
+            vec![
+                SessionEffect::CancelReconnect,
+                SessionEffect::StopPlanner,
+                SessionEffect::ClosePort,
+            ]
+        );
+        assert!(matches!(machine.state(), SessionState::Disconnected { .. }));
+    }
+
+    #[test]
     fn transport_loss_disarms_before_reconnect_and_preserves_session_id() {
         let mut machine = active_machine();
         let now = Instant::now();
@@ -818,6 +839,34 @@ mod tests {
             }
         ));
         assert!(matches!(&active.operation, OperationState::Idle));
+    }
+
+    #[test]
+    fn reconnect_identity_change_stops_planner_and_faults_session() {
+        let mut machine = active_machine();
+        let now = Instant::now();
+        machine.transition(SessionInput::TransportLost {
+            cause: SessionFault::PortRemoved,
+            now,
+        });
+        let effects = machine.transition(SessionInput::ReconnectIdentificationFinished {
+            report: report(IdentificationMatch::Mismatch),
+            verified: None,
+            port_identity: port(),
+        });
+        assert_eq!(
+            effects,
+            vec![SessionEffect::StopPlanner, SessionEffect::ClosePort]
+        );
+        let SessionState::Active(active) = machine.state() else {
+            panic!("active")
+        };
+        assert!(matches!(
+            &active.connectivity,
+            Connectivity::Faulted {
+                cause: SessionFault::IdentityChanged
+            }
+        ));
     }
 
     #[test]

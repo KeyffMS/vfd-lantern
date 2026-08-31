@@ -1,6 +1,6 @@
-use lantern_app::ProfileChoiceView;
+use lantern_app::{MonitoringParameterView, ProfileChoiceView};
 
-use crate::FormState;
+use crate::{FormState, ScopeUiState, ScopeYRange};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Screen {
@@ -64,6 +64,7 @@ pub enum Focus {
 pub enum ConnectionEdit {
     ManualPath,
     ProfileSearch,
+    ScopeSearch,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,6 +99,8 @@ pub struct UiState {
     pub form: FormState,
     pub connection_edit: Option<ConnectionEdit>,
     pub profile_filter: String,
+    pub scope_filter: String,
+    pub scope: ScopeUiState,
     pub modal: Option<ModalState>,
     pub viewport: Viewport,
 }
@@ -112,6 +115,8 @@ impl Default for UiState {
             form: FormState::default(),
             connection_edit: None,
             profile_filter: String::new(),
+            scope_filter: String::new(),
+            scope: ScopeUiState::default(),
             modal: None,
             viewport: Viewport::default(),
         }
@@ -133,12 +138,34 @@ pub enum UiAction {
     BeginProfileSearch,
     ApplyProfileSearch,
     ClearProfileSearch,
+    BeginScopeSearch,
+    ApplyScopeSearch,
+    ClearScopeSearch,
     InputChar(char),
     Backspace,
     CancelEdit,
+    ScopeTogglePause {
+        anchor_nanos: u128,
+    },
+    ScopeNextWindow,
+    ScopePanBackward,
+    ScopePanForward,
+    ScopeZoomIn,
+    ScopeZoomOut,
+    ScopeToggleCursor,
+    ScopeCursorPrevious,
+    ScopeCursorNext,
+    ScopeSetYRange {
+        panel: u8,
+        range: Option<ScopeYRange>,
+    },
+    ScopeResetView,
     OpenHelp,
     CloseModal,
-    Resize { width: u16, height: u16 },
+    Resize {
+        width: u16,
+        height: u16,
+    },
 }
 
 impl UiState {
@@ -211,6 +238,25 @@ impl UiState {
                 self.selected_index = 0;
                 self.focus = Focus::Navigation;
             }
+            UiAction::BeginScopeSearch => {
+                self.form.replace(self.scope_filter.clone());
+                self.connection_edit = Some(ConnectionEdit::ScopeSearch);
+                self.focus = Focus::Content;
+            }
+            UiAction::ApplyScopeSearch => {
+                self.scope_filter = self.form.value().trim().to_owned();
+                self.connection_edit = None;
+                self.form.clear();
+                self.selected_index = 0;
+                self.focus = Focus::Navigation;
+            }
+            UiAction::ClearScopeSearch => {
+                self.scope_filter.clear();
+                self.form.clear();
+                self.connection_edit = None;
+                self.selected_index = 0;
+                self.focus = Focus::Navigation;
+            }
             UiAction::InputChar(character) => self.form.insert(character),
             UiAction::Backspace => self.form.backspace(),
             UiAction::CancelEdit => {
@@ -218,6 +264,45 @@ impl UiState {
                 self.form.clear();
                 self.focus = Focus::Navigation;
             }
+            UiAction::ScopeTogglePause { anchor_nanos } => {
+                self.scope.toggle_pause(anchor_nanos);
+            }
+            UiAction::ScopeNextWindow => {
+                self.scope.window = self.scope.window.next();
+            }
+            UiAction::ScopePanBackward => {
+                self.scope.pan_steps = self.scope.pan_steps.saturating_sub(1);
+            }
+            UiAction::ScopePanForward => {
+                self.scope.pan_steps = self.scope.pan_steps.saturating_add(1);
+            }
+            UiAction::ScopeZoomIn => {
+                self.scope.zoom_steps = self.scope.zoom_steps.saturating_add(1);
+            }
+            UiAction::ScopeZoomOut => {
+                self.scope.zoom_steps = self.scope.zoom_steps.saturating_sub(1);
+            }
+            UiAction::ScopeToggleCursor => {
+                self.scope.cursor_index = if self.scope.cursor_index.is_some() {
+                    None
+                } else {
+                    Some(0)
+                };
+            }
+            UiAction::ScopeCursorPrevious => {
+                if let Some(index) = &mut self.scope.cursor_index {
+                    *index = index.saturating_sub(1);
+                }
+            }
+            UiAction::ScopeCursorNext => {
+                if let Some(index) = &mut self.scope.cursor_index {
+                    *index = index.saturating_add(1);
+                }
+            }
+            UiAction::ScopeSetYRange { panel, range } => {
+                self.scope.set_y_range(panel, range);
+            }
+            UiAction::ScopeResetView => self.scope.reset_view(),
             UiAction::OpenHelp => {
                 self.modal = Some(ModalState::Help);
                 self.focus = Focus::Modal;
@@ -247,6 +332,37 @@ pub(crate) fn profile_matches_filter(profile: &ProfileChoiceView, filter: &str) 
     )
 }
 
+pub(crate) fn monitoring_parameter_matches_filter(
+    parameter: &MonitoringParameterView,
+    filter: &str,
+) -> bool {
+    let needle = normalized_filter(filter);
+    if needle.is_empty() {
+        return true;
+    }
+    [
+        parameter.parameter_id.as_str(),
+        parameter.code.as_str(),
+        parameter.name.as_str(),
+        parameter.unit.as_str(),
+    ]
+    .into_iter()
+    .any(|value| normalized_filter(value).contains(&needle))
+        || normalized_filter(&format!("{:?}", parameter.quantity)).contains(&needle)
+        || parameter
+            .aliases
+            .iter()
+            .any(|alias| normalized_filter(alias).contains(&needle))
+}
+
+fn normalized_filter(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 fn profile_fields_match_filter(
     profile_id: &str,
     vendor: &str,
@@ -266,9 +382,47 @@ fn profile_fields_match_filter(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState, profile_fields_match_filter,
+    use std::path::PathBuf;
+
+    use lantern_app::{
+        PackagedProfilesManifestV1, ProfileRegistry, ProfileSource, ProfileSourceFormat,
+        ProfileSourceTier, monitoring_catalog,
     };
+
+    use super::{
+        ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState,
+        monitoring_parameter_matches_filter, profile_fields_match_filter,
+    };
+    use crate::{ScopeWindow, ScopeYRange};
+
+    fn monitoring_parameter() -> lantern_app::MonitoringParameterView {
+        let registry = ProfileRegistry::from_sources(
+            vec![ProfileSource {
+                path: PathBuf::from("example-vfd.toml"),
+                bytes: include_bytes!("../../../profiles/example-vfd.toml")
+                    .to_vec()
+                    .into_boxed_slice(),
+                format: ProfileSourceFormat::Toml,
+                tier: ProfileSourceTier::Explicit,
+            }],
+            &PackagedProfilesManifestV1 {
+                schema_version: 1,
+                build_id: "test".to_owned(),
+                profiles: Vec::new(),
+            },
+        )
+        .expect("registry");
+        let profile = registry
+            .entries()
+            .values()
+            .next()
+            .expect("profile")
+            .profile();
+        monitoring_catalog(profile)
+            .into_iter()
+            .find(|parameter| parameter.parameter_id.as_str() == "status.output_frequency")
+            .expect("monitoring parameter")
+    }
 
     #[test]
     fn ui_reducer_changes_only_presentation_state() {
@@ -279,6 +433,64 @@ mod tests {
         assert_eq!(state.screen, Screen::Dashboard);
         assert_eq!(state.scroll_offset, 1);
         assert_eq!(state.focus, Focus::Content);
+    }
+
+    #[test]
+    fn scope_controls_are_presentation_only_and_persist_across_screens() {
+        let mut state = UiState {
+            screen: Screen::Scope,
+            ..UiState::default()
+        };
+        state.apply(UiAction::ScopeTogglePause { anchor_nanos: 123 });
+        state.apply(UiAction::ScopeNextWindow);
+        state.apply(UiAction::ScopePanBackward);
+        state.apply(UiAction::ScopeZoomIn);
+        state.apply(UiAction::ScopeToggleCursor);
+        state.apply(UiAction::ScopeCursorNext);
+        state.apply(UiAction::ScopeSetYRange {
+            panel: 1,
+            range: ScopeYRange::new(0.0, 100.0),
+        });
+        assert!(state.scope.paused);
+        assert_eq!(state.scope.pause_anchor_nanos, Some(123));
+        assert_eq!(state.scope.window, ScopeWindow::FiveMinutes);
+        assert_eq!(state.scope.pan_steps, -1);
+        assert_eq!(state.scope.zoom_steps, 1);
+        assert_eq!(state.scope.cursor_index, Some(1));
+        assert!(state.scope.y_ranges.contains_key(&1));
+
+        state.apply(UiAction::SelectScreen(Screen::Dashboard));
+        state.apply(UiAction::SelectScreen(Screen::Scope));
+        assert!(state.scope.paused);
+        assert_eq!(state.scope.pan_steps, -1);
+
+        state.apply(UiAction::ScopeResetView);
+        assert_eq!(state.scope, crate::ScopeUiState::default());
+    }
+
+    #[test]
+    fn scope_search_normalizes_code_alias_quantity_and_unit() {
+        let parameter = monitoring_parameter();
+        assert!(monitoring_parameter_matches_filter(&parameter, "D1.00"));
+        assert!(monitoring_parameter_matches_filter(
+            &parameter,
+            "status.output_frequency"
+        ));
+        assert!(monitoring_parameter_matches_filter(&parameter, "frequency"));
+        assert!(monitoring_parameter_matches_filter(&parameter, "hz"));
+        assert!(!monitoring_parameter_matches_filter(&parameter, "rpm"));
+    }
+
+    #[test]
+    fn scope_search_edit_is_presentation_only() {
+        let mut state = UiState::default();
+        state.apply(UiAction::BeginScopeSearch);
+        for character in "rpm".chars() {
+            state.apply(UiAction::InputChar(character));
+        }
+        state.apply(UiAction::ApplyScopeSearch);
+        assert_eq!(state.scope_filter, "rpm");
+        assert!(state.connection_edit.is_none());
     }
 
     #[test]

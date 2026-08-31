@@ -7,6 +7,8 @@ mod bus;
 mod clock;
 mod connection;
 mod identification;
+mod monitoring;
+mod monitoring_projection;
 mod poll;
 mod ports;
 mod profile_registry;
@@ -21,7 +23,13 @@ pub use bus::*;
 pub use clock::*;
 pub use connection::*;
 pub use identification::*;
-pub use lantern_domain::{IdentificationMatch, SlaveId};
+pub use lantern_domain::{
+    EngineeringValue, IdentificationMatch, LinkSettings, MonotonicInstant, ParameterId,
+    QuantityKind, RawRegisters, SessionId, SlaveId, TelemetryQuality, UnitId,
+};
+pub use lantern_profile::ValidatedDeviceProfile;
+pub use monitoring::*;
+pub use monitoring_projection::*;
 pub use poll::*;
 pub use ports::*;
 pub use profile_registry::*;

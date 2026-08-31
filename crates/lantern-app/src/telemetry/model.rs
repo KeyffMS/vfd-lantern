@@ -191,6 +191,7 @@ pub struct TelemetryPipelineStatistics {
     pub attempts: u64,
     pub good_samples: u64,
     pub samples_per_second_milli: u64,
+    pub timeout_events: u64,
     pub decode_errors: u64,
     pub stale_transitions: u64,
     pub disconnect_transitions: u64,

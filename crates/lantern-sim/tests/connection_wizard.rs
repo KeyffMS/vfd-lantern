@@ -7,8 +7,8 @@ use std::{
 use lantern_app::{
     ApplicationAction, ApplicationEffect, ApplicationState, Authorization, BusControlPort,
     ConnectionAction, ConnectionAttemptKind, ConnectionEffect, ConnectionStep, IdentificationMatch,
-    IdentificationRequest, PackagedProfilesManifestV1, ProfileRegistry, ProfileSource,
-    ProfileSourceFormat, ProfileSourceTier, SessionPhaseView, SessionState,
+    IdentificationRequest, MonitoringEffect, PackagedProfilesManifestV1, ProfileRegistry,
+    ProfileSource, ProfileSourceFormat, ProfileSourceTier, SessionPhaseView, SessionState,
     identify_profile_via_bus,
 };
 use lantern_domain::TelemetryQuality;
@@ -222,7 +222,12 @@ async fn explicit_connect_and_matching_probe_create_verified_read_only_session()
     );
 
     let effects = identify_and_reduce(&mut opened).await;
-    assert!(effects.is_empty());
+    assert!(matches!(
+        effects.as_slice(),
+        [ApplicationEffect::Monitoring(
+            MonitoringEffect::Start { .. }
+        )]
+    ));
     assert_eq!(opened.runtime.control().snapshot().request_count, 1);
     assert_eq!(
         opened.state.view().session().phase(),
@@ -254,7 +259,12 @@ async fn explicit_connect_and_matching_probe_create_verified_read_only_session()
 async fn enable_writes_still_finishes_matching_wizard_disarmed() {
     let mut opened = open_via_wizard("", true).await;
     let effects = identify_and_reduce(&mut opened).await;
-    assert!(effects.is_empty());
+    assert!(matches!(
+        effects.as_slice(),
+        [ApplicationEffect::Monitoring(
+            MonitoringEffect::Start { .. }
+        )]
+    ));
     let SessionState::Active(active) = opened.state.session().state() else {
         panic!("verified active session");
     };

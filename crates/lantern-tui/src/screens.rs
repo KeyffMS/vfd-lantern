@@ -1,4 +1,4 @@
-use lantern_app::{ApplicationView, ConnectionStep, IdentificationMatch};
+use lantern_app::{ApplicationView, ConnectionStep, IdentificationMatch, MonitoringView};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -6,7 +6,14 @@ use ratatui::{
     widgets::{Block, Paragraph, Wrap},
 };
 
-use crate::{ConnectionEdit, HELP_BINDINGS, Screen, Theme, UiState, profile_matches_filter};
+use crate::{
+    ConnectionEdit, HELP_BINDINGS, Screen, Theme, UiState, monitoring_parameter_matches_filter,
+    monitoring_render::{
+        cursor_label, format_monitoring_value, scope_plot, scope_range, scope_window_label,
+        visible_scope_points,
+    },
+    profile_matches_filter,
+};
 
 pub fn render_screen(
     frame: &mut Frame<'_>,
@@ -17,16 +24,8 @@ pub fn render_screen(
 ) {
     let lines = match ui.screen {
         Screen::Connection => connection_lines(view, ui),
-        Screen::Dashboard => planned_lines(
-            "Dashboard",
-            "#14",
-            "LatestValues from #11 is the only telemetry state; this screen will only project it.",
-        ),
-        Screen::Scope => planned_lines(
-            "Scope",
-            "#14",
-            "Chart history will consume bounded render_history() output and never poll Modbus directly.",
-        ),
+        Screen::Dashboard => dashboard_lines(view),
+        Screen::Scope => scope_lines(view, ui, area.width),
         Screen::Parameters => planned_lines(
             "Parameters",
             "#15",
@@ -62,6 +61,180 @@ pub fn render_screen(
         .scroll((scroll, 0))
         .style(theme.muted());
     frame.render_widget(paragraph, area);
+}
+
+fn dashboard_lines(view: &ApplicationView) -> Vec<Line<'static>> {
+    if view.active_session().is_none() {
+        return vec![
+            Line::from("Verified session required."),
+            Line::from("Dashboard performs no reads before successful identification."),
+        ];
+    }
+    let monitoring = view.monitoring();
+    let mut lines = Vec::new();
+    lines.push(Line::from(format!(
+        "session={:?} profile={} connectivity={:?}",
+        view.active_session().map(lantern_app::SessionId::get),
+        view.session().verified_profile_id().unwrap_or("—"),
+        view.session().phase(),
+    )));
+    if let Some(error) = &monitoring.error {
+        lines.push(Line::from(format!("MONITORING ERROR: {error}")));
+    }
+    lines.push(Line::from(diagnostics_line(monitoring)));
+    lines.push(Line::from(""));
+    if monitoring.dashboard.is_empty() {
+        lines.push(Line::from(
+            "Active profile exposes no Dashboard telemetry preset; no product-specific values are guessed.",
+        ));
+    } else {
+        lines.push(Line::from("Profile-owned Dashboard values:"));
+        for value in &monitoring.dashboard {
+            lines.push(Line::from(format_monitoring_value(value)));
+        }
+    }
+    lines
+}
+
+fn diagnostics_line(monitoring: &MonitoringView) -> String {
+    let diagnostics = monitoring.diagnostics;
+    format!(
+        "RTU p95={} plan={} bus={} timeouts={} queue-full={} poll-deadline-drops={} poll-result-drops={} consumer-drops={}/{}/{}",
+        diagnostics
+            .round_trip_p95_micros
+            .map_or_else(|| "—".to_owned(), |value| format!("{value}µs")),
+        format_ppm(diagnostics.plan_utilization_ppm),
+        format_ppm(diagnostics.bus_utilization_ppm),
+        diagnostics.timeout_events,
+        diagnostics.queue_full,
+        diagnostics.poll_deadlines_skipped,
+        diagnostics.poll_results_dropped,
+        diagnostics.csv_drops,
+        diagnostics.fault_drops,
+        diagnostics.diagnostics_drops,
+    )
+}
+
+fn format_ppm(ppm: u32) -> String {
+    let whole = ppm / 10_000;
+    let tenth = (ppm % 10_000) / 1_000;
+    format!("{whole}.{tenth}%")
+}
+
+fn scope_lines(view: &ApplicationView, ui: &UiState, area_width: u16) -> Vec<Line<'static>> {
+    if view.active_session().is_none() {
+        return vec![
+            Line::from("Verified session required."),
+            Line::from("Scope never polls an unidentified device."),
+        ];
+    }
+    let monitoring = view.monitoring();
+    let status = if ui.scope.paused { "PAUSED" } else { "LIVE" };
+    let filter = if ui.connection_edit == Some(ConnectionEdit::ScopeSearch) {
+        ui.form.value()
+    } else {
+        &ui.scope_filter
+    };
+    let mut lines = vec![Line::from(format!(
+        "{status} window={} pan={} zoom={} cursor={} search={:?}",
+        scope_window_label(ui.scope.window),
+        ui.scope.pan_steps,
+        ui.scope.zoom_steps,
+        ui.scope
+            .cursor_index
+            .map_or_else(|| "off".to_owned(), |index| index.to_string()),
+        filter,
+    ))];
+    lines.push(Line::from(
+        "Space pause | w window | ,/. pan | +/- zoom | c cursor | p/n sample | / search | Enter channel | m panel | H clear history",
+    ));
+    if ui.connection_edit == Some(ConnectionEdit::ScopeSearch) {
+        lines.push(Line::from(format!("Scope search: {filter}_")));
+    }
+    if let Some(error) = &monitoring.error {
+        lines.push(Line::from(format!("MONITORING ERROR: {error}")));
+    }
+    lines.push(Line::from(""));
+
+    if monitoring.scope.is_empty() {
+        lines.push(Line::from(
+            "No active Scope channels. Select a catalog entry below and press Enter.",
+        ));
+    } else {
+        let plot_width = usize::from(area_width.saturating_sub(12)).max(8);
+        for channel in &monitoring.scope {
+            lines.push(Line::from(format!(
+                "Panel {} axis={:?}/{}",
+                channel.panel,
+                channel.axis.quantity(),
+                channel.axis.unit(),
+            )));
+            lines.push(Line::from(format!(
+                "  {}",
+                format_monitoring_value(&channel.value)
+            )));
+            let history = monitoring
+                .histories
+                .iter()
+                .find(|history| history.parameter_id == channel.value.parameter_id);
+            if let Some(history) = history {
+                let visible = visible_scope_points(history, &ui.scope, monitoring.captured_at);
+                let manual = ui.scope.y_ranges.get(&channel.panel).copied();
+                let range = scope_range(&visible, manual);
+                let plot = scope_plot(&visible, plot_width, range);
+                let range_label = range.map_or_else(
+                    || "no finite range".to_owned(),
+                    |(minimum, maximum)| format!("y=[{minimum:.4},{maximum:.4}]"),
+                );
+                lines.push(Line::from(format!(
+                    "  history {} points {} {plot}",
+                    visible.len(),
+                    range_label,
+                )));
+                if let Some(cursor) = cursor_label(&visible, ui.scope.cursor_index) {
+                    lines.push(Line::from(format!("  {cursor}")));
+                }
+            } else {
+                lines.push(Line::from("  history —"));
+            }
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from("Validated monitoring catalog:"));
+    let parameters = monitoring
+        .catalog
+        .iter()
+        .filter(|parameter| monitoring_parameter_matches_filter(parameter, filter))
+        .collect::<Vec<_>>();
+    if parameters.is_empty() {
+        lines.push(Line::from("No parameters match the Scope search."));
+    }
+    for (index, parameter) in parameters.into_iter().enumerate() {
+        let marker = selection_marker(index, ui.selected_index);
+        let active_panel = monitoring
+            .scope
+            .iter()
+            .find(|channel| channel.value.parameter_id == parameter.parameter_id)
+            .map(|channel| format!("ACTIVE:P{}", channel.panel))
+            .unwrap_or_else(|| "inactive".to_owned());
+        let aliases = if parameter.aliases.is_empty() {
+            "—".to_owned()
+        } else {
+            parameter.aliases.join(",")
+        };
+        lines.push(Line::from(format!(
+            "{marker} [{}] {} — {} quantity={:?} unit={} aliases={} {}",
+            parameter.code,
+            parameter.parameter_id,
+            parameter.name,
+            parameter.quantity,
+            parameter.unit,
+            aliases,
+            active_panel,
+        )));
+    }
+    lines
 }
 
 fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> {

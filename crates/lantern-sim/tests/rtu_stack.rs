@@ -701,7 +701,7 @@ kind = "disconnect"
             verified: changed.verified,
             port_identity: adapter_identity(third.runtime.client_path()),
         }),
-        vec![SessionEffect::ClosePort]
+        vec![SessionEffect::StopPlanner, SessionEffect::ClosePort]
     );
     assert!(matches!(
         session.state(),
