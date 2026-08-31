@@ -1,0 +1,39 @@
+name: Fix issue 15 clippy type
+
+on:
+  push:
+    branches: [agent/issue-15]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-15
+          fetch-depth: 0
+      - name: Apply cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/lantern-profile/src/validate/build/parameter.rs')
+          text = path.read_text()
+          old = '''fn validate_editor_metadata(\n    document: &ParameterDocumentV1,\n    encoding: RegisterEncoding,\n    base: &str,\n) -> Result<(BTreeMap<i64, String>, BTreeMap<u8, String>), ProfileError> {'''
+          new = '''type EditorMetadata = (BTreeMap<i64, String>, BTreeMap<u8, String>);\n\nfn validate_editor_metadata(\n    document: &ParameterDocumentV1,\n    encoding: RegisterEncoding,\n    base: &str,\n) -> Result<EditorMetadata, ProfileError> {'''
+          assert text.count(old) == 1
+          path.write_text(text.replace(old, new))
+          PY
+          cargo fmt --all
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          git rm .github/workflows/issue15-clippy-fix.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'style(#15): simplify editor metadata type'
+          git push origin HEAD:agent/issue-15
