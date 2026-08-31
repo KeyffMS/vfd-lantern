@@ -9,6 +9,7 @@ mod connection;
 mod identification;
 mod monitoring;
 mod monitoring_projection;
+mod parameters;
 mod poll;
 mod ports;
 mod profile_registry;
@@ -24,12 +25,15 @@ pub use clock::*;
 pub use connection::*;
 pub use identification::*;
 pub use lantern_domain::{
-    EngineeringValue, IdentificationMatch, LinkSettings, MonotonicInstant, ParameterId,
-    QuantityKind, RawRegisters, SessionId, SlaveId, TelemetryQuality, UnitId,
+    ByteOrder, DeviceFingerprint, EngineeringValue, IdentificationMatch, LinkSettings,
+    ModbusFunction, ModbusTable, MonotonicInstant, ParameterAccess, ParameterId, QuantityKind,
+    RawRegisters, RegisterEncoding, RequiredDriveState, RestorePolicy, SessionId, SlaveId,
+    TelemetryQuality, UnitId, WordOrder, WriteIntent,
 };
-pub use lantern_profile::ValidatedDeviceProfile;
+pub use lantern_profile::{AddressNotation, ValidatedDeviceProfile};
 pub use monitoring::*;
 pub use monitoring_projection::*;
+pub use parameters::*;
 pub use poll::*;
 pub use ports::*;
 pub use profile_registry::*;
