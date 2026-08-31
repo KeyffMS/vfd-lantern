@@ -33,6 +33,7 @@ jobs:
 
           render=crates/lantern-tui/src/parameter_render.rs
           sed -i '/^        ui\.parameters = ParameterUiState::default();$/d' "$render"
+          sed -i 's/use crate::{ParameterUiState, UiState, filtered_parameters};/use crate::{UiState, filtered_parameters};/' "$render"
 
           cargo fmt --all
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
