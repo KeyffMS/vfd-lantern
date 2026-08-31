@@ -22,6 +22,9 @@ jobs:
           set -euo pipefail
           rustc --edition=2024 .github/issue15_tui_edit.rs -o /tmp/issue15_tui_edit
           /tmp/issue15_tui_edit
+          perl -0pi -e 's/    ConnectionEdit, Screen, UiAction, UiState, map_parameter_editor_key, map_parameter_key,\n    monitoring_parameter_matches_filter, profile_matches_filter,\n/    ConnectionEdit, Screen, UiAction, UiState, monitoring_parameter_matches_filter,\n    parameter_keymap::{map_parameter_editor_key, map_parameter_key}, profile_matches_filter,\n/' crates/lantern-tui/src/keymap.rs
+          perl -0pi -e 's/fn editor_lines\(\n    browser:/fn editor_lines(\n    _browser:/' crates/lantern-tui/src/parameter_render.rs
+          perl -0pi -e 's/    #\[must_use\]\n    #\[must_use\]\n/    #[must_use]\n/g' crates/lantern-profile/src/validate/mod.rs
           cargo fmt --all
           cargo check --workspace --all-features --locked
           cargo test --locked -p lantern-tui
