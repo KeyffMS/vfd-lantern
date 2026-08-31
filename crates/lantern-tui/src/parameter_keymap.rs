@@ -127,9 +127,9 @@ pub(crate) fn map_parameter_key(
         KeyCode::Char('a') => Some(MappedAction::Ui(UiAction::SetParameterAccess(next_access(
             ui.parameters.filters.access,
         )))),
-        KeyCode::Char('y') => Some(MappedAction::Ui(UiAction::SetParameterQuality(next_quality(
-            ui.parameters.filters.quality,
-        )))),
+        KeyCode::Char('y') => Some(MappedAction::Ui(UiAction::SetParameterQuality(
+            next_quality(ui.parameters.filters.quality),
+        ))),
         KeyCode::Char('u') => Some(MappedAction::Ui(UiAction::ToggleParameterUnreadable)),
         KeyCode::Char('r') => Some(MappedAction::Ui(UiAction::SetParameterRisk(next_risk(
             ui.parameters.filters.risk,
@@ -137,8 +137,11 @@ pub(crate) fn map_parameter_key(
         KeyCode::Char('t') => Some(MappedAction::Ui(UiAction::SetParameterQuantity(
             next_quantity(browser, ui.parameters.filters.quantity.as_ref()),
         ))),
-        KeyCode::Char('R') => selected_parameter(browser, &ui.parameters, ui.selected_index)
-            .map(|descriptor| parameter_action(ParameterAction::Refresh(descriptor.parameter_id.clone()))),
+        KeyCode::Char('R') => {
+            selected_parameter(browser, &ui.parameters, ui.selected_index).map(|descriptor| {
+                parameter_action(ParameterAction::Refresh(descriptor.parameter_id.clone()))
+            })
+        }
         KeyCode::Char('e') => begin_editor_action(ui, view),
         KeyCode::Char('c') if browser.staged_intent.is_some() => {
             Some(parameter_action(ParameterAction::ClearIntent))
@@ -169,11 +172,17 @@ fn begin_editor_action(ui: &UiState, view: &ApplicationView) -> Option<MappedAct
         }));
     }
     match descriptor.editor {
-        ParameterEditorKind::Fixed | ParameterEditorKind::Float32 | ParameterEditorKind::Float64 => {
+        ParameterEditorKind::Fixed
+        | ParameterEditorKind::Float32
+        | ParameterEditorKind::Float64 => {
             Some(MappedAction::Ui(UiAction::BeginParameterTextEditor {
                 parameter_id: descriptor.parameter_id.clone(),
                 kind: descriptor.editor,
-                initial: current_editor_text(latest.and_then(|value| value.last_good.as_ref().map(|sample| &sample.engineering))),
+                initial: current_editor_text(
+                    latest.and_then(|value| {
+                        value.last_good.as_ref().map(|sample| &sample.engineering)
+                    }),
+                ),
             }))
         }
         ParameterEditorKind::Enum => {
@@ -184,7 +193,12 @@ fn begin_editor_action(ui: &UiState, view: &ApplicationView) -> Option<MappedAct
                     _ => None,
                 });
             let option_index = current
-                .and_then(|raw| descriptor.enum_values.iter().position(|option| option.raw == raw))
+                .and_then(|raw| {
+                    descriptor
+                        .enum_values
+                        .iter()
+                        .position(|option| option.raw == raw)
+                })
                 .unwrap_or(0);
             Some(MappedAction::Ui(UiAction::BeginParameterEnumEditor {
                 parameter_id: descriptor.parameter_id.clone(),
@@ -207,10 +221,9 @@ fn begin_editor_action(ui: &UiState, view: &ApplicationView) -> Option<MappedAct
         }
         ParameterEditorKind::Unavailable => Some(MappedAction::Ui(UiAction::ShowMessage {
             title: "Parameter editor unavailable".to_owned(),
-            body: descriptor
-                .editor_block_reason
-                .clone()
-                .unwrap_or_else(|| "Validated profile exposes no typed editor for this parameter.".to_owned()),
+            body: descriptor.editor_block_reason.clone().unwrap_or_else(|| {
+                "Validated profile exposes no typed editor for this parameter.".to_owned()
+            }),
         })),
     }
 }
@@ -220,11 +233,17 @@ fn current_editor_text(value: Option<&EngineeringValue>) -> String {
         Some(EngineeringValue::Fixed(value)) => value.normalize().to_string(),
         Some(EngineeringValue::Float32Bits(bits)) => {
             let value = f32::from_bits(*bits);
-            value.is_finite().then(|| value.to_string()).unwrap_or_default()
+            value
+                .is_finite()
+                .then(|| value.to_string())
+                .unwrap_or_default()
         }
         Some(EngineeringValue::Float64Bits(bits)) => {
             let value = f64::from_bits(*bits);
-            value.is_finite().then(|| value.to_string()).unwrap_or_default()
+            value
+                .is_finite()
+                .then(|| value.to_string())
+                .unwrap_or_default()
         }
         Some(EngineeringValue::EnumRaw(_)) | Some(EngineeringValue::BitfieldRaw(_)) | None => {
             String::new()
@@ -316,10 +335,12 @@ fn prepare_action(
 ) -> MappedAction {
     MappedAction::Combined {
         ui: UiAction::ParameterCloseEditor,
-        application: Box::new(ApplicationAction::Parameters(ParameterAction::PrepareIntent {
-            parameter_id,
-            input,
-        })),
+        application: Box::new(ApplicationAction::Parameters(
+            ParameterAction::PrepareIntent {
+                parameter_id,
+                input,
+            },
+        )),
     }
 }
 

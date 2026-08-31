@@ -8,6 +8,7 @@ use lantern_app::{
 
 use crate::{
     ConnectionEdit, Screen, UiAction, UiState, monitoring_parameter_matches_filter,
+    parameter_keymap::{map_parameter_editor_key, map_parameter_key},
     profile_matches_filter,
 };
 
@@ -27,7 +28,7 @@ pub struct KeyBinding {
     pub description: &'static str,
 }
 
-pub const HELP_BINDINGS: [KeyBinding; 31] = [
+pub const HELP_BINDINGS: [KeyBinding; 36] = [
     KeyBinding {
         key: "1..9",
         description: "select top-level screen",
@@ -129,6 +130,26 @@ pub const HELP_BINDINGS: [KeyBinding; 31] = [
         description: "reset Scope presentation view",
     },
     KeyBinding {
+        key: "Parameters /",
+        description: "deterministic search by validated metadata",
+    },
+    KeyBinding {
+        key: "Parameters g/a/y/u/r/t",
+        description: "cycle group/access/quality/unreadable/risk/quantity filters",
+    },
+    KeyBinding {
+        key: "Parameters R",
+        description: "bounded on-demand refresh through PollPlanner",
+    },
+    KeyBinding {
+        key: "Parameters e",
+        description: "open typed WriteIntent preview editor; never write",
+    },
+    KeyBinding {
+        key: "Parameters c",
+        description: "clear staged WriteIntent preview",
+    },
+    KeyBinding {
         key: "Tab",
         description: "next focus",
     },
@@ -171,6 +192,10 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
         return Some(shutdown_action());
     }
 
+    if ui.screen == Screen::Parameters && ui.parameters.editor.is_some() {
+        return map_parameter_editor_key(ui, view, key);
+    }
+
     if let Some(edit) = ui.connection_edit {
         return match edit {
             ConnectionEdit::ManualPath => match key.code {
@@ -199,6 +224,13 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
                 KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
                 _ => None,
             },
+            ConnectionEdit::ParameterSearch => match key.code {
+                KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
+                KeyCode::Enter => Some(MappedAction::Ui(UiAction::ApplyParameterSearch)),
+                KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
+                KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
+                _ => None,
+            },
         };
     }
 
@@ -210,6 +242,12 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
 
     if ui.screen == Screen::Scope
         && let Some(action) = map_scope_key(ui, view, key)
+    {
+        return Some(action);
+    }
+
+    if ui.screen == Screen::Parameters
+        && let Some(action) = map_parameter_key(ui, view, key)
     {
         return Some(action);
     }

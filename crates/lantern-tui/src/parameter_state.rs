@@ -1,6 +1,7 @@
 use lantern_app::{
-    LatestValue, ParameterAccess, ParameterBrowserView, ParameterDescriptorView, ParameterEditorKind,
-    ParameterId, ParameterRiskView, QuantityKind, TelemetryQuality, MAX_PARAMETER_BROWSER_VISIBLE,
+    LatestValue, MAX_PARAMETER_BROWSER_VISIBLE, ParameterAccess, ParameterBrowserView,
+    ParameterDescriptorView, ParameterEditorKind, ParameterId, ParameterRiskView, QuantityKind,
+    TelemetryQuality,
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -66,7 +67,10 @@ pub fn parameter_matches_filters(
     }) {
         return false;
     }
-    if filters.access.is_some_and(|access| descriptor.access != access) {
+    if filters
+        .access
+        .is_some_and(|access| descriptor.access != access)
+    {
         return false;
     }
     let quality = latest.map_or(TelemetryQuality::Unavailable, |value| value.current_quality);
@@ -130,8 +134,8 @@ pub fn visible_parameter_ids(
     if filtered.is_empty() {
         return Vec::new();
     }
-    let page = usize::from(viewport_height.saturating_sub(14))
-        .clamp(8, MAX_PARAMETER_BROWSER_VISIBLE);
+    let page =
+        usize::from(viewport_height.saturating_sub(14)).clamp(8, MAX_PARAMETER_BROWSER_VISIBLE);
     let selected = selected_index.min(filtered.len().saturating_sub(1));
     let before = page / 3;
     let mut start = selected.saturating_sub(before);

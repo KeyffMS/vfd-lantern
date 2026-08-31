@@ -242,6 +242,10 @@ impl ApplicationState {
                         visible.push(parameter_id);
                     }
                 }
+                if self.parameters.visible == visible {
+                    self.parameters.error = None;
+                    return Vec::new();
+                }
                 self.parameters.visible = visible.clone();
                 self.parameters.error = None;
                 vec![ApplicationEffect::Monitoring(

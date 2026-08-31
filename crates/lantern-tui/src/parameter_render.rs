@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use lantern_app::{
-    AuthorizationView, EngineeringValue, LatestValue, ParameterBrowserView, ParameterDescriptorView,
-    ParameterEditorKind, RawRegisters, TelemetryQuality,
+    AuthorizationView, EngineeringValue, LatestValue, ParameterBrowserView,
+    ParameterDescriptorView, ParameterEditorKind, RawRegisters, TelemetryQuality,
 };
 use ratatui::text::Line;
 
@@ -30,15 +30,15 @@ pub(crate) fn parameter_lines(
 
     let filtered = filtered_parameters(browser, &ui.parameters);
     let selected_index = ui.selected_index.min(filtered.len().saturating_sub(1));
-    let visible = visible_parameter_ids(
-        browser,
-        &ui.parameters,
-        selected_index,
-        ui.viewport.height,
-    );
+    let visible =
+        visible_parameter_ids(browser, &ui.parameters, selected_index, ui.viewport.height);
     let mut lines = vec![Line::from(format!(
         "profile={} rev={} origin={:?} profile_hash={} source_hash={}",
-        profile.profile_id, profile.revision, profile.origin, profile.profile_hash, profile.source_hash,
+        profile.profile_id,
+        profile.revision,
+        profile.origin,
+        profile.profile_hash,
+        profile.source_hash,
     ))];
     lines.push(Line::from(format!(
         "catalog={} matches={} virtual-window={} authorization={authorization:?}",
@@ -69,7 +69,9 @@ pub(crate) fn parameter_lines(
     lines.push(Line::from(""));
 
     if filtered.is_empty() {
-        lines.push(Line::from("No parameters match the active deterministic filters."));
+        lines.push(Line::from(
+            "No parameters match the active deterministic filters.",
+        ));
         return lines;
     }
 
@@ -161,7 +163,10 @@ fn parameter_detail_lines(
         descriptor.parameter_id, descriptor.code, descriptor.name,
     ))];
     if !descriptor.description.is_empty() {
-        lines.push(Line::from(format!("description={}", descriptor.description)));
+        lines.push(Line::from(format!(
+            "description={}",
+            descriptor.description
+        )));
     }
     lines.push(Line::from(format!(
         "groups={} aliases={} table={:?} PDU={} width={} source-address={}:{}",
@@ -183,15 +188,9 @@ fn parameter_detail_lines(
     )));
     lines.push(Line::from(format!(
         "range={}..{} step={} access={:?} risk={:?} restore={:?} required-state={:?}",
-        descriptor
-            .minimum
-            .map_or_else(|| "—".to_owned(), |value| value.normalize().to_string()),
-        descriptor
-            .maximum
-            .map_or_else(|| "—".to_owned(), |value| value.normalize().to_string()),
-        descriptor
-            .step
-            .map_or_else(|| "—".to_owned(), |value| value.normalize().to_string()),
+        descriptor.minimum.clone().unwrap_or_else(|| "—".to_owned()),
+        descriptor.maximum.clone().unwrap_or_else(|| "—".to_owned()),
+        descriptor.step.clone().unwrap_or_else(|| "—".to_owned()),
         descriptor.access,
         descriptor.risk,
         descriptor.restore_policy,
@@ -219,7 +218,9 @@ fn parameter_detail_lines(
                 || "—".to_owned(),
                 |(attempt, captured)| {
                     let nanos = captured.as_nanos().saturating_sub(attempt.as_nanos());
-                    duration_label(Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX)))
+                    duration_label(Duration::from_nanos(
+                        u64::try_from(nanos).unwrap_or(u64::MAX),
+                    ))
                 },
             ),
         latest
@@ -227,7 +228,10 @@ fn parameter_detail_lines(
             .map_or_else(|| "—".to_owned(), |sample| raw_label(&sample.raw)),
         latest
             .and_then(|value| value.last_good.as_ref())
-            .map_or_else(|| "—".to_owned(), |sample| engineering_label(&sample.engineering)),
+            .map_or_else(
+                || "—".to_owned(),
+                |sample| engineering_label(&sample.engineering)
+            ),
     )));
     if !descriptor.enum_values.is_empty() {
         lines.push(Line::from(format!(
@@ -255,7 +259,7 @@ fn parameter_detail_lines(
 }
 
 fn editor_lines(
-    browser: &ParameterBrowserView,
+    _browser: &ParameterBrowserView,
     descriptor: &ParameterDescriptorView,
     authorization: AuthorizationView,
     ui: &UiState,
@@ -278,28 +282,34 @@ fn editor_lines(
     match editor {
         ParameterEditorUiState::Text { kind, .. } => vec![
             Line::from(format!("Typed editor {kind:?}: {}_", ui.form.value())),
-            Line::from("Enter validates engineering→raw preview; Esc cancels. No write request is created."),
+            Line::from(
+                "Enter validates engineering→raw preview; Esc cancels. No write request is created.",
+            ),
         ],
         ParameterEditorUiState::Enum { option_index, .. } => {
-            let choice = descriptor
-                .enum_values
-                .get(*option_index)
-                .map_or_else(|| "—".to_owned(), |value| format!("{} = {}", value.raw, value.label));
+            let choice = descriptor.enum_values.get(*option_index).map_or_else(
+                || "—".to_owned(),
+                |value| format!("{} = {}", value.raw, value.label),
+            );
             vec![
                 Line::from(format!("Enum editor: {choice}")),
-                Line::from("j/k selects only a profile-declared enum value; Enter prepares preview; Esc cancels."),
+                Line::from(
+                    "j/k selects only a profile-declared enum value; Enter prepares preview; Esc cancels.",
+                ),
             ]
         }
         ParameterEditorUiState::Bitfield {
             flag_index, value, ..
         } => {
-            let flag = descriptor
-                .bit_flags
-                .get(*flag_index)
-                .map_or_else(|| "—".to_owned(), |flag| format!("bit {} = {}", flag.bit, flag.label));
+            let flag = descriptor.bit_flags.get(*flag_index).map_or_else(
+                || "—".to_owned(),
+                |flag| format!("bit {} = {}", flag.bit, flag.label),
+            );
             vec![
                 Line::from(format!("Bitfield editor: mask=0x{value:x} selected={flag}")),
-                Line::from("j/k selects a declared flag; Space toggles it; Enter prepares preview; Esc cancels."),
+                Line::from(
+                    "j/k selects a declared flag; Space toggles it; Enter prepares preview; Esc cancels.",
+                ),
             ]
         }
     }
@@ -308,7 +318,10 @@ fn editor_lines(
 fn latest_value_label(latest: Option<&LatestValue>) -> String {
     latest
         .and_then(|value| value.last_good.as_ref())
-        .map_or_else(|| "—".to_owned(), |sample| engineering_label(&sample.engineering))
+        .map_or_else(
+            || "—".to_owned(),
+            |sample| engineering_label(&sample.engineering),
+        )
 }
 
 fn engineering_label(value: &EngineeringValue) -> String {
@@ -316,11 +329,19 @@ fn engineering_label(value: &EngineeringValue) -> String {
         EngineeringValue::Fixed(value) => value.normalize().to_string(),
         EngineeringValue::Float32Bits(bits) => {
             let value = f32::from_bits(*bits);
-            if value.is_finite() { value.to_string() } else { format!("bits=0x{bits:08x}") }
+            if value.is_finite() {
+                value.to_string()
+            } else {
+                format!("bits=0x{bits:08x}")
+            }
         }
         EngineeringValue::Float64Bits(bits) => {
             let value = f64::from_bits(*bits);
-            if value.is_finite() { value.to_string() } else { format!("bits=0x{bits:016x}") }
+            if value.is_finite() {
+                value.to_string()
+            } else {
+                format!("bits=0x{bits:016x}")
+            }
         }
         EngineeringValue::EnumRaw(raw) => format!("enum:{raw}"),
         EngineeringValue::BitfieldRaw(raw) => format!("bits:0x{raw:x}"),
@@ -393,7 +414,8 @@ mod tests {
             editor_block_reason: Some("read-only".to_owned()),
             enum_values: Vec::new(),
             bit_flags: Vec::new(),
-            search_text: "status.frequency d1.00 output frequency output_hz frequency hz".to_owned(),
+            search_text: "status.frequency d1.00 output frequency output_hz frequency hz"
+                .to_owned(),
         };
         let browser = ParameterBrowserView {
             catalog: vec![descriptor].into(),
