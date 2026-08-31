@@ -1,0 +1,31 @@
+name: Self-hosted runner smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - chore/self-runner-smoke
+    paths:
+      - .github/workflows/self-runner-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Runner 21 smoke
+    runs-on: [self-hosted]
+    timeout-minutes: 2
+    steps:
+      - name: Verify expected self-hosted runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner=$RUNNER_NAME"
+          echo "os=$RUNNER_OS"
+          echo "arch=$RUNNER_ARCH"
+          uname -a
+          test "$RUNNER_NAME" = "vfd-lantern-podman-01"
+          test "$RUNNER_OS" = "Linux"
+          test "$RUNNER_ARCH" = "X64"
+          echo "self-hosted runner smoke: OK"
