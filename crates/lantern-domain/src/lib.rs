@@ -31,6 +31,7 @@ pub use modbus::{
     StopBits, WordOrder,
 };
 pub use quantity::{QuantityKind, UnitError, UnitId};
+pub use rust_decimal::Decimal;
 pub use telemetry::{
     MonotonicInstant, RawRegisters, RawRegistersError, TelemetryQuality, TelemetrySampleCore,
     UtcTimestamp,
