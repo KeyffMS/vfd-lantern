@@ -79,6 +79,9 @@ jobs:
       - name: Run Scope render benchmark
         run: cargo run --locked --release -p lantern-tui --example scope_render_benchmark
 
+      - name: Run Parameter browser benchmark
+        run: cargo run --locked --release -p lantern-tui --example parameter_browser_benchmark
+
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings
