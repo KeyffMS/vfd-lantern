@@ -1,0 +1,276 @@
+name: Apply issue 15 core patch
+
+on:
+  push:
+    branches: [agent/issue-15]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-15
+          fetch-depth: 0
+      - name: Apply core model patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply <<'PATCH'
+          diff --git a/crates/lantern-domain/src/codec.rs b/crates/lantern-domain/src/codec.rs
+          index 01e2df6..1111111 100644
+          --- a/crates/lantern-domain/src/codec.rs
+          +++ b/crates/lantern-domain/src/codec.rs
+          @@ -61,6 +61,24 @@ impl RegisterCodec {
+                   })
+               }
+           
+          +    /// Returns the validated register encoding.
+          +    #[must_use]
+          +    pub const fn encoding(&self) -> RegisterEncoding {
+          +        self.encoding
+          +    }
+          +
+          +    /// Returns byte ordering inside each Modbus word.
+          +    #[must_use]
+          +    pub const fn byte_order(&self) -> ByteOrder {
+          +        self.byte_order
+          +    }
+          +
+          +    /// Returns word ordering for multi-register values.
+          +    #[must_use]
+          +    pub const fn word_order(&self) -> WordOrder {
+          +        self.word_order
+          +    }
+          +
+               /// Decodes registers into one authoritative engineering value.
+               pub fn decode(&self, registers: &[u16]) -> Result<EngineeringValue, CodecError> {
+                   self.validate_width(registers.len())?;
+          diff --git a/crates/lantern-domain/src/write.rs b/crates/lantern-domain/src/write.rs
+          index 122b663..2222222 100644
+          --- a/crates/lantern-domain/src/write.rs
+          +++ b/crates/lantern-domain/src/write.rs
+          @@ -1,11 +1,23 @@
+          -use crate::{EngineeringValue, OperationId, ParameterId, PlanId, RawRegisters, SessionId};
+          +use crate::{
+          +    DeviceFingerprint, EngineeringValue, MonotonicInstant, OperationId, ParameterId, PlanId,
+          +    RawRegisters, SessionId,
+          +};
+           
+           /// User intent before any safety preflight or raw encoding.
+          +///
+          +/// This is deliberately not authoritative for access policy, write function, target raw or
+          +/// read-back semantics. The future WriteCoordinator must reload the active validated profile.
+           #[derive(Clone, Debug, Eq, PartialEq)]
+           pub struct WriteIntent {
+               pub session_id: SessionId,
+          +    pub fingerprint: DeviceFingerprint,
+          +    pub profile_hash: String,
+               pub parameter_id: ParameterId,
+          -    pub target: EngineeringValue,
+          +    pub previous_raw: RawRegisters,
+          +    pub previous_engineering: EngineeringValue,
+          +    pub previous_observed_at: MonotonicInstant,
+          +    pub requested_engineering: EngineeringValue,
+          +    pub preview_raw: Option<RawRegisters>,
+          +    pub created_at: MonotonicInstant,
+           }
+           
+           /// Immutable plan displayed to the operator before confirmation.
+          diff --git a/crates/lantern-profile/src/document.rs b/crates/lantern-profile/src/document.rs
+          index 56b25d7..3333333 100644
+          --- a/crates/lantern-profile/src/document.rs
+          +++ b/crates/lantern-profile/src/document.rs
+          @@ -115,6 +115,12 @@ pub struct ParameterDocumentV1 {
+               pub maximum: Option<String>,
+               pub step: Option<String>,
+               #[serde(default)]
+               pub forbidden_raw: Vec<Vec<u16>>,
+          +    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+          +    pub enum_values: BTreeMap<String, String>,
+          +    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+          +    pub bit_flags: BTreeMap<String, String>,
+               pub quantity: String,
+               pub unit: String,
+               #[serde(default)]
+          @@ -202,7 +208,7 @@ pub struct TelemetryPresetDocumentV1 {
+               pub parameters: Vec<String>,
+           }
+           
+          -#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, Serialize)]
+          +#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+           #[serde(rename_all = "snake_case")]
+           pub enum AddressNotation {
+               PduZeroBased,
+          diff --git a/crates/lantern-profile/src/validate/mod.rs b/crates/lantern-profile/src/validate/mod.rs
+          index a05001e..4444444 100644
+          --- a/crates/lantern-profile/src/validate/mod.rs
+          +++ b/crates/lantern-profile/src/validate/mod.rs
+          @@ -49,6 +49,10 @@ pub struct ValidatedParameter {
+               code: String,
+               name: String,
+               description: String,
+          +    source_address_notation: AddressNotation,
+          +    source_address_value: u32,
+               block: RegisterBlock,
+               codec: RegisterCodec,
+          +    enum_values: BTreeMap<i64, String>,
+          +    bit_flags: BTreeMap<u8, String>,
+               quantity: QuantityKind,
+               unit: UnitId,
+               access: ParameterAccess,
+          @@ -84,6 +88,18 @@ impl ValidatedParameter {
+               &self.description
+           }
+           
+          +    #[must_use]
+          +    pub const fn source_address_notation(&self) -> AddressNotation {
+          +        self.source_address_notation
+          +    }
+          +
+          +    #[must_use]
+          +    pub const fn source_address_value(&self) -> u32 {
+          +        self.source_address_value
+          +    }
+          +
+               #[must_use]
+               pub const fn block(&self) -> RegisterBlock {
+                   self.block
+          @@ -94,6 +110,16 @@ impl ValidatedParameter {
+               &self.codec
+           }
+           
+          +    #[must_use]
+          +    pub fn enum_values(&self) -> &BTreeMap<i64, String> {
+          +        &self.enum_values
+          +    }
+          +
+          +    #[must_use]
+          +    pub fn bit_flags(&self) -> &BTreeMap<u8, String> {
+          +        &self.bit_flags
+          +    }
+          +
+               #[must_use]
+               pub fn quantity(&self) -> &QuantityKind {
+                   &self.quantity
+          diff --git a/crates/lantern-profile/src/validate/build/parameter.rs b/crates/lantern-profile/src/validate/build/parameter.rs
+          index d7cec95..5555555 100644
+          --- a/crates/lantern-profile/src/validate/build/parameter.rs
+          +++ b/crates/lantern-profile/src/validate/build/parameter.rs
+          @@ -12,6 +12,8 @@ pub(super) fn validate_parameter(
+               validate_text(format!("{base}.description"), &document.description, true)?;
+           
+               let table = table(document.table);
+          +    let source_address_notation = document.address.notation;
+          +    let source_address_value = document.address.value;
+               let encoding = encoding(document.encoding);
+               let width = u16::try_from(encoding.register_width()).expect("encoding width fits u16");
+               let address = normalize_address(table, &document.address, format!("{base}.address"))?;
+          @@ -49,6 +51,8 @@ pub(super) fn validate_parameter(
+               let forbidden_raw = validate_raw_values(
+                   &document.forbidden_raw,
+                   &codec,
+          @@ -58,6 +62,7 @@ pub(super) fn validate_parameter(
+               document.forbidden_raw.sort();
+               document.forbidden_raw.dedup();
+           
+          +    let (enum_values, bit_flags) = validate_editor_metadata(document, encoding, &base)?;
+               let quantity = quantity(&document.quantity, format!("{base}.quantity"))?;
+               let unit = UnitId::new(quantity.clone(), document.unit.clone())
+                   .map_err(|error| ProfileError::validation(format!("{base}.unit"), error))?;
+          @@ -105,8 +110,12 @@ pub(super) fn validate_parameter(
+                   code: document.code.clone(),
+                   name: document.name.clone(),
+                   description: document.description.clone(),
+          +        source_address_notation,
+          +        source_address_value,
+                   block,
+                   codec,
+          +        enum_values,
+          +        bit_flags,
+                   quantity,
+                   unit,
+                   access,
+          @@ -126,6 +135,79 @@ pub(super) fn validate_parameter(
+               })
+           }
+           
+          +fn validate_editor_metadata(
+          +    document: &ParameterDocumentV1,
+          +    encoding: RegisterEncoding,
+          +    base: &str,
+          +) -> Result<(BTreeMap<i64, String>, BTreeMap<u8, String>), ProfileError> {
+          +    let enum_maximum = match encoding {
+          +        RegisterEncoding::Enum16 => Some(i64::from(u16::MAX)),
+          +        RegisterEncoding::Enum32 => Some(i64::from(u32::MAX)),
+          +        _ => None,
+          +    };
+          +    if enum_maximum.is_none() && !document.enum_values.is_empty() {
+          +        return Err(ProfileError::validation(
+          +            format!("{base}.enum_values"),
+          +            "enum_values are valid only for enum16/enum32 parameters",
+          +        ));
+          +    }
+          +    let mut enum_values = BTreeMap::new();
+          +    if let Some(maximum) = enum_maximum {
+          +        for (raw_text, label) in &document.enum_values {
+          +            validate_text(format!("{base}.enum_values.{raw_text}"), label, false)?;
+          +            let raw = raw_text.parse::<i64>().map_err(|error| {
+          +                ProfileError::validation(format!("{base}.enum_values.{raw_text}"), error)
+          +            })?;
+          +            if raw < 0 || raw > maximum {
+          +                return Err(ProfileError::validation(
+          +                    format!("{base}.enum_values.{raw_text}"),
+          +                    format!("enum raw value must be in 0..={maximum}"),
+          +                ));
+          +            }
+          +            enum_values.insert(raw, label.clone());
+          +        }
+          +    }
+          +
+          +    let bit_width = match encoding {
+          +        RegisterEncoding::Bitfield16 => Some(16_u8),
+          +        RegisterEncoding::Bitfield32 => Some(32_u8),
+          +        RegisterEncoding::Bitfield64 => Some(64_u8),
+          +        _ => None,
+          +    };
+          +    if bit_width.is_none() && !document.bit_flags.is_empty() {
+          +        return Err(ProfileError::validation(
+          +            format!("{base}.bit_flags"),
+          +            "bit_flags are valid only for bitfield encodings",
+          +        ));
+          +    }
+          +    let mut bit_flags = BTreeMap::new();
+          +    if let Some(width) = bit_width {
+          +        for (bit_text, label) in &document.bit_flags {
+          +            validate_text(format!("{base}.bit_flags.{bit_text}"), label, false)?;
+          +            let bit = bit_text.parse::<u8>().map_err(|error| {
+          +                ProfileError::validation(format!("{base}.bit_flags.{bit_text}"), error)
+          +            })?;
+          +            if bit >= width {
+          +                return Err(ProfileError::validation(
+          +                    format!("{base}.bit_flags.{bit_text}"),
+          +                    format!("bit index must be below {width}"),
+          +                ));
+          +            }
+          +            bit_flags.insert(bit, label.clone());
+          +        }
+          +    }
+          +    Ok((enum_values, bit_flags))
+          +}
+          +
+           fn validate_read_back(
+               document: &mut ParameterDocumentV1,
+               encoding: RegisterEncoding,
+          PATCH
+          cargo fmt --all
+          git rm .github/workflows/issue15-core-apply.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(#15): extend typed parameter metadata and write intent'
+          git push origin HEAD:agent/issue-15
