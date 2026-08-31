@@ -6,11 +6,12 @@ use std::{
 
 use lantern_domain::Decimal;
 use lantern_domain::{
-    ByteOrder, DeviceFingerprint, EngineeringValue, ModbusFunction, ModbusTable, MonotonicInstant,
-    ParameterAccess, ParameterId, QuantityKind, RawRegisters, RegisterEncoding, RequiredDriveState,
-    RestorePolicy, SessionId, TelemetryQuality, WordOrder, WriteIntent,
+    ByteOrder, DeviceFingerprint, EngineeringValue, ModbusFunction, ModbusTable, ParameterAccess,
+    ParameterId, QuantityKind, RawRegisters, RegisterEncoding, RequiredDriveState, RestorePolicy,
+    SessionId, TelemetryQuality, WordOrder, WriteIntent,
 };
 use lantern_profile::{ReadBackPolicy, ValidatedDeviceProfile, ValidatedParameter};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::{
@@ -440,13 +441,44 @@ pub fn parameter_browser_subscriptions(
         result.push(ReadSubscription::new(
             parameter_id.clone(),
             FrequencyClass::Slow,
-            SubscriberId::parse(format!("parameters:{}", parameter_id.as_str()))?,
+            parameter_subscriber_id("parameters", parameter_id)?,
             SubscriptionReason::ParameterBrowser,
             false,
             PARAMETER_BROWSER_MAXIMUM_AGE,
         )?);
     }
     Ok(result)
+}
+
+pub fn parameter_refresh_subscription(
+    profile: &ValidatedDeviceProfile,
+    parameter_id: &ParameterId,
+) -> Result<ReadSubscription, ParameterBrowserError> {
+    if profile.parameter(parameter_id).is_none() {
+        return Err(ParameterBrowserError::UnknownParameter(
+            parameter_id.clone(),
+        ));
+    }
+    Ok(ReadSubscription::new(
+        parameter_id.clone(),
+        FrequencyClass::Fast,
+        parameter_subscriber_id("parameters-refresh", parameter_id)?,
+        SubscriptionReason::ParameterBrowser,
+        false,
+        Duration::from_millis(500),
+    )?)
+}
+
+fn parameter_subscriber_id(
+    prefix: &str,
+    parameter_id: &ParameterId,
+) -> Result<SubscriberId, ParameterBrowserError> {
+    let digest = Sha256::digest(parameter_id.as_str().as_bytes());
+    let token = digest[..12]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(SubscriberId::parse(format!("{prefix}:{token}"))?)
 }
 
 pub fn prepare_parameter_intent(
@@ -648,11 +680,18 @@ mod tests {
         assert!(
             catalog
                 .iter()
-                .all(|entry| entry.access == ParameterAccess::ReadOnly)
+                .any(|entry| entry.access == ParameterAccess::ReadOnly)
         );
         assert!(
             catalog
                 .iter()
+                .filter(|entry| entry.access == ParameterAccess::ReadOnly)
+                .all(|entry| entry.editor == ParameterEditorKind::Unavailable)
+        );
+        assert!(
+            catalog
+                .iter()
+                .filter(|entry| entry.access == ParameterAccess::Dangerous)
                 .all(|entry| entry.editor == ParameterEditorKind::Unavailable)
         );
         assert!(

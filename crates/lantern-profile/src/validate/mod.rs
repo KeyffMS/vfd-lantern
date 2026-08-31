@@ -93,7 +93,6 @@ impl ValidatedParameter {
     }
 
     #[must_use]
-    #[must_use]
     pub fn source_address_notation(&self) -> &str {
         &self.source_address_notation
     }
@@ -112,7 +111,6 @@ impl ValidatedParameter {
         &self.codec
     }
 
-    #[must_use]
     #[must_use]
     pub fn enum_values(&self) -> &BTreeMap<i64, String> {
         &self.enum_values

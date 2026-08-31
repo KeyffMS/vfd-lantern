@@ -7,11 +7,13 @@ use thiserror::Error;
 use crate::{
     AuditHealth, Authorization, BusError, ConnectionAction, ConnectionAttemptKind,
     ConnectionEffect, ConnectionFailure, ConnectionStep, ConnectionWizardState,
-    ConnectionWizardView, Connectivity, MonitoringAction, MonitoringEffect,
-    MonitoringRuntimeSnapshot, MonitoringView, OperationState, ProfileRegistry, ScopeSelection,
-    SerialConnectError, SessionEffect, SessionFault, SessionInput, SessionState,
-    SessionStateMachine, default_dashboard_parameters, identification_error_attempt,
-    identification_report_export, project_monitoring_view,
+    ConnectionWizardView, Connectivity, MAX_PARAMETER_BROWSER_VISIBLE, MonitoringAction,
+    MonitoringEffect, MonitoringRuntimeSnapshot, MonitoringView, OperationState, ParameterAction,
+    ParameterBrowserView, ParameterDescriptorView, ParameterIntentContext, ProfileRegistry,
+    ScopeSelection, SerialConnectError, SessionEffect, SessionFault, SessionInput, SessionState,
+    SessionStateMachine, StagedWriteIntent, default_dashboard_parameters,
+    identification_error_attempt, identification_report_export, parameter_catalog,
+    prepare_parameter_intent, project_monitoring_view, project_parameter_browser_view,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -34,12 +36,41 @@ impl ApplicationMonitoringState {
 }
 
 #[derive(Clone, Debug)]
+struct ApplicationParameterState {
+    catalog: Arc<[ParameterDescriptorView]>,
+    visible: Vec<ParameterId>,
+    staged_intent: Option<StagedWriteIntent>,
+    error: Option<String>,
+}
+
+impl Default for ApplicationParameterState {
+    fn default() -> Self {
+        Self {
+            catalog: Vec::<ParameterDescriptorView>::new().into(),
+            visible: Vec::new(),
+            staged_intent: None,
+            error: None,
+        }
+    }
+}
+
+impl ApplicationParameterState {
+    fn for_profile(profile: &ValidatedDeviceProfile) -> Self {
+        Self {
+            catalog: parameter_catalog(profile),
+            ..Self::default()
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct ApplicationState {
     active_profile: Option<ProfileId>,
     registry: Arc<ProfileRegistry>,
     session: SessionStateMachine,
     connection: ConnectionWizardState,
     monitoring: ApplicationMonitoringState,
+    parameters: ApplicationParameterState,
 }
 
 impl Default for ApplicationState {
@@ -50,6 +81,7 @@ impl Default for ApplicationState {
             session: SessionStateMachine::new(false),
             connection: ConnectionWizardState::default(),
             monitoring: ApplicationMonitoringState::default(),
+            parameters: ApplicationParameterState::default(),
         }
     }
 }
@@ -73,6 +105,7 @@ impl ApplicationState {
             session: SessionStateMachine::new(process_writes_enabled),
             connection: ConnectionWizardState::new(suggested_device, suggested_slave),
             monitoring: ApplicationMonitoringState::default(),
+            parameters: ApplicationParameterState::default(),
         }
     }
 
@@ -95,6 +128,27 @@ impl ApplicationState {
         } else {
             MonitoringView::default()
         };
+        let parameters = if self.session.session_id().is_some() {
+            self.active_profile
+                .as_ref()
+                .and_then(|id| self.registry.get(id))
+                .map(|entry| {
+                    project_parameter_browser_view(
+                        entry.profile(),
+                        entry.origin(),
+                        Arc::clone(&self.parameters.catalog),
+                        self.monitoring
+                            .snapshot
+                            .as_ref()
+                            .map(|snapshot| Arc::clone(&snapshot.latest)),
+                        self.parameters.staged_intent.clone(),
+                        self.parameters.error.as_deref(),
+                    )
+                })
+                .unwrap_or_default()
+        } else {
+            ParameterBrowserView::default()
+        };
         ApplicationView {
             active_profile: self.active_profile.clone(),
             registry_profile_ids: self
@@ -108,6 +162,7 @@ impl ApplicationState {
                 .connection
                 .view(&self.registry, self.active_profile.as_ref()),
             monitoring,
+            parameters,
         }
     }
 
@@ -133,6 +188,7 @@ impl ApplicationState {
                     self.connection.link = None;
                     self.connection.step = ConnectionStep::Profile;
                     self.monitoring = ApplicationMonitoringState::default();
+                    self.parameters = ApplicationParameterState::default();
                 }
                 self.registry = registry;
                 Vec::new()
@@ -143,6 +199,7 @@ impl ApplicationState {
             }
             ApplicationAction::Connection(action) => self.reduce_connection(action),
             ApplicationAction::Monitoring(action) => self.reduce_monitoring(action),
+            ApplicationAction::Parameters(action) => self.reduce_parameters(action),
             ApplicationAction::Session(input) => {
                 let effects = self.session.transition(input);
                 if matches!(
@@ -150,8 +207,122 @@ impl ApplicationState {
                     SessionState::Disconnected { .. } | SessionState::ShuttingDown
                 ) {
                     self.monitoring = ApplicationMonitoringState::default();
+                    self.parameters = ApplicationParameterState::default();
                 }
                 self.translate_session_effects(effects)
+            }
+        }
+    }
+
+    fn reduce_parameters(&mut self, action: ParameterAction) -> Vec<ApplicationEffect> {
+        let Some(profile) = self.selected_profile() else {
+            self.parameters.error =
+                Some("parameter browser has no active validated profile".to_owned());
+            return Vec::new();
+        };
+        match action {
+            ParameterAction::SetVisible(parameter_ids) => {
+                if self.session.session_id().is_none() {
+                    self.parameters.error =
+                        Some("parameter browser requires a Verified logical session".to_owned());
+                    return Vec::new();
+                }
+                let mut visible = Vec::new();
+                for parameter_id in parameter_ids
+                    .into_iter()
+                    .take(MAX_PARAMETER_BROWSER_VISIBLE)
+                {
+                    if profile.parameter(&parameter_id).is_none() {
+                        self.parameters.error = Some(format!(
+                            "parameter {parameter_id} is not present in the active validated profile"
+                        ));
+                        return Vec::new();
+                    }
+                    if !visible.contains(&parameter_id) {
+                        visible.push(parameter_id);
+                    }
+                }
+                self.parameters.visible = visible.clone();
+                self.parameters.error = None;
+                vec![ApplicationEffect::Monitoring(
+                    MonitoringEffect::SetParameterBrowser {
+                        parameters: visible,
+                    },
+                )]
+            }
+            ParameterAction::Refresh(parameter_id) => {
+                if !matches!(
+                    self.session.state(),
+                    SessionState::Active(active)
+                        if matches!(&active.connectivity, Connectivity::Connected)
+                ) {
+                    self.parameters.error =
+                        Some("parameter refresh requires a Verified connected session".to_owned());
+                    return Vec::new();
+                }
+                if profile.parameter(&parameter_id).is_none() {
+                    self.parameters.error = Some(format!(
+                        "parameter {parameter_id} is not present in the active validated profile"
+                    ));
+                    return Vec::new();
+                }
+                self.parameters.error = None;
+                vec![ApplicationEffect::Monitoring(
+                    MonitoringEffect::RefreshParameter { parameter_id },
+                )]
+            }
+            ParameterAction::PrepareIntent {
+                parameter_id,
+                input,
+            } => {
+                let context = match self.session.state() {
+                    SessionState::Active(active)
+                        if matches!(&active.connectivity, Connectivity::Connected) =>
+                    {
+                        ParameterIntentContext {
+                            session_id: active.session_id,
+                            fingerprint: active.identity.device.fingerprint.clone(),
+                            profile_hash: active.identity.profile_hash.to_hex(),
+                            process_writes_enabled: !matches!(
+                                &active.authorization,
+                                Authorization::ProcessDisabled
+                            ),
+                        }
+                    }
+                    _ => {
+                        self.parameters.error = Some(
+                            "parameter editor requires a Verified connected session".to_owned(),
+                        );
+                        return Vec::new();
+                    }
+                };
+                let Some(snapshot) = self.monitoring.snapshot.as_ref() else {
+                    self.parameters.error =
+                        Some("parameter editor has no telemetry snapshot yet".to_owned());
+                    return Vec::new();
+                };
+                match prepare_parameter_intent(
+                    &profile,
+                    snapshot.latest.as_ref(),
+                    context,
+                    &parameter_id,
+                    &input,
+                ) {
+                    Ok(staged) => {
+                        self.parameters.staged_intent = Some(staged);
+                        self.parameters.error = None;
+                    }
+                    Err(error) => {
+                        self.parameters.staged_intent = None;
+                        self.parameters.error = Some(error.to_string());
+                    }
+                }
+                Vec::new()
+            }
+            ParameterAction::ClearIntent => {
+                self.parameters.staged_intent = None;
+                self.parameters.error = None;
+                Vec::new()
             }
         }
     }
@@ -457,6 +628,7 @@ impl ApplicationState {
         self.connection.failure = None;
         self.connection.last_identification = None;
         self.monitoring = ApplicationMonitoringState::default();
+        self.parameters = ApplicationParameterState::default();
         let session_effects = self.session.transition(SessionInput::Connect);
         debug_assert_eq!(session_effects, vec![SessionEffect::OpenPort]);
         vec![ApplicationEffect::Connection(effect)]
@@ -475,6 +647,7 @@ impl ApplicationState {
         self.connection.failure = None;
         if matches!(self.session.state(), SessionState::Disconnected { .. }) {
             self.monitoring = ApplicationMonitoringState::default();
+            self.parameters = ApplicationParameterState::default();
         }
         self.translate_session_effects(effects)
     }
@@ -602,6 +775,7 @@ impl ApplicationState {
                         (self.selected_profile(), self.connection.link)
                     {
                         self.monitoring = ApplicationMonitoringState::for_profile(&profile);
+                        self.parameters = ApplicationParameterState::for_profile(&profile);
                         translated.push(ApplicationEffect::Monitoring(MonitoringEffect::Start {
                             profile,
                             session_id,
@@ -621,6 +795,7 @@ impl ApplicationState {
                             .unwrap_or_else(|| format!("identification result is {outcome:?}")),
                     ));
                     self.monitoring = ApplicationMonitoringState::default();
+                    self.parameters = ApplicationParameterState::default();
                 }
                 translated
             }
@@ -867,6 +1042,7 @@ pub struct ApplicationView {
     session: SessionView,
     connection: ConnectionWizardView,
     monitoring: MonitoringView,
+    parameters: ParameterBrowserView,
 }
 
 impl Default for ApplicationView {
@@ -877,6 +1053,7 @@ impl Default for ApplicationView {
             session: SessionView::empty(SessionPhaseView::Disconnected),
             connection: ConnectionWizardState::default().view(&ProfileRegistry::default(), None),
             monitoring: MonitoringView::default(),
+            parameters: ParameterBrowserView::default(),
         }
     }
 }
@@ -911,6 +1088,11 @@ impl ApplicationView {
     pub const fn monitoring(&self) -> &MonitoringView {
         &self.monitoring
     }
+
+    #[must_use]
+    pub const fn parameters(&self) -> &ParameterBrowserView {
+        &self.parameters
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -919,6 +1101,7 @@ pub enum ApplicationAction {
     SelectProfile(ProfileId),
     Connection(ConnectionAction),
     Monitoring(MonitoringAction),
+    Parameters(ParameterAction),
     Session(SessionInput),
 }
 
