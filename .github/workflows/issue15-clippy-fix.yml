@@ -31,6 +31,9 @@ jobs:
           keymap=crates/lantern-tui/src/parameter_keymap.rs
           perl -0pi -e 's/value\n\s+\.is_finite\(\)\n\s+\.then\(\|\| value\.to_string\(\)\)\n\s+\.unwrap_or_default\(\)/if value.is_finite() { value.to_string() } else { String::new() }/g' "$keymap"
 
+          render=crates/lantern-tui/src/parameter_render.rs
+          sed -i '/^        ui\.parameters = ParameterUiState::default();$/d' "$render"
+
           cargo fmt --all
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
           git rm .github/workflows/issue15-clippy-fix.yml
