@@ -257,6 +257,10 @@ impl FaultTracker {
             .cloned()
     }
 
+    pub fn set_error(&mut self, error: String) {
+        self.error = Some(error);
+    }
+
     pub fn export_finished(&mut self, result: Result<PathBuf, String>) {
         match result {
             Ok(path) => {

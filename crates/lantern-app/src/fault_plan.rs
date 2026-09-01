@@ -54,7 +54,9 @@ impl PollPlanner {
         parameters: &[ParameterId],
     ) -> Result<FaultFreezeFramePlan, FaultFreezeFramePlanError> {
         if parameters.len() > MAX_FREEZE_FRAME_PARAMETERS {
-            return Err(FaultFreezeFramePlanError::TooManyParameters(parameters.len()));
+            return Err(FaultFreezeFramePlanError::TooManyParameters(
+                parameters.len(),
+            ));
         }
         let mut unique = BTreeSet::new();
         let mut candidates = Vec::new();
@@ -188,9 +190,7 @@ fn can_append(group: &[Candidate], next: &Candidate) -> bool {
         .min()
         .unwrap_or(0);
     let group_blocks_bridge = group.iter().any(|candidate| candidate.do_not_bridge);
-    !group_blocks_bridge
-        && !next.do_not_bridge
-        && gap <= group_gap.min(next.maximum_bridge_gap)
+    !group_blocks_bridge && !next.do_not_bridge && gap <= group_gap.min(next.maximum_bridge_gap)
 }
 
 #[derive(Debug, Error, Clone, Eq, PartialEq)]
@@ -253,8 +253,8 @@ maximum_bridge_gap = 2
 
     #[test]
     fn freeze_frame_is_bounded_interactive_and_profile_grouped() {
-        let profile = parse_and_validate_profile(PROFILE.as_bytes(), ProfileFormat::Toml)
-            .expect("profile");
+        let profile =
+            parse_and_validate_profile(PROFILE.as_bytes(), ProfileFormat::Toml).expect("profile");
         let ids = [
             ParameterId::parse("a").expect("a"),
             ParameterId::parse("b").expect("b"),

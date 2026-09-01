@@ -141,9 +141,13 @@ fn engineering(value: &EngineeringValue) -> Value {
     match value {
         EngineeringValue::Fixed(value) => json!({ "kind": "fixed", "value": value.to_string() }),
         EngineeringValue::Float32Bits(bits) => json!({ "kind": "float32_bits", "bits": bits }),
-        EngineeringValue::Float64Bits(bits) => json!({ "kind": "float64_bits", "bits": bits.to_string() }),
+        EngineeringValue::Float64Bits(bits) => {
+            json!({ "kind": "float64_bits", "bits": bits.to_string() })
+        }
         EngineeringValue::EnumRaw(raw) => json!({ "kind": "enum_raw", "raw": raw }),
-        EngineeringValue::BitfieldRaw(raw) => json!({ "kind": "bitfield_raw", "raw": raw.to_string() }),
+        EngineeringValue::BitfieldRaw(raw) => {
+            json!({ "kind": "bitfield_raw", "raw": raw.to_string() })
+        }
     }
 }
 
