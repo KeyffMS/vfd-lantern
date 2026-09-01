@@ -25,7 +25,24 @@ jobs:
           ui=crates/lantern-tui/src/ui_state.rs
           key=crates/lantern-tui/src/keymap.rs
           screens=crates/lantern-tui/src/screens.rs
+          faults=crates/lantern-app/src/faults.rs
+          app=crates/lantern-app/src/application.rs
+          mon=crates/vfd-lantern/src/monitoring_runtime.rs
+          conn=crates/vfd-lantern/src/connection_runtime.rs
+          render=crates/lantern-tui/src/fault_render.rs
 
+          # Keep application enums compact without hiding Clippy findings.
+          perl -0pi -e 's/bus: BusStatisticsSnapshot,/bus: Box<BusStatisticsSnapshot>,/' "$faults"
+          perl -0pi -e 's/event: FaultEventView,/event: Box<FaultEventView>,/' "$faults"
+          perl -0pi -e 's/identity, bus\)/identity, *bus)/' "$app"
+          perl -0pi -e 's/event,\n                \}\)\]/event: Box::new(event),\n                })]/' "$app"
+          perl -0pi -e 's/bus,\n                          \}\)\)/bus: Box::new(bus),\n                          }))/' "$mon"
+          perl -0pi -e 's/&event,\n                          \)/event.as_ref(),\n                          )/' "$conn"
+          perl -0pi -e 's/use std::\{sync::Arc, time::Duration\};/use std::time::Duration;/' "$faults"
+          perl -0pi -e 's/BusStatisticsSnapshot, LatestValues, TelemetryEvent/BusStatisticsSnapshot, TelemetryEvent/' "$faults"
+          perl -0pi -e 's/use crate::\{FaultUiState, UiState, visible_fault_events\};/use crate::{UiState, visible_fault_events};/' "$render"
+
+          # Presentation-only Faults state and keymap.
           perl -0pi -e 's/mod forms;\n/mod fault_keymap;\nmod fault_render;\nmod fault_state;\nmod forms;\n/' "$lib"
           perl -0pi -e 's/pub use forms::\*;\n/pub use fault_state::*;\npub use forms::*;\n/' "$lib"
 
@@ -41,7 +58,26 @@ jobs:
           perl -0pi -e 's/    KeyBinding \{\n        key: "Tab",/    KeyBinding {\n        key: "Faults j\/k",\n        description: "select bounded fault timeline event",\n    },\n    KeyBinding {\n        key: "Faults a",\n        description: "acknowledge selected event locally",\n    },\n    KeyBinding {\n        key: "Faults e",\n        description: "export selected Verified fault report",\n    },\n    KeyBinding {\n        key: "Faults p",\n        description: "open source parameter in Parameters",\n    },\n    KeyBinding {\n        key: "Faults o\/u",\n        description: "filter unacknowledged \/ unknown events",\n    },\n    KeyBinding {\n        key: "Faults reset",\n        description: "not available; diagnostics are read-only",\n    },\n    KeyBinding {\n        key: "Tab",/' "$key"
 
           perl -0pi -e 's/    parameter_render::parameter_lines,/    fault_render::fault_lines,\n    parameter_render::parameter_lines,/' "$screens"
-          perl -0pi -e 's/        Screen::Faults => planned_lines\(\n            "Faults",\n            "#18",\n            "Fault tracking and freeze-frame policy remain owned by #18\."\n        \),/        Screen::Faults => fault_lines(view, ui),/' "$screens"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('crates/lantern-tui/src/screens.rs')
+          s = p.read_text()
+          old = '''        Screen::Faults => planned_lines(
+                      "Faults",
+                      "#18",
+                      "Fault tracking and freeze-frame policy remain owned by #18.",
+                  ),'''
+          if old not in s:
+              old = '''        Screen::Faults => planned_lines(
+                      "Faults",
+                      "#18",
+                      "Fault tracking and freeze-frame policy remain owned by #18.",
+                  ),'''.replace('                  ', '            ')
+          if old not in s:
+              raise SystemExit('Faults placeholder not found')
+          s = s.replace(old, '        Screen::Faults => fault_lines(view, ui),', 1)
+          p.write_text(s)
+          PY
 
           cargo fmt --all
           cargo check --workspace --all-features --locked
