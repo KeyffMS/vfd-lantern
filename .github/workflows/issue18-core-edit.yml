@@ -1,0 +1,245 @@
+name: Stage issue 18 fault core
+
+on:
+  push:
+    branches: [agent/issue-18]
+
+permissions:
+  contents: write
+
+jobs:
+  edit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-18
+          fetch-depth: 0
+      - name: Apply fault core edits
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          perl -0pi -e 's/pub const fn word_order\(&self\) -> WordOrder \{\n        self\.word_order\n    \}\n/pub const fn word_order(&self) -> WordOrder {\n        self.word_order\n    }\n\n    \/\/\/ Returns the exact normalized raw bit-pattern after validated byte\/word ordering.\n    \/\/\/ Fault decoding uses this instead of scaled engineering values.\n    pub fn raw_bits(&self, registers: &[u16]) -> Result<u64, CodecError> {\n        self.validate_width(registers.len())?;\n        Ok(self.words_to_bits(registers))\n    }\n/' crates/lantern-domain/src/codec.rs
+
+          perl -0pi -e 's/pub struct FaultSourceDocumentV1 \{\n    pub kind: FaultSourceKindDocument,\n    pub parameter_id: String,\n\}/pub struct FaultSourceDocumentV1 {\n    pub kind: FaultSourceKindDocument,\n    pub parameter_id: String,\n    #[serde(default)]\n    pub no_fault: u64,\n}/' crates/lantern-profile/src/document.rs
+
+          perl -0pi -e 's/pub struct ValidatedFaultSource \{\n    pub kind: FaultSourceKind,\n    pub parameter_id: ParameterId,\n\}/pub struct ValidatedFaultSource {\n    pub kind: FaultSourceKind,\n    pub parameter_id: ParameterId,\n    pub no_fault: u64,\n}/' crates/lantern-profile/src/validate/mod.rs
+
+          cat > crates/lantern-profile/src/validate/references/faults.rs <<'RS'
+          use super::super::{helpers::*, *};
+          use super::presets::validate_parameter_references;
+
+          pub(super) fn validate_faults(
+              document: &ProfileDocumentV1,
+              parameters: &BTreeMap<ParameterId, ValidatedParameter>,
+          ) -> Result<
+              (
+                  Option<ValidatedFaultSource>,
+                  BTreeMap<u64, ValidatedFaultDefinition>,
+              ),
+              ProfileError,
+          > {
+              if document.faults.len() > MAX_FAULTS {
+                  return Err(ProfileError::validation(
+                      "faults",
+                      format!(
+                          "contains {} entries; maximum is {MAX_FAULTS}",
+                          document.faults.len()
+                      ),
+                  ));
+              }
+
+              let source = document
+                  .fault_source
+                  .as_ref()
+                  .map(|source| {
+                      let parameter_id = ParameterId::parse(source.parameter_id.clone()).map_err(|error| {
+                          ProfileError::validation("fault_source.parameter_id", error)
+                      })?;
+                      let Some(parameter) = parameters.get(&parameter_id) else {
+                          return Err(ProfileError::validation(
+                              "fault_source.parameter_id",
+                              format!("unknown parameter {parameter_id}"),
+                          ));
+                      };
+                      let encoding = parameter.codec().encoding();
+                      let width_bits = fault_width_bits(encoding).ok_or_else(|| {
+                          ProfileError::validation(
+                              "fault_source.kind",
+                              "fault source requires a non-floating integer/enum/bitfield encoding",
+                          )
+                      })?;
+                      let maximum = maximum_raw(width_bits);
+                      if source.no_fault > maximum {
+                          return Err(ProfileError::validation(
+                              "fault_source.no_fault",
+                              format!("no_fault must fit in {width_bits} raw bits"),
+                          ));
+                      }
+                      let kind = match source.kind {
+                          FaultSourceKindDocument::ScalarCode => {
+                              if matches!(
+                                  encoding,
+                                  RegisterEncoding::Bitfield16
+                                      | RegisterEncoding::Bitfield32
+                                      | RegisterEncoding::Bitfield64
+                              ) {
+                                  return Err(ProfileError::validation(
+                                      "fault_source.kind",
+                                      "scalar_code cannot use a bitfield encoding",
+                                  ));
+                              }
+                              FaultSourceKind::ScalarCode
+                          }
+                          FaultSourceKindDocument::BitSet => {
+                              if !matches!(
+                                  encoding,
+                                  RegisterEncoding::Bitfield16
+                                      | RegisterEncoding::Bitfield32
+                                      | RegisterEncoding::Bitfield64
+                              ) {
+                                  return Err(ProfileError::validation(
+                                      "fault_source.kind",
+                                      "bit_set requires bitfield encoding",
+                                  ));
+                              }
+                              if source.no_fault != 0 {
+                                  return Err(ProfileError::validation(
+                                      "fault_source.no_fault",
+                                      "bit_set no_fault must be zero",
+                                  ));
+                              }
+                              FaultSourceKind::BitSet
+                          }
+                      };
+                      Ok(ValidatedFaultSource {
+                          kind,
+                          parameter_id,
+                          no_fault: source.no_fault,
+                      })
+                  })
+                  .transpose()?;
+
+              if !document.faults.is_empty() && source.is_none() {
+                  return Err(ProfileError::validation(
+                      "fault_source",
+                      "fault definitions require a fault source",
+                  ));
+              }
+
+              let mut faults = BTreeMap::new();
+              let mut codes = BTreeSet::new();
+              for (raw_text, fault) in &document.faults {
+                  let raw = raw_text.parse::<u64>().map_err(|error| {
+                      ProfileError::validation(format!("faults.{raw_text}"), error)
+                  })?;
+                  validate_fault_text(raw_text, fault)?;
+                  if !codes.insert(fault.code.clone()) {
+                      return Err(ProfileError::validation(
+                          format!("faults.{raw_text}.code"),
+                          format!("duplicate fault code {}", fault.code),
+                      ));
+                  }
+                  if let Some(source) = source.as_ref() {
+                      let parameter = parameters
+                          .get(&source.parameter_id)
+                          .expect("validated fault source parameter exists");
+                      let width_bits = fault_width_bits(parameter.codec().encoding())
+                          .expect("validated fault source encoding");
+                      if raw > maximum_raw(width_bits) {
+                          return Err(ProfileError::validation(
+                              format!("faults.{raw_text}"),
+                              format!("fault raw value must fit in {width_bits} bits"),
+                          ));
+                      }
+                      if raw == source.no_fault {
+                          return Err(ProfileError::validation(
+                              format!("faults.{raw_text}"),
+                              "fault definition must not redefine the explicit no_fault value",
+                          ));
+                      }
+                      if source.kind == FaultSourceKind::BitSet && !raw.is_power_of_two() {
+                          return Err(ProfileError::validation(
+                              format!("faults.{raw_text}"),
+                              "bit_set fault keys must be non-zero single-bit masks",
+                          ));
+                      }
+                  }
+                  let freeze_frame = validate_parameter_references(
+                      &fault.freeze_frame,
+                      parameters,
+                      format!("faults.{raw_text}.freeze_frame"),
+                  )?;
+                  if freeze_frame.len() > 64 {
+                      return Err(ProfileError::validation(
+                          format!("faults.{raw_text}.freeze_frame"),
+                          "freeze_frame contains more than 64 parameters",
+                      ));
+                  }
+                  faults.insert(
+                      raw,
+                      ValidatedFaultDefinition {
+                          raw,
+                          code: fault.code.clone(),
+                          name: fault.name.clone(),
+                          description: fault.description.clone(),
+                          severity: match fault.severity {
+                              FaultSeverityDocument::Info => FaultSeverity::Info,
+                              FaultSeverityDocument::Warning => FaultSeverity::Warning,
+                              FaultSeverityDocument::Fault => FaultSeverity::Fault,
+                              FaultSeverityDocument::Critical => FaultSeverity::Critical,
+                          },
+                          freeze_frame: freeze_frame.into_boxed_slice(),
+                      },
+                  );
+              }
+              Ok((source, faults))
+          }
+
+          fn fault_width_bits(encoding: RegisterEncoding) -> Option<u32> {
+              match encoding {
+                  RegisterEncoding::Float32 | RegisterEncoding::Float64 => None,
+                  _ => u32::try_from(encoding.register_width().saturating_mul(16)).ok(),
+              }
+          }
+
+          fn maximum_raw(width_bits: u32) -> u64 {
+              if width_bits >= 64 {
+                  u64::MAX
+              } else {
+                  (1_u64 << width_bits) - 1
+              }
+          }
+
+          fn validate_fault_text(
+              raw_text: &str,
+              fault: &FaultDefinitionDocumentV1,
+          ) -> Result<(), ProfileError> {
+              validate_text(format!("faults.{raw_text}.code"), &fault.code, false)?;
+              validate_text(format!("faults.{raw_text}.name"), &fault.name, false)?;
+              validate_text(
+                  format!("faults.{raw_text}.description"),
+                  &fault.description,
+                  false,
+              )
+          }
+          RS
+          sed -i 's/^          //' crates/lantern-profile/src/validate/references/faults.rs
+
+          sed -i 's/BusStatisticsPlaceholder, //' crates/lantern-app/src/faults.rs
+          perl -0pi -e 's/mod connection;\n/mod connection;\nmod faults;\n/' crates/lantern-app/src/lib.rs
+          perl -0pi -e 's/pub use connection::\*;\n/pub use connection::*;\npub use faults::*;\n/' crates/lantern-app/src/lib.rs
+          perl -0pi -e 's/ByteOrder, DeviceFingerprint, EngineeringValue, IdentificationMatch, LinkSettings,/ByteOrder, DeviceFingerprint, EngineeringValue, FaultEvent, FaultEventId, FaultMeaning, FaultSeverity, FaultTransition, FreezeFrame, FreezeFrameCompleteness, FreezeFrameValue, IdentificationMatch, LinkSettings,/' crates/lantern-app/src/lib.rs
+
+          cargo fmt --all
+          cargo check --workspace --all-features --locked
+          cargo test -p lantern-domain -p lantern-profile -p lantern-app --all-features --locked
+
+          git rm .github/workflows/issue18-core-edit.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(#18): implement fault decoding core'
+          git push origin HEAD:agent/issue-18
