@@ -33,4 +33,6 @@ Completeness is `Pending`, `Complete`, `Partial`, or `Unavailable`, with explici
 
 Exports are allowed only while the event identity matches the active Verified session (`SessionId`, device fingerprint, and profile hash). Files use the `.vfdlantern-fault.json` suffix under the XDG data fault-report directory. The storage adapter writes canonical JCS JSON with a SHA-256 digest using an atomic fsync/rename path and mode `0600`.
 
+Simulator scenarios are profile-hash-bound as well: fixtures carry the exact semantic profile hash, so fault-metadata changes fail closed until their expected hash is deliberately refreshed.
+
 The Faults screen provides timeline selection, local acknowledge, export, filters for unacknowledged/unknown events, and navigation to the source parameter. It deliberately exposes no reset command.
