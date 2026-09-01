@@ -4,6 +4,7 @@
 
 mod artifacts;
 mod atomic;
+mod fault_report;
 mod paths;
 mod profile_source;
 mod session_artifacts;
@@ -13,6 +14,7 @@ use lantern_app::{ArtifactStoragePort, ProfileSource, ProfileSourceError};
 
 pub use artifacts::{StorageError, read_bounded, write_new};
 pub use atomic::{AtomicWriteError, atomic_write, create_new_synced};
+pub use fault_report::{FAULT_REPORT_SUFFIX, FaultReportError, write_fault_report};
 pub use paths::{AppPaths, PathError};
 pub use profile_source::{
     FilesystemProfileSource, MAX_PROFILE_FILE_BYTES, MAX_PROFILE_FILES, MAX_PROFILE_SCAN_BYTES,
