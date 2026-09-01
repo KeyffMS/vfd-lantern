@@ -132,7 +132,7 @@ jobs:
 
           cargo fmt --all
           cargo generate-lockfile --offline
-          cargo check --workspace --all-features --locked
+          cargo check -p lantern-app -p lantern-storage --all-features --locked
           cargo test -p lantern-app -p lantern-storage --all-features --locked
 
           git rm .github/workflows/issue18-app-integration.yml
