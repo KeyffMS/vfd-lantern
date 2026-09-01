@@ -54,7 +54,7 @@ impl ParameterBrowserBenchmarkReport {
 /// The 20,000-entry metadata catalog is allocated once. Each measured frame performs the same
 /// deterministic filtering, virtual-window selection, detail projection and Ratatui rendering used
 /// by the Parameters screen. No telemetry tasks, BusActor requests, or per-parameter tasks are
-/// created by this benchmark.
+/// created by this benchmark. The result is the explicit maximum-profile M2 acceptance gate in CI.
 pub fn benchmark_parameter_browser_20000() -> Result<ParameterBrowserBenchmarkReport, String> {
     let browser = benchmark_browser();
     let backend = TestBackend::new(BENCHMARK_WIDTH, BENCHMARK_HEIGHT);
