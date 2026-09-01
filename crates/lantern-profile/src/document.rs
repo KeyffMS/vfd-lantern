@@ -183,6 +183,8 @@ pub struct ParameterGroupDocumentV1 {
 pub struct FaultSourceDocumentV1 {
     pub kind: FaultSourceKindDocument,
     pub parameter_id: String,
+    #[serde(default)]
+    pub no_fault: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

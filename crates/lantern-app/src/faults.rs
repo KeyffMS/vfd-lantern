@@ -6,9 +6,8 @@ use std::{
 };
 
 use lantern_domain::{
-    BusStatisticsPlaceholder, DeviceFingerprint, FaultEvent, FaultEventId, FaultMeaning,
-    FaultTransition, FreezeFrame, FreezeFrameCompleteness, FreezeFrameValue, ParameterId,
-    SessionId, TelemetryQuality,
+    DeviceFingerprint, FaultEvent, FaultEventId, FaultMeaning, FaultTransition, FreezeFrame,
+    FreezeFrameCompleteness, FreezeFrameValue, ParameterId, SessionId, TelemetryQuality,
 };
 use lantern_profile::{FaultSourceKind, ValidatedDeviceProfile};
 use thiserror::Error;
@@ -155,7 +154,9 @@ impl FaultTracker {
         }
 
         let transition = match source.kind {
-            FaultSourceKind::ScalarCode => scalar_transition(profile, source.no_fault, previous, raw),
+            FaultSourceKind::ScalarCode => {
+                scalar_transition(profile, source.no_fault, previous, raw)
+            }
             FaultSourceKind::BitSet => bitset_transition(profile, previous, raw),
         };
         let Some(transition) = transition else {
@@ -166,7 +167,8 @@ impl FaultTracker {
 
         let event_id = FaultEventId::new(self.next_event_id);
         self.next_event_id = self.next_event_id.saturating_add(1);
-        let freeze_frame_parameters = freeze_frame_parameters(profile, source.parameter_id.clone(), &transition);
+        let freeze_frame_parameters =
+            freeze_frame_parameters(profile, source.parameter_id.clone(), &transition);
         let pre_fault = pre_fault_values(latest, &freeze_frame_parameters);
         let event_view = FaultEventView {
             event: FaultEvent {
@@ -545,28 +547,72 @@ freeze_frame = ["fault.code"]
     fn scalar_transitions_are_deterministic_and_duplicates_touch_last_observed() {
         let profile = profile();
         let mut tracker = FaultTracker::default();
-        assert!(tracker
-            .observe(&profile, &telemetry(0, TelemetryQuality::Good, 1), None, identity(), BusStatisticsSnapshot::default())
-            .expect("baseline")
-            .is_none());
+        assert!(
+            tracker
+                .observe(
+                    &profile,
+                    &telemetry(0, TelemetryQuality::Good, 1),
+                    None,
+                    identity(),
+                    BusStatisticsSnapshot::default()
+                )
+                .expect("baseline")
+                .is_none()
+        );
         let raised = tracker
-            .observe(&profile, &telemetry(1, TelemetryQuality::Good, 2), None, identity(), BusStatisticsSnapshot::default())
+            .observe(
+                &profile,
+                &telemetry(1, TelemetryQuality::Good, 2),
+                None,
+                identity(),
+                BusStatisticsSnapshot::default(),
+            )
             .expect("raise")
             .expect("event");
         assert_eq!(tracker.view().events.len(), 1);
-        assert!(tracker
-            .observe(&profile, &telemetry(1, TelemetryQuality::Good, 3), None, identity(), BusStatisticsSnapshot::default())
-            .expect("duplicate")
-            .is_none());
-        assert_eq!(tracker.view().events[0].event.last_observed_at.as_unix_nanos(), 3);
-        assert!(tracker
-            .observe(&profile, &telemetry(2, TelemetryQuality::Good, 4), None, identity(), BusStatisticsSnapshot::default())
-            .expect("change")
-            .is_some());
-        assert!(tracker
-            .observe(&profile, &telemetry(0, TelemetryQuality::Good, 5), None, identity(), BusStatisticsSnapshot::default())
-            .expect("clear")
-            .is_some());
+        assert!(
+            tracker
+                .observe(
+                    &profile,
+                    &telemetry(1, TelemetryQuality::Good, 3),
+                    None,
+                    identity(),
+                    BusStatisticsSnapshot::default()
+                )
+                .expect("duplicate")
+                .is_none()
+        );
+        assert_eq!(
+            tracker.view().events[0]
+                .event
+                .last_observed_at
+                .as_unix_nanos(),
+            3
+        );
+        assert!(
+            tracker
+                .observe(
+                    &profile,
+                    &telemetry(2, TelemetryQuality::Good, 4),
+                    None,
+                    identity(),
+                    BusStatisticsSnapshot::default()
+                )
+                .expect("change")
+                .is_some()
+        );
+        assert!(
+            tracker
+                .observe(
+                    &profile,
+                    &telemetry(0, TelemetryQuality::Good, 5),
+                    None,
+                    identity(),
+                    BusStatisticsSnapshot::default()
+                )
+                .expect("clear")
+                .is_some()
+        );
         assert_eq!(raised.session_id, SessionId::new(7));
         assert_eq!(tracker.view().events.len(), 3);
     }
@@ -575,16 +621,26 @@ freeze_frame = ["fault.code"]
     fn bad_quality_never_creates_or_clears_a_fault() {
         let profile = profile();
         let mut tracker = FaultTracker::default();
-        assert!(tracker
-            .observe(&profile, &telemetry(1, TelemetryQuality::Timeout, 1), None, identity(), BusStatisticsSnapshot::default())
-            .expect("bad quality")
-            .is_none());
+        assert!(
+            tracker
+                .observe(
+                    &profile,
+                    &telemetry(1, TelemetryQuality::Timeout, 1),
+                    None,
+                    identity(),
+                    BusStatisticsSnapshot::default()
+                )
+                .expect("bad quality")
+                .is_none()
+        );
         assert!(tracker.view().events.is_empty());
     }
 
     #[test]
     fn periodic_fault_source_is_telemetry_critical() {
-        let subscription = fault_subscription(&profile()).expect("subscription").expect("source");
+        let subscription = fault_subscription(&profile())
+            .expect("subscription")
+            .expect("source");
         assert_eq!(subscription.reason(), crate::SubscriptionReason::Fault);
         assert_eq!(subscription.frequency(), crate::FrequencyClass::Fast);
         assert!(!subscription.history_required());

@@ -97,6 +97,13 @@ impl RegisterCodec {
         self.word_order
     }
 
+    /// Returns the exact normalized raw bit-pattern after validated byte/word ordering.
+    /// Fault decoding uses this instead of scaled engineering values.
+    pub fn raw_bits(&self, registers: &[u16]) -> Result<u64, CodecError> {
+        self.validate_width(registers.len())?;
+        Ok(self.words_to_bits(registers))
+    }
+
     /// Decodes registers into one authoritative engineering value.
     pub fn decode(&self, registers: &[u16]) -> Result<EngineeringValue, CodecError> {
         self.validate_width(registers.len())?;

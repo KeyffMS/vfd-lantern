@@ -6,6 +6,7 @@ mod application;
 mod bus;
 mod clock;
 mod connection;
+mod faults;
 mod identification;
 mod monitoring;
 mod monitoring_projection;
@@ -23,12 +24,14 @@ pub use application::*;
 pub use bus::*;
 pub use clock::*;
 pub use connection::*;
+pub use faults::*;
 pub use identification::*;
 pub use lantern_domain::{
-    ByteOrder, DeviceFingerprint, EngineeringValue, IdentificationMatch, LinkSettings,
-    ModbusFunction, ModbusTable, MonotonicInstant, ParameterAccess, ParameterId, QuantityKind,
-    RawRegisters, RegisterEncoding, RequiredDriveState, RestorePolicy, SessionId, SlaveId,
-    TelemetryQuality, UnitId, WordOrder, WriteIntent,
+    ByteOrder, DeviceFingerprint, EngineeringValue, FaultEvent, FaultEventId, FaultMeaning,
+    FaultSeverity, FaultTransition, FreezeFrame, FreezeFrameCompleteness, FreezeFrameValue,
+    IdentificationMatch, LinkSettings, ModbusFunction, ModbusTable, MonotonicInstant,
+    ParameterAccess, ParameterId, QuantityKind, RawRegisters, RegisterEncoding, RequiredDriveState,
+    RestorePolicy, SessionId, SlaveId, TelemetryQuality, UnitId, WordOrder, WriteIntent,
 };
 pub use lantern_profile::{AddressNotation, ValidatedDeviceProfile};
 pub use monitoring::*;
