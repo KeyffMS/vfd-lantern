@@ -31,18 +31,26 @@ jobs:
           conn=crates/vfd-lantern/src/connection_runtime.rs
           render=crates/lantern-tui/src/fault_render.rs
 
-          # Keep application enums compact without hiding Clippy findings.
-          perl -0pi -e 's/(FaultAction \{\n    ObserveTelemetry \{\n        event: TelemetryEvent,\n        )bus: BusStatisticsSnapshot,/${1}bus: Box<BusStatisticsSnapshot>,/' "$faults"
-          perl -0pi -e 's/event: FaultEventView,/event: Box<FaultEventView>,/' "$faults"
-          perl -0pi -e 's/identity, bus\)/identity, *bus)/' "$app"
-          perl -0pi -e 's/FaultEffect::Export \{\n                    suggested_name,\n                    event,\n                \}/FaultEffect::Export {\n                    suggested_name,\n                    event: Box::new(event),\n                }/' "$app"
-          perl -0pi -e 's/FaultAction::ObserveTelemetry \{\n                              event,\n                              bus,\n                          \}/FaultAction::ObserveTelemetry {\n                              event,\n                              bus: Box::new(bus),\n                          }/' "$mon"
-          perl -0pi -e 's/\&event,\n                          \)/event.as_ref(),\n                          )/' "$conn"
+          # Compact only the genuinely large payloads. Patterns are syntax-based,
+          # not indentation-based, and every critical rewrite is asserted below.
+          perl -0pi -e 's/(ObserveTelemetry\s*\{\s*event:\s*TelemetryEvent,\s*)bus:\s*BusStatisticsSnapshot,/${1}bus: Box<BusStatisticsSnapshot>,/s' "$faults"
+          perl -0pi -e 's/(Export\s*\{\s*suggested_name:\s*String,\s*)event:\s*FaultEventView,/${1}event: Box<FaultEventView>,/s' "$faults"
+          perl -0pi -e 's/(self\.faults\.observe\(&profile,\s*&event,\s*latest,\s*identity,\s*)bus(\s*\))/${1}*bus${2}/s' "$app"
+          perl -0pi -e 's/(FaultEffect::Export\s*\{\s*suggested_name,\s*)event,(\s*\})/${1}event: Box::new(event),${2}/s' "$app"
+          perl -0pi -e 's/(FaultAction::ObserveTelemetry\s*\{\s*event,\s*)bus,(\s*\})/${1}bus: Box::new(bus),${2}/s' "$mon"
+          perl -0pi -e 's/(write_fault_report\(\s*&self\.fault_report_directory,\s*&suggested_name,\s*)&event(\s*,?\s*\))/${1}event.as_ref()${2}/s' "$conn"
           perl -0pi -e 's/use std::\{sync::Arc, time::Duration\};/use std::time::Duration;/' "$faults"
           perl -0pi -e 's/BusStatisticsSnapshot, LatestValues, TelemetryEvent/BusStatisticsSnapshot, TelemetryEvent/' "$faults"
           perl -0pi -e 's/use crate::\{FaultUiState, UiState, visible_fault_events\};/use crate::{UiState, visible_fault_events};/' "$render"
 
-          # Presentation-only Faults state and keymap.
+          grep -F 'bus: Box<BusStatisticsSnapshot>,' "$faults"
+          grep -F 'event: Box<FaultEventView>,' "$faults"
+          grep -F 'identity, *bus)' "$app"
+          grep -F 'event: Box::new(event),' "$app"
+          grep -F 'bus: Box::new(bus),' "$mon"
+          grep -F 'event.as_ref()' "$conn"
+
+          # Wire the presentation-only Faults screen.
           perl -0pi -e 's/mod forms;\n/mod fault_keymap;\nmod fault_render;\nmod fault_state;\nmod forms;\n/' "$lib"
           perl -0pi -e 's/pub use forms::\*;\n/pub use fault_state::*;\npub use forms::*;\n/' "$lib"
 
@@ -58,7 +66,11 @@ jobs:
           perl -0pi -e 's/    KeyBinding \{\n        key: "Tab",/    KeyBinding {\n        key: "Faults j\/k",\n        description: "select bounded fault timeline event",\n    },\n    KeyBinding {\n        key: "Faults a",\n        description: "acknowledge selected event locally",\n    },\n    KeyBinding {\n        key: "Faults e",\n        description: "export selected Verified fault report",\n    },\n    KeyBinding {\n        key: "Faults p",\n        description: "open source parameter in Parameters",\n    },\n    KeyBinding {\n        key: "Faults o\/u",\n        description: "filter unacknowledged \/ unknown events",\n    },\n    KeyBinding {\n        key: "Faults reset",\n        description: "not available; diagnostics are read-only",\n    },\n    KeyBinding {\n        key: "Tab",/' "$key"
 
           perl -0pi -e 's/    parameter_render::parameter_lines,/    fault_render::fault_lines,\n    parameter_render::parameter_lines,/' "$screens"
-          perl -0pi -e 's/        Screen::Faults => planned_lines\(\n            "Faults",\n            "#18",\n            "Fault tracking and freeze-frame policy remain owned by #18\.",\n        \),/        Screen::Faults => fault_lines(view, ui),/' "$screens"
+          perl -0pi -e 's/        Screen::Faults => planned_lines\(\s*"Faults",\s*"#18",\s*"Fault tracking and freeze-frame policy remain owned by #18\.",?\s*\),/        Screen::Faults => fault_lines(view, ui),/s' "$screens"
+
+          grep -F 'mod fault_keymap;' "$lib"
+          grep -F 'pub faults: FaultUiState,' "$ui"
+          grep -F 'map_fault_key(ui, view, key)' "$key"
           grep -F 'Screen::Faults => fault_lines(view, ui),' "$screens"
 
           cargo fmt --all
