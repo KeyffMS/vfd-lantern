@@ -131,6 +131,7 @@ jobs:
           perl -0pi -e 's/    Monitoring\(MonitoringEffect\),\n    Session\(SessionEffect\),/    Monitoring(MonitoringEffect),\n    Faults(FaultEffect),\n    Session(SessionEffect),/' "$app"
 
           cargo fmt --all
+          cargo generate-lockfile --offline
           cargo check --workspace --all-features --locked
           cargo test -p lantern-app -p lantern-storage --all-features --locked
 
