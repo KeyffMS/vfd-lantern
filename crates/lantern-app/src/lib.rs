@@ -32,9 +32,9 @@ pub use lantern_domain::{
     ByteOrder, DeviceFingerprint, EngineeringValue, FaultEvent, FaultEventId, FaultMeaning,
     FaultSeverity, FaultTransition, FreezeFrame, FreezeFrameCompleteness, FreezeFrameValue,
     IdentificationMatch, LinkSettings, ModbusFunction, ModbusTable, MonotonicInstant,
-    ParameterAccess, ParameterId, QuantityKind, RawRegisters, RegisterEncoding, RequiredDriveState,
-    RestorePolicy, SessionId, SlaveId, TelemetryQuality, UnitId, UtcTimestamp, WordOrder,
-    WriteIntent,
+    ParameterAccess, ParameterId, QuantityKind, RawRegisters, RegisterEncoding, RequestId,
+    RequiredDriveState, RestorePolicy, SessionId, SlaveId, TelemetryQuality, UnitId, UtcTimestamp,
+    WordOrder, WriteIntent,
 };
 pub use lantern_profile::{AddressNotation, ValidatedDeviceProfile};
 pub use monitoring::*;
