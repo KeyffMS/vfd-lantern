@@ -51,8 +51,10 @@ mod tests {
 
     #[test]
     fn no_fault_reset_key_is_defined() {
-        let mut ui = UiState::default();
-        ui.screen = Screen::Faults;
+        let ui = UiState {
+            screen: Screen::Faults,
+            ..UiState::default()
+        };
         let view = ApplicationView::default();
         for code in [KeyCode::Char('r'), KeyCode::Char('R'), KeyCode::Delete] {
             assert!(map_fault_key(&ui, &view, KeyEvent::new(code, KeyModifiers::NONE)).is_none());
