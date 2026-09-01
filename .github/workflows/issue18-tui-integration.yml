@@ -35,9 +35,9 @@ jobs:
           perl -0pi -e 's/bus: BusStatisticsSnapshot,/bus: Box<BusStatisticsSnapshot>,/' "$faults"
           perl -0pi -e 's/event: FaultEventView,/event: Box<FaultEventView>,/' "$faults"
           perl -0pi -e 's/identity, bus\)/identity, *bus)/' "$app"
-          perl -0pi -e 's/event,\n                \}\)\]/event: Box::new(event),\n                })]/' "$app"
-          perl -0pi -e 's/bus,\n                          \}\)\)/bus: Box::new(bus),\n                          }))/' "$mon"
-          perl -0pi -e 's/&event,\n                          \)/event.as_ref(),\n                          )/' "$conn"
+          perl -0pi -e 's/FaultEffect::Export \{\n                    suggested_name,\n                    event,\n                \}/FaultEffect::Export {\n                    suggested_name,\n                    event: Box::new(event),\n                }/' "$app"
+          perl -0pi -e 's/FaultAction::ObserveTelemetry \{\n                              event,\n                              bus,\n                          \}/FaultAction::ObserveTelemetry {\n                              event,\n                              bus: Box::new(bus),\n                          }/' "$mon"
+          perl -0pi -e 's/\&event,\n                          \)/event.as_ref(),\n                          )/' "$conn"
           perl -0pi -e 's/use std::\{sync::Arc, time::Duration\};/use std::time::Duration;/' "$faults"
           perl -0pi -e 's/BusStatisticsSnapshot, LatestValues, TelemetryEvent/BusStatisticsSnapshot, TelemetryEvent/' "$faults"
           perl -0pi -e 's/use crate::\{FaultUiState, UiState, visible_fault_events\};/use crate::{UiState, visible_fault_events};/' "$render"
@@ -58,26 +58,8 @@ jobs:
           perl -0pi -e 's/    KeyBinding \{\n        key: "Tab",/    KeyBinding {\n        key: "Faults j\/k",\n        description: "select bounded fault timeline event",\n    },\n    KeyBinding {\n        key: "Faults a",\n        description: "acknowledge selected event locally",\n    },\n    KeyBinding {\n        key: "Faults e",\n        description: "export selected Verified fault report",\n    },\n    KeyBinding {\n        key: "Faults p",\n        description: "open source parameter in Parameters",\n    },\n    KeyBinding {\n        key: "Faults o\/u",\n        description: "filter unacknowledged \/ unknown events",\n    },\n    KeyBinding {\n        key: "Faults reset",\n        description: "not available; diagnostics are read-only",\n    },\n    KeyBinding {\n        key: "Tab",/' "$key"
 
           perl -0pi -e 's/    parameter_render::parameter_lines,/    fault_render::fault_lines,\n    parameter_render::parameter_lines,/' "$screens"
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('crates/lantern-tui/src/screens.rs')
-          s = p.read_text()
-          old = '''        Screen::Faults => planned_lines(
-                      "Faults",
-                      "#18",
-                      "Fault tracking and freeze-frame policy remain owned by #18.",
-                  ),'''
-          if old not in s:
-              old = '''        Screen::Faults => planned_lines(
-                      "Faults",
-                      "#18",
-                      "Fault tracking and freeze-frame policy remain owned by #18.",
-                  ),'''.replace('                  ', '            ')
-          if old not in s:
-              raise SystemExit('Faults placeholder not found')
-          s = s.replace(old, '        Screen::Faults => fault_lines(view, ui),', 1)
-          p.write_text(s)
-          PY
+          perl -0pi -e 's/        Screen::Faults => planned_lines\(\n            "Faults",\n            "#18",\n            "Fault tracking and freeze-frame policy remain owned by #18\.",\n        \),/        Screen::Faults => fault_lines(view, ui),/' "$screens"
+          grep -F 'Screen::Faults => fault_lines(view, ui),' "$screens"
 
           cargo fmt --all
           cargo check --workspace --all-features --locked
