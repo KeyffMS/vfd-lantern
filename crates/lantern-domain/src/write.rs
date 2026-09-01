@@ -1,11 +1,25 @@
-use crate::{EngineeringValue, OperationId, ParameterId, PlanId, RawRegisters, SessionId};
+use crate::{
+    DeviceFingerprint, EngineeringValue, MonotonicInstant, OperationId, ParameterId, PlanId,
+    RawRegisters, SessionId,
+};
 
-/// User intent before any safety preflight or raw encoding.
+/// User intent before any safety preflight or authoritative raw encoding.
+///
+/// This value deliberately carries no access class, Modbus write function or read-back policy.
+/// `preview_raw` is presentation evidence only: the future `WriteCoordinator` must reload the
+/// active validated profile and recompute the target before any physical write is possible.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WriteIntent {
     pub session_id: SessionId,
+    pub fingerprint: DeviceFingerprint,
+    pub profile_hash: String,
     pub parameter_id: ParameterId,
-    pub target: EngineeringValue,
+    pub previous_raw: RawRegisters,
+    pub previous_engineering: EngineeringValue,
+    pub previous_observed_at: MonotonicInstant,
+    pub requested_engineering: EngineeringValue,
+    pub preview_raw: Option<RawRegisters>,
+    pub created_at: MonotonicInstant,
 }
 
 /// Immutable plan displayed to the operator before confirmation.

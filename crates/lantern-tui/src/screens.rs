@@ -12,6 +12,7 @@ use crate::{
         cursor_label, format_monitoring_value, scope_plot, scope_range, scope_window_label,
         visible_scope_points,
     },
+    parameter_render::parameter_lines,
     profile_matches_filter,
 };
 
@@ -26,10 +27,11 @@ pub fn render_screen(
         Screen::Connection => connection_lines(view, ui),
         Screen::Dashboard => dashboard_lines(view),
         Screen::Scope => scope_lines(view, ui, area.width),
-        Screen::Parameters => planned_lines(
-            "Parameters",
-            "#15",
-            "Parameter browsing/edit intents belong to #15; no write is reachable from this skeleton.",
+        Screen::Parameters => parameter_lines(
+            view.parameters(),
+            view.active_session().is_some(),
+            view.session().authorization(),
+            ui,
         ),
         Screen::Backup => planned_lines(
             "Backup / Diff / Restore",

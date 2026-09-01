@@ -1,6 +1,9 @@
-use lantern_app::{MonitoringParameterView, ProfileChoiceView};
+use lantern_app::{
+    MonitoringParameterView, ParameterAccess, ParameterEditorKind, ParameterId, ParameterRiskView,
+    ProfileChoiceView, QuantityKind, TelemetryQuality,
+};
 
-use crate::{FormState, ScopeUiState, ScopeYRange};
+use crate::{FormState, ParameterEditorUiState, ParameterUiState, ScopeUiState, ScopeYRange};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Screen {
@@ -65,6 +68,7 @@ pub enum ConnectionEdit {
     ManualPath,
     ProfileSearch,
     ScopeSearch,
+    ParameterSearch,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -101,6 +105,7 @@ pub struct UiState {
     pub profile_filter: String,
     pub scope_filter: String,
     pub scope: ScopeUiState,
+    pub parameters: ParameterUiState,
     pub modal: Option<ModalState>,
     pub viewport: Viewport,
 }
@@ -117,6 +122,7 @@ impl Default for UiState {
             profile_filter: String::new(),
             scope_filter: String::new(),
             scope: ScopeUiState::default(),
+            parameters: ParameterUiState::default(),
             modal: None,
             viewport: Viewport::default(),
         }
@@ -141,6 +147,37 @@ pub enum UiAction {
     BeginScopeSearch,
     ApplyScopeSearch,
     ClearScopeSearch,
+    BeginParameterSearch,
+    ApplyParameterSearch,
+    ClearParameterSearch,
+    SetParameterGroup(Option<String>),
+    SetParameterAccess(Option<ParameterAccess>),
+    SetParameterQuality(Option<TelemetryQuality>),
+    ToggleParameterUnreadable,
+    SetParameterRisk(Option<ParameterRiskView>),
+    SetParameterQuantity(Option<QuantityKind>),
+    SetSelectedIndex(usize),
+    BeginParameterTextEditor {
+        parameter_id: ParameterId,
+        kind: ParameterEditorKind,
+        initial: String,
+    },
+    BeginParameterEnumEditor {
+        parameter_id: ParameterId,
+        option_index: usize,
+    },
+    BeginParameterBitfieldEditor {
+        parameter_id: ParameterId,
+        flag_index: usize,
+        value: u64,
+    },
+    ParameterSetEditorIndex(usize),
+    ParameterSetBitfieldValue(u64),
+    ParameterCloseEditor,
+    ShowMessage {
+        title: String,
+        body: String,
+    },
     InputChar(char),
     Backspace,
     CancelEdit,
@@ -176,6 +213,8 @@ impl UiState {
                 self.scroll_offset = 0;
                 self.selected_index = 0;
                 self.connection_edit = None;
+                self.parameters.editor = None;
+                self.form.clear();
             }
             UiAction::NextScreen => {
                 let next = (self.screen.index() + 1) % Screen::ALL.len();
@@ -183,6 +222,8 @@ impl UiState {
                 self.scroll_offset = 0;
                 self.selected_index = 0;
                 self.connection_edit = None;
+                self.parameters.editor = None;
+                self.form.clear();
             }
             UiAction::PreviousScreen => {
                 let index = self.screen.index();
@@ -195,6 +236,8 @@ impl UiState {
                 self.scroll_offset = 0;
                 self.selected_index = 0;
                 self.connection_edit = None;
+                self.parameters.editor = None;
+                self.form.clear();
             }
             UiAction::ScrollUp => {
                 self.scroll_offset = self.scroll_offset.saturating_sub(1);
@@ -256,6 +299,111 @@ impl UiState {
                 self.connection_edit = None;
                 self.selected_index = 0;
                 self.focus = Focus::Navigation;
+            }
+            UiAction::BeginParameterSearch => {
+                self.form.replace(self.parameters.filters.search.clone());
+                self.connection_edit = Some(ConnectionEdit::ParameterSearch);
+                self.focus = Focus::Content;
+            }
+            UiAction::ApplyParameterSearch => {
+                self.parameters.filters.search = self.form.value().trim().to_owned();
+                self.connection_edit = None;
+                self.form.clear();
+                self.selected_index = 0;
+                self.focus = Focus::Navigation;
+            }
+            UiAction::ClearParameterSearch => {
+                self.parameters.filters.search.clear();
+                self.form.clear();
+                self.connection_edit = None;
+                self.selected_index = 0;
+                self.focus = Focus::Navigation;
+            }
+            UiAction::SetParameterGroup(value) => {
+                self.parameters.filters.group = value;
+                self.selected_index = 0;
+            }
+            UiAction::SetParameterAccess(value) => {
+                self.parameters.filters.access = value;
+                self.selected_index = 0;
+            }
+            UiAction::SetParameterQuality(value) => {
+                self.parameters.filters.quality = value;
+                self.selected_index = 0;
+            }
+            UiAction::ToggleParameterUnreadable => {
+                self.parameters.filters.unreadable_only = !self.parameters.filters.unreadable_only;
+                self.selected_index = 0;
+            }
+            UiAction::SetParameterRisk(value) => {
+                self.parameters.filters.risk = value;
+                self.selected_index = 0;
+            }
+            UiAction::SetParameterQuantity(value) => {
+                self.parameters.filters.quantity = value;
+                self.selected_index = 0;
+            }
+            UiAction::SetSelectedIndex(index) => {
+                self.selected_index = index;
+            }
+            UiAction::BeginParameterTextEditor {
+                parameter_id,
+                kind,
+                initial,
+            } => {
+                self.form.replace(initial);
+                self.parameters.editor = Some(ParameterEditorUiState::Text { parameter_id, kind });
+                self.connection_edit = None;
+                self.focus = Focus::Content;
+            }
+            UiAction::BeginParameterEnumEditor {
+                parameter_id,
+                option_index,
+            } => {
+                self.parameters.editor = Some(ParameterEditorUiState::Enum {
+                    parameter_id,
+                    option_index,
+                });
+                self.connection_edit = None;
+                self.focus = Focus::Content;
+            }
+            UiAction::BeginParameterBitfieldEditor {
+                parameter_id,
+                flag_index,
+                value,
+            } => {
+                self.parameters.editor = Some(ParameterEditorUiState::Bitfield {
+                    parameter_id,
+                    flag_index,
+                    value,
+                });
+                self.connection_edit = None;
+                self.focus = Focus::Content;
+            }
+            UiAction::ParameterSetEditorIndex(index) => {
+                if let Some(editor) = self.parameters.editor.as_mut() {
+                    match editor {
+                        ParameterEditorUiState::Enum { option_index, .. } => *option_index = index,
+                        ParameterEditorUiState::Bitfield { flag_index, .. } => *flag_index = index,
+                        ParameterEditorUiState::Text { .. } => {}
+                    }
+                }
+            }
+            UiAction::ParameterSetBitfieldValue(value) => {
+                if let Some(ParameterEditorUiState::Bitfield { value: current, .. }) =
+                    self.parameters.editor.as_mut()
+                {
+                    *current = value;
+                }
+            }
+            UiAction::ParameterCloseEditor => {
+                self.parameters.editor = None;
+                self.form.clear();
+                self.focus = Focus::Navigation;
+            }
+            UiAction::ShowMessage { title, body } => {
+                self.modal = Some(ModalState::Message { title, body });
+                self.focus = Focus::Modal;
             }
             UiAction::InputChar(character) => self.form.insert(character),
             UiAction::Backspace => self.form.backspace(),

@@ -112,6 +112,10 @@ pub struct ParameterDocumentV1 {
     pub step: Option<String>,
     #[serde(default)]
     pub forbidden_raw: Vec<Vec<u16>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub enum_values: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub bit_flags: BTreeMap<String, String>,
     pub quantity: String,
     pub unit: String,
     #[serde(default)]

@@ -12,6 +12,14 @@ pub(super) fn validate_parameter(
     validate_text(format!("{base}.description"), &document.description, true)?;
 
     let table = table(document.table);
+    let source_address_notation = match document.address.notation {
+        AddressNotation::PduZeroBased => "pdu_zero_based",
+        AddressNotation::ProtocolOneBased => "protocol_one_based",
+        AddressNotation::Modicon5Digit => "modicon_5_digit",
+        AddressNotation::Modicon6Digit => "modicon_6_digit",
+    }
+    .to_owned();
+    let source_address_value = document.address.value;
     let encoding = encoding(document.encoding);
     let width = u16::try_from(encoding.register_width()).expect("encoding width fits u16");
     let address = normalize_address(table, &document.address, format!("{base}.address"))?;
@@ -50,6 +58,7 @@ pub(super) fn validate_parameter(
     )?;
     document.forbidden_raw.sort();
     document.forbidden_raw.dedup();
+    let (enum_values, bit_flags) = validate_editor_metadata(document, encoding, &base)?;
 
     let quantity = quantity(&document.quantity, format!("{base}.quantity"))?;
     let unit = UnitId::new(quantity.clone(), document.unit.clone())
@@ -97,8 +106,12 @@ pub(super) fn validate_parameter(
         code: document.code.clone(),
         name: document.name.clone(),
         description: document.description.clone(),
+        source_address_notation,
+        source_address_value,
         block,
         codec,
+        enum_values,
+        bit_flags,
         quantity,
         unit,
         access,
@@ -114,6 +127,71 @@ pub(super) fn validate_parameter(
         do_not_bridge: document.do_not_bridge,
         maximum_bridge_gap: document.maximum_bridge_gap,
     })
+}
+
+type EditorMetadata = (BTreeMap<i64, String>, BTreeMap<u8, String>);
+
+fn validate_editor_metadata(
+    document: &ParameterDocumentV1,
+    encoding: RegisterEncoding,
+    base: &str,
+) -> Result<EditorMetadata, ProfileError> {
+    let enum_maximum = match encoding {
+        RegisterEncoding::Enum16 => Some(i64::from(u16::MAX)),
+        RegisterEncoding::Enum32 => Some(i64::from(u32::MAX)),
+        _ => None,
+    };
+    if enum_maximum.is_none() && !document.enum_values.is_empty() {
+        return Err(ProfileError::validation(
+            format!("{base}.enum_values"),
+            "enum_values are valid only for enum16/enum32 parameters",
+        ));
+    }
+    let mut enum_values = BTreeMap::new();
+    if let Some(maximum) = enum_maximum {
+        for (raw_text, label) in &document.enum_values {
+            validate_text(format!("{base}.enum_values.{raw_text}"), label, false)?;
+            let raw = raw_text.parse::<i64>().map_err(|error| {
+                ProfileError::validation(format!("{base}.enum_values.{raw_text}"), error)
+            })?;
+            if raw < 0 || raw > maximum {
+                return Err(ProfileError::validation(
+                    format!("{base}.enum_values.{raw_text}"),
+                    format!("enum raw value must be in 0..={maximum}"),
+                ));
+            }
+            enum_values.insert(raw, label.clone());
+        }
+    }
+    let bit_width = match encoding {
+        RegisterEncoding::Bitfield16 => Some(16_u8),
+        RegisterEncoding::Bitfield32 => Some(32_u8),
+        RegisterEncoding::Bitfield64 => Some(64_u8),
+        _ => None,
+    };
+    if bit_width.is_none() && !document.bit_flags.is_empty() {
+        return Err(ProfileError::validation(
+            format!("{base}.bit_flags"),
+            "bit_flags are valid only for bitfield encodings",
+        ));
+    }
+    let mut bit_flags = BTreeMap::new();
+    if let Some(width) = bit_width {
+        for (bit_text, label) in &document.bit_flags {
+            validate_text(format!("{base}.bit_flags.{bit_text}"), label, false)?;
+            let bit = bit_text.parse::<u8>().map_err(|error| {
+                ProfileError::validation(format!("{base}.bit_flags.{bit_text}"), error)
+            })?;
+            if bit >= width {
+                return Err(ProfileError::validation(
+                    format!("{base}.bit_flags.{bit_text}"),
+                    format!("bit index must be below {width}"),
+                ));
+            }
+            bit_flags.insert(bit, label.clone());
+        }
+    }
+    Ok((enum_values, bit_flags))
 }
 
 fn validate_read_back(

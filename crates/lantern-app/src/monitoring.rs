@@ -294,6 +294,12 @@ pub enum MonitoringEffect {
         dashboard_parameters: Vec<ParameterId>,
         scope: ScopeSelection,
     },
+    SetParameterBrowser {
+        parameters: Vec<ParameterId>,
+    },
+    RefreshParameter {
+        parameter_id: ParameterId,
+    },
     ClearHistory {
         parameter_ids: Vec<ParameterId>,
     },

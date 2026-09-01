@@ -10,7 +10,8 @@ use lantern_app::{
     PollPlanner, PollPlannerConfig, RawRegisters, ReadBusPort, ReadBusRequest, ReadSubscription,
     ScopeHistoryView, ScopeSelection, SessionId, TelemetryConsumers, TelemetryEvent,
     TelemetryPipeline, TelemetryPipelineConfig, TelemetryPipelineHandle, TokioMonotonicClock,
-    ValidatedDeviceProfile, ValidatedSettings, dashboard_subscriptions, scope_subscriptions,
+    ValidatedDeviceProfile, ValidatedSettings, dashboard_subscriptions,
+    parameter_browser_subscriptions, parameter_refresh_subscription, scope_subscriptions,
 };
 use lantern_transport::BusActorHandle;
 use tokio::{
@@ -20,6 +21,7 @@ use tokio::{
 
 const MONITORING_BUDGET_PPM: u32 = 700_000;
 const MAX_RENDER_HISTORY_POINTS: usize = 512;
+const PARAMETER_BROWSER_DEBOUNCE: Duration = Duration::from_millis(120);
 
 #[derive(Clone)]
 pub struct MonitoringRuntime {
@@ -38,6 +40,8 @@ struct MonitoringState {
     bus: Option<BusActorHandle>,
     verified_session: Option<SessionId>,
     active: Option<ActiveMonitoring>,
+    parameter_browser_generation: u64,
+    refresh_generation: u64,
 }
 
 struct ActiveMonitoring {
@@ -48,6 +52,8 @@ struct ActiveMonitoring {
     plan: Arc<PollPlan>,
     dashboard_parameters: Vec<ParameterId>,
     scope: ScopeSelection,
+    parameter_browser_parameters: Vec<ParameterId>,
+    pending_parameter_browser_parameters: Vec<ParameterId>,
     poll: PollExecutorHandle,
     pipeline: TelemetryPipelineHandle,
     poll_task: JoinHandle<()>,
@@ -102,6 +108,8 @@ impl MonitoringRuntime {
             MonitoringEffect::Start { session_id, .. }
             | MonitoringEffect::Resume { session_id } => Some(*session_id),
             MonitoringEffect::Reconfigure { .. }
+            | MonitoringEffect::SetParameterBrowser { .. }
+            | MonitoringEffect::RefreshParameter { .. }
             | MonitoringEffect::ClearHistory { .. }
             | MonitoringEffect::Stop => self.current_session(),
         };
@@ -118,6 +126,12 @@ impl MonitoringRuntime {
                 dashboard_parameters,
                 scope,
             } => self.reconfigure(dashboard_parameters, scope),
+            MonitoringEffect::SetParameterBrowser { parameters } => {
+                self.set_parameter_browser(parameters)
+            }
+            MonitoringEffect::RefreshParameter { parameter_id } => {
+                self.refresh_parameter(parameter_id)
+            }
             MonitoringEffect::ClearHistory { parameter_ids } => self.clear_history(&parameter_ids),
             MonitoringEffect::Stop => {
                 self.stop();
@@ -181,7 +195,7 @@ impl MonitoringRuntime {
         )
         .map_err(|error| error.to_string())?;
         let planner = PollPlanner::new();
-        let subscriptions = monitoring_subscriptions(&profile, &dashboard_parameters, &scope)?;
+        let subscriptions = monitoring_subscriptions(&profile, &dashboard_parameters, &scope, &[])?;
         let plan = Arc::new(
             planner
                 .build(&profile, subscriptions, planner_config, Instant::now())
@@ -239,6 +253,8 @@ impl MonitoringRuntime {
                 plan,
                 dashboard_parameters,
                 scope,
+                parameter_browser_parameters: Vec::new(),
+                pending_parameter_browser_parameters: Vec::new(),
                 poll,
                 pipeline,
                 poll_task,
@@ -285,13 +301,34 @@ impl MonitoringRuntime {
         dashboard_parameters: Vec<ParameterId>,
         scope: ScopeSelection,
     ) -> Result<(), String> {
+        let parameters = {
+            let state = lock_state(&self.shared.state);
+            state
+                .active
+                .as_ref()
+                .map(|active| active.parameter_browser_parameters.clone())
+                .ok_or_else(|| "monitoring runtime is not active".to_owned())?
+        };
+        self.reconfigure_all(dashboard_parameters, scope, parameters)
+    }
+
+    fn reconfigure_all(
+        &self,
+        dashboard_parameters: Vec<ParameterId>,
+        scope: ScopeSelection,
+        parameter_browser_parameters: Vec<ParameterId>,
+    ) -> Result<(), String> {
         let mut state = lock_state(&self.shared.state);
         let active = state
             .active
             .as_mut()
             .ok_or_else(|| "monitoring runtime is not active".to_owned())?;
-        let subscriptions =
-            monitoring_subscriptions(&active.profile, &dashboard_parameters, &scope)?;
+        let subscriptions = monitoring_subscriptions(
+            &active.profile,
+            &dashboard_parameters,
+            &scope,
+            &parameter_browser_parameters,
+        )?;
         let plan = Arc::new(
             active
                 .planner
@@ -315,7 +352,158 @@ impl MonitoringRuntime {
         active.plan = plan;
         active.dashboard_parameters = dashboard_parameters;
         active.scope = scope;
+        active.parameter_browser_parameters = parameter_browser_parameters;
         Ok(())
+    }
+
+    fn set_parameter_browser(&self, parameters: Vec<ParameterId>) -> Result<(), String> {
+        let (session_id, generation) = {
+            let mut state = lock_state(&self.shared.state);
+            state.parameter_browser_generation =
+                state.parameter_browser_generation.saturating_add(1);
+            let generation = state.parameter_browser_generation;
+            let active = state
+                .active
+                .as_mut()
+                .ok_or_else(|| "monitoring runtime is not active".to_owned())?;
+            for parameter_id in &parameters {
+                if active.profile.parameter(parameter_id).is_none() {
+                    return Err(format!(
+                        "parameter {parameter_id} is not present in the active validated profile"
+                    ));
+                }
+            }
+            active.pending_parameter_browser_parameters = parameters;
+            (active.session_id, generation)
+        };
+        let runtime = self.clone();
+        let action_tx = self.action_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(PARAMETER_BROWSER_DEBOUNCE).await;
+            if let Err(message) = runtime.apply_pending_parameter_browser(session_id, generation) {
+                let _ = action_tx.send(ApplicationAction::Monitoring(
+                    MonitoringAction::RuntimeFailed {
+                        session_id,
+                        message,
+                    },
+                ));
+            }
+        });
+        Ok(())
+    }
+
+    fn apply_pending_parameter_browser(
+        &self,
+        session_id: SessionId,
+        generation: u64,
+    ) -> Result<(), String> {
+        let (dashboard, scope, parameters) = {
+            let state = lock_state(&self.shared.state);
+            if state.parameter_browser_generation != generation {
+                return Ok(());
+            }
+            let active = state
+                .active
+                .as_ref()
+                .filter(|active| active.session_id == session_id)
+                .ok_or_else(|| "parameter browser session is no longer active".to_owned())?;
+            (
+                active.dashboard_parameters.clone(),
+                active.scope.clone(),
+                active.pending_parameter_browser_parameters.clone(),
+            )
+        };
+        self.reconfigure_all(dashboard, scope, parameters)
+    }
+
+    fn refresh_parameter(&self, parameter_id: ParameterId) -> Result<(), String> {
+        let (session_id, generation, delay) = {
+            let mut state = lock_state(&self.shared.state);
+            state.refresh_generation = state.refresh_generation.saturating_add(1);
+            let generation = state.refresh_generation;
+            let active = state
+                .active
+                .as_mut()
+                .ok_or_else(|| "monitoring runtime is not active".to_owned())?;
+            if active.profile.parameter(&parameter_id).is_none() {
+                return Err(format!(
+                    "parameter {parameter_id} is not present in the active validated profile"
+                ));
+            }
+            let mut subscriptions = monitoring_subscriptions(
+                &active.profile,
+                &active.dashboard_parameters,
+                &active.scope,
+                &active.parameter_browser_parameters,
+            )?;
+            subscriptions.push(
+                parameter_refresh_subscription(&active.profile, &parameter_id)
+                    .map_err(|error| error.to_string())?,
+            );
+            let plan = Arc::new(
+                active
+                    .planner
+                    .build(
+                        &active.profile,
+                        subscriptions,
+                        active.planner_config,
+                        Instant::now(),
+                    )
+                    .map_err(|error| error.to_string())?,
+            );
+            validate_monitoring_plan(&plan)?;
+            active
+                .pipeline
+                .update_plan(Arc::clone(&plan))
+                .map_err(|error| error.to_string())?;
+            active
+                .poll
+                .update_plan(Arc::clone(&plan))
+                .map_err(|error| error.to_string())?;
+            active.plan = plan;
+            let delay = Duration::from_millis(
+                self.settings
+                    .polling
+                    .telemetry_critical_ms
+                    .saturating_mul(2)
+                    .max(200),
+            );
+            (active.session_id, generation, delay)
+        };
+        let runtime = self.clone();
+        let action_tx = self.action_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            if let Err(message) = runtime.restore_after_refresh(session_id, generation) {
+                let _ = action_tx.send(ApplicationAction::Monitoring(
+                    MonitoringAction::RuntimeFailed {
+                        session_id,
+                        message,
+                    },
+                ));
+            }
+        });
+        Ok(())
+    }
+
+    fn restore_after_refresh(&self, session_id: SessionId, generation: u64) -> Result<(), String> {
+        let (dashboard, scope, parameters) = {
+            let state = lock_state(&self.shared.state);
+            if state.refresh_generation != generation {
+                return Ok(());
+            }
+            let active = state
+                .active
+                .as_ref()
+                .filter(|active| active.session_id == session_id)
+                .ok_or_else(|| "parameter refresh session is no longer active".to_owned())?;
+            (
+                active.dashboard_parameters.clone(),
+                active.scope.clone(),
+                active.parameter_browser_parameters.clone(),
+            )
+        };
+        self.reconfigure_all(dashboard, scope, parameters)
     }
 
     fn clear_history(&self, parameter_ids: &[ParameterId]) -> Result<(), String> {
@@ -335,6 +523,9 @@ impl MonitoringRuntime {
         let active = {
             let mut state = lock_state(&self.shared.state);
             state.verified_session = None;
+            state.parameter_browser_generation =
+                state.parameter_browser_generation.saturating_add(1);
+            state.refresh_generation = state.refresh_generation.saturating_add(1);
             state.active.take()
         };
         self.shared.changed.notify_waiters();
@@ -515,10 +706,15 @@ fn monitoring_subscriptions(
     profile: &ValidatedDeviceProfile,
     dashboard_parameters: &[ParameterId],
     scope: &ScopeSelection,
+    parameter_browser_parameters: &[ParameterId],
 ) -> Result<Vec<ReadSubscription>, String> {
     let mut subscriptions = dashboard_subscriptions(profile, dashboard_parameters)
         .map_err(|error| error.to_string())?;
     subscriptions.extend(scope_subscriptions(profile, scope).map_err(|error| error.to_string())?);
+    subscriptions.extend(
+        parameter_browser_subscriptions(profile, parameter_browser_parameters)
+            .map_err(|error| error.to_string())?,
+    );
     Ok(subscriptions)
 }
 

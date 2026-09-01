@@ -20,14 +20,14 @@ use anyhow::{Result, bail};
 use clap::Parser;
 use lantern_app::{
     ApplicationAction, ApplicationRuntime, ApplicationState, CliSettingsOverrides, ColorMode,
-    ConnectionAction, PortDiscoveryPort, PortEvent, PortEventReceiver, ProfileRegistry,
-    SessionInput, SessionPhaseView, SettingsLoader, ValidatedSettings,
+    ConnectionAction, ParameterAction, PortDiscoveryPort, PortEvent, PortEventReceiver,
+    ProfileRegistry, SessionInput, SessionPhaseView, SettingsLoader, ValidatedSettings,
 };
 use lantern_storage::{
     AppPaths, FilesystemProfileSource, FilesystemSettingsSource, ProfileLocations,
 };
 use lantern_transport::UdevDiscovery;
-use lantern_tui::{MappedAction, TerminalSession, UiState};
+use lantern_tui::{MappedAction, Screen, TerminalSession, UiState, visible_parameter_ids};
 use tokio::{
     signal::unix::{SignalKind, signal},
     sync::mpsc,
@@ -139,11 +139,15 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
         tokio::select! {
             action = terminal.next_action(&ui, &view) => {
                 match action? {
-                    MappedAction::Ui(action) => ui.apply(action),
+                    MappedAction::Ui(action) => {
+                        ui.apply(action);
+                        sync_parameter_browser(&mut application, &ui)?;
+                    }
                     MappedAction::Application(action) => application.dispatch(*action)?,
                     MappedAction::Combined { ui: ui_action, application: app_action } => {
                         ui.apply(ui_action);
                         application.dispatch(*app_action)?;
+                        sync_parameter_browser(&mut application, &ui)?;
                     }
                 }
                 dirty = true;
@@ -179,6 +183,30 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
     }
 
     terminal.restore()?;
+    Ok(())
+}
+
+fn sync_parameter_browser(
+    application: &mut ApplicationRuntime<TuiEffectRunner>,
+    ui: &UiState,
+) -> Result<()> {
+    let view = application.state().view();
+    if view.active_session().is_none() {
+        return Ok(());
+    }
+    let visible = if ui.screen == Screen::Parameters {
+        visible_parameter_ids(
+            view.parameters(),
+            &ui.parameters,
+            ui.selected_index,
+            ui.viewport.height,
+        )
+    } else {
+        Vec::new()
+    };
+    application.dispatch(ApplicationAction::Parameters(ParameterAction::SetVisible(
+        visible,
+    )))?;
     Ok(())
 }
 
