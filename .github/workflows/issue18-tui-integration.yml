@@ -32,7 +32,7 @@ jobs:
           render=crates/lantern-tui/src/fault_render.rs
 
           # Keep application enums compact without hiding Clippy findings.
-          perl -0pi -e 's/bus: BusStatisticsSnapshot,/bus: Box<BusStatisticsSnapshot>,/' "$faults"
+          perl -0pi -e 's/(FaultAction \{\n    ObserveTelemetry \{\n        event: TelemetryEvent,\n        )bus: BusStatisticsSnapshot,/${1}bus: Box<BusStatisticsSnapshot>,/' "$faults"
           perl -0pi -e 's/event: FaultEventView,/event: Box<FaultEventView>,/' "$faults"
           perl -0pi -e 's/identity, bus\)/identity, *bus)/' "$app"
           perl -0pi -e 's/FaultEffect::Export \{\n                    suggested_name,\n                    event,\n                \}/FaultEffect::Export {\n                    suggested_name,\n                    event: Box::new(event),\n                }/' "$app"
