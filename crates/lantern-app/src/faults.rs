@@ -53,7 +53,7 @@ pub struct FaultDetection {
 pub enum FaultAction {
     ObserveTelemetry {
         event: TelemetryEvent,
-        bus: BusStatisticsSnapshot,
+        bus: Box<BusStatisticsSnapshot>,
     },
     FreezeFrameCompleted {
         event_id: FaultEventId,
@@ -75,7 +75,7 @@ pub enum FaultEffect {
     },
     Export {
         suggested_name: String,
-        event: FaultEventView,
+        event: Box<FaultEventView>,
     },
 }
 
@@ -456,7 +456,7 @@ pub enum FaultTrackerError {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::time::Duration;
 
     use lantern_domain::{
         DeviceFingerprint, EngineeringValue, MonotonicInstant, ParameterId, RawRegisters,
@@ -464,7 +464,7 @@ mod tests {
     };
     use lantern_profile::{ProfileFormat, parse_and_validate_profile};
 
-    use crate::{BusStatisticsSnapshot, LatestValues, TelemetryEvent};
+    use crate::{BusStatisticsSnapshot, TelemetryEvent};
 
     use super::{FaultIdentityContext, FaultTracker, fault_subscription};
 

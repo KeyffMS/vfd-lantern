@@ -3,7 +3,9 @@ use lantern_app::{
     ProfileChoiceView, QuantityKind, TelemetryQuality,
 };
 
-use crate::{FormState, ParameterEditorUiState, ParameterUiState, ScopeUiState, ScopeYRange};
+use crate::{
+    FaultUiState, FormState, ParameterEditorUiState, ParameterUiState, ScopeUiState, ScopeYRange,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Screen {
@@ -106,6 +108,7 @@ pub struct UiState {
     pub scope_filter: String,
     pub scope: ScopeUiState,
     pub parameters: ParameterUiState,
+    pub faults: FaultUiState,
     pub modal: Option<ModalState>,
     pub viewport: Viewport,
 }
@@ -123,6 +126,7 @@ impl Default for UiState {
             scope_filter: String::new(),
             scope: ScopeUiState::default(),
             parameters: ParameterUiState::default(),
+            faults: FaultUiState::default(),
             modal: None,
             viewport: Viewport::default(),
         }
@@ -157,6 +161,9 @@ pub enum UiAction {
     SetParameterRisk(Option<ParameterRiskView>),
     SetParameterQuantity(Option<QuantityKind>),
     SetSelectedIndex(usize),
+    ToggleFaultUnacknowledged,
+    ToggleFaultUnknown,
+    OpenParameterIndex(usize),
     BeginParameterTextEditor {
         parameter_id: ParameterId,
         kind: ParameterEditorKind,
@@ -345,6 +352,22 @@ impl UiState {
             }
             UiAction::SetSelectedIndex(index) => {
                 self.selected_index = index;
+            }
+            UiAction::ToggleFaultUnacknowledged => {
+                self.faults.unacknowledged_only = !self.faults.unacknowledged_only;
+                self.selected_index = 0;
+            }
+            UiAction::ToggleFaultUnknown => {
+                self.faults.unknown_only = !self.faults.unknown_only;
+                self.selected_index = 0;
+            }
+            UiAction::OpenParameterIndex(index) => {
+                self.screen = Screen::Parameters;
+                self.selected_index = index;
+                self.scroll_offset = 0;
+                self.connection_edit = None;
+                self.parameters.editor = None;
+                self.form.clear();
             }
             UiAction::BeginParameterTextEditor {
                 parameter_id,

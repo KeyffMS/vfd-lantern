@@ -1,7 +1,7 @@
 use lantern_app::{FaultEventView, FaultMeaning, FaultTransition, FreezeFrameValue};
 use ratatui::text::Line;
 
-use crate::{FaultUiState, UiState, visible_fault_events};
+use crate::{UiState, visible_fault_events};
 
 #[must_use]
 pub fn fault_lines(view: &lantern_app::ApplicationView, ui: &UiState) -> Vec<Line<'static>> {
@@ -74,7 +74,10 @@ fn event_details(event: &FaultEventView) -> Vec<Line<'static>> {
             event.bus.queue_full,
             event.bus.utilization_ppm,
         )),
-        Line::from(format!("transition: {}", transition_summary(&event.event.transition))),
+        Line::from(format!(
+            "transition: {}",
+            transition_summary(&event.event.transition)
+        )),
         Line::from("pre-fault:"),
     ];
     append_values(&mut lines, &event.event.freeze_frame.pre_fault);
@@ -98,21 +101,26 @@ fn append_values(lines: &mut Vec<Line<'static>>, values: &[FreezeFrameValue]) {
         lines.push(Line::from(format!(
             "  {} raw={} engineering={} quality={:?} age={} observed={}{}",
             value.parameter_id,
-            value.raw.as_ref().map_or_else(
-                || "—".to_owned(),
-                |raw| format!("{:?}", raw.as_slice()),
-            ),
-            value.engineering.as_ref().map_or_else(
-                || "—".to_owned(),
-                |engineering| format!("{engineering:?}"),
-            ),
+            value
+                .raw
+                .as_ref()
+                .map_or_else(|| "—".to_owned(), |raw| format!("{:?}", raw.as_slice()),),
+            value
+                .engineering
+                .as_ref()
+                .map_or_else(|| "—".to_owned(), |engineering| format!("{engineering:?}"),),
             value.quality,
-            value.age.map_or_else(|| "—".to_owned(), |age| format!("{}ms", age.as_millis())),
+            value
+                .age
+                .map_or_else(|| "—".to_owned(), |age| format!("{}ms", age.as_millis())),
             value.observed_at.map_or_else(
                 || "—".to_owned(),
                 |timestamp| timestamp.as_unix_nanos().to_string(),
             ),
-            value.error.as_ref().map_or_else(String::new, |error| format!(" error={error}")),
+            value
+                .error
+                .as_ref()
+                .map_or_else(String::new, |error| format!(" error={error}")),
         )));
     }
 }
@@ -129,8 +137,16 @@ pub fn transition_summary(transition: &FaultTransition) -> String {
         FaultTransition::Cleared { previous } => format!("Cleared {}", meaning_summary(previous)),
         FaultTransition::BitsChanged { raised, cleared } => format!(
             "BitsChanged raised=[{}] cleared=[{}]",
-            raised.iter().map(meaning_summary).collect::<Vec<_>>().join(","),
-            cleared.iter().map(meaning_summary).collect::<Vec<_>>().join(","),
+            raised
+                .iter()
+                .map(meaning_summary)
+                .collect::<Vec<_>>()
+                .join(","),
+            cleared
+                .iter()
+                .map(meaning_summary)
+                .collect::<Vec<_>>()
+                .join(","),
         ),
     }
 }

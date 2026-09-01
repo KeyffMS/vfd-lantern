@@ -281,9 +281,12 @@ impl TuiEffectRunner {
                 suggested_name,
                 event,
             } => {
-                let result =
-                    write_fault_report(&self.fault_report_directory, &suggested_name, &event)
-                        .map_err(|error| error.to_string());
+                let result = write_fault_report(
+                    &self.fault_report_directory,
+                    &suggested_name,
+                    event.as_ref(),
+                )
+                .map_err(|error| error.to_string());
                 send_action(
                     &self.action_tx,
                     ApplicationAction::Faults(FaultAction::ExportFinished(result)),

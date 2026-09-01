@@ -790,7 +790,7 @@ fn forward_faults(
             if action_tx
                 .send(ApplicationAction::Faults(FaultAction::ObserveTelemetry {
                     event,
-                    bus,
+                    bus: Box::new(bus),
                 }))
                 .is_err()
             {

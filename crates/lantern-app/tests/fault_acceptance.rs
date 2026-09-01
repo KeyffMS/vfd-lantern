@@ -124,7 +124,13 @@ fn identity() -> FaultIdentityContext {
     }
 }
 
-fn event(parameter: &str, raw: u16, bitset: bool, quality: TelemetryQuality, utc: i128) -> TelemetryEvent {
+fn event(
+    parameter: &str,
+    raw: u16,
+    bitset: bool,
+    quality: TelemetryQuality,
+    utc: i128,
+) -> TelemetryEvent {
     let parameter_id = ParameterId::parse(parameter).expect("parameter id");
     let sample = (quality == TelemetryQuality::Good).then(|| TelemetrySampleCore {
         session_id: SessionId::new(7),
@@ -155,34 +161,67 @@ fn bitset_change_is_atomic_sorted_and_preserves_unknown_bits() {
     let profile = parse_and_validate_profile(BITSET_PROFILE.as_bytes(), ProfileFormat::Toml)
         .expect("bitset profile");
     let mut tracker = FaultTracker::default();
-    assert!(tracker
-        .observe(&profile, &event("fault.bits", 0, true, TelemetryQuality::Good, 1), None, identity(), BusStatisticsSnapshot::default())
-        .expect("baseline")
-        .is_none());
+    assert!(
+        tracker
+            .observe(
+                &profile,
+                &event("fault.bits", 0, true, TelemetryQuality::Good, 1),
+                None,
+                identity(),
+                BusStatisticsSnapshot::default()
+            )
+            .expect("baseline")
+            .is_none()
+    );
     tracker
-        .observe(&profile, &event("fault.bits", 13, true, TelemetryQuality::Good, 2), None, identity(), BusStatisticsSnapshot::default())
+        .observe(
+            &profile,
+            &event("fault.bits", 13, true, TelemetryQuality::Good, 2),
+            None,
+            identity(),
+            BusStatisticsSnapshot::default(),
+        )
         .expect("raised")
         .expect("event");
     let view = tracker.view();
-    let lantern_domain::FaultTransition::BitsChanged { raised, cleared } = &view.events[0].event.transition else {
+    let lantern_domain::FaultTransition::BitsChanged { raised, cleared } =
+        &view.events[0].event.transition
+    else {
         panic!("expected atomic bitset event");
     };
     assert!(cleared.is_empty());
-    assert_eq!(raised.iter().map(|meaning| meaning.raw).collect::<Vec<_>>(), vec![1, 4, 8]);
+    assert_eq!(
+        raised.iter().map(|meaning| meaning.raw).collect::<Vec<_>>(),
+        vec![1, 4, 8]
+    );
     assert!(raised[0].is_known());
     assert!(raised[1].is_known());
     assert!(!raised[2].is_known());
 
     tracker
-        .observe(&profile, &event("fault.bits", 4, true, TelemetryQuality::Good, 3), None, identity(), BusStatisticsSnapshot::default())
+        .observe(
+            &profile,
+            &event("fault.bits", 4, true, TelemetryQuality::Good, 3),
+            None,
+            identity(),
+            BusStatisticsSnapshot::default(),
+        )
         .expect("changed")
         .expect("event");
     let view = tracker.view();
-    let lantern_domain::FaultTransition::BitsChanged { raised, cleared } = &view.events[1].event.transition else {
+    let lantern_domain::FaultTransition::BitsChanged { raised, cleared } =
+        &view.events[1].event.transition
+    else {
         panic!("expected atomic bitset event");
     };
     assert!(raised.is_empty());
-    assert_eq!(cleared.iter().map(|meaning| meaning.raw).collect::<Vec<_>>(), vec![1, 8]);
+    assert_eq!(
+        cleared
+            .iter()
+            .map(|meaning| meaning.raw)
+            .collect::<Vec<_>>(),
+        vec![1, 8]
+    );
     assert!(!cleared[1].is_known());
 }
 
@@ -192,16 +231,36 @@ fn timeline_is_bounded_and_bad_quality_does_not_mutate_fault_state() {
         .expect("scalar profile");
     let mut tracker = FaultTracker::default();
     tracker
-        .observe(&profile, &event("fault.code", 0, false, TelemetryQuality::Good, 0), None, identity(), BusStatisticsSnapshot::default())
+        .observe(
+            &profile,
+            &event("fault.code", 0, false, TelemetryQuality::Good, 0),
+            None,
+            identity(),
+            BusStatisticsSnapshot::default(),
+        )
         .expect("baseline");
-    assert!(tracker
-        .observe(&profile, &event("fault.code", 1, false, TelemetryQuality::Timeout, 1), None, identity(), BusStatisticsSnapshot::default())
-        .expect("bad quality")
-        .is_none());
+    assert!(
+        tracker
+            .observe(
+                &profile,
+                &event("fault.code", 1, false, TelemetryQuality::Timeout, 1),
+                None,
+                identity(),
+                BusStatisticsSnapshot::default()
+            )
+            .expect("bad quality")
+            .is_none()
+    );
     for index in 2_i128..=302 {
         let raw = if index % 2 == 0 { 1 } else { 0 };
         tracker
-            .observe(&profile, &event("fault.code", raw, false, TelemetryQuality::Good, index), None, identity(), BusStatisticsSnapshot::default())
+            .observe(
+                &profile,
+                &event("fault.code", raw, false, TelemetryQuality::Good, index),
+                None,
+                identity(),
+                BusStatisticsSnapshot::default(),
+            )
             .expect("transition");
     }
     let view = tracker.view();
@@ -235,10 +294,22 @@ fn freeze_frame_reports_complete_partial_and_unavailable_without_losing_event() 
     ] {
         let mut tracker = FaultTracker::default();
         tracker
-            .observe(&profile, &event("fault.code", 0, false, TelemetryQuality::Good, 1), None, identity(), BusStatisticsSnapshot::default())
+            .observe(
+                &profile,
+                &event("fault.code", 0, false, TelemetryQuality::Good, 1),
+                None,
+                identity(),
+                BusStatisticsSnapshot::default(),
+            )
             .expect("baseline");
         let detection = tracker
-            .observe(&profile, &event("fault.code", 1, false, TelemetryQuality::Good, 2), None, identity(), BusStatisticsSnapshot::default())
+            .observe(
+                &profile,
+                &event("fault.code", 1, false, TelemetryQuality::Good, 2),
+                None,
+                identity(),
+                BusStatisticsSnapshot::default(),
+            )
             .expect("raise")
             .expect("event");
         tracker.complete_freeze_frame(detection.event_id, captured, errors);
@@ -252,7 +323,9 @@ fn freeze_frame_reports_complete_partial_and_unavailable_without_losing_event() 
 fn fault_periodic_poll_is_telemetry_critical_and_freeze_frame_is_interactive_never_safety() {
     let profile = parse_and_validate_profile(SCALAR_PROFILE.as_bytes(), ProfileFormat::Toml)
         .expect("scalar profile");
-    let subscription = fault_subscription(&profile).expect("subscription").expect("source");
+    let subscription = fault_subscription(&profile)
+        .expect("subscription")
+        .expect("source");
     assert_eq!(subscription.reason(), SubscriptionReason::Fault);
     assert_eq!(subscription.frequency(), FrequencyClass::Fast);
     let config = PollPlannerConfig::new(
@@ -267,8 +340,14 @@ fn fault_periodic_poll_is_telemetry_critical_and_freeze_frame_is_interactive_nev
         .build(&profile, vec![subscription], config, Instant::now())
         .expect("periodic plan");
     assert_eq!(plan.blocks().len(), 1);
-    assert_eq!(plan.blocks()[0].request_class(), RequestClass::TelemetryCritical);
-    assert_ne!(plan.blocks()[0].request_class(), RequestClass::SafetyOneShot);
+    assert_eq!(
+        plan.blocks()[0].request_class(),
+        RequestClass::TelemetryCritical
+    );
+    assert_ne!(
+        plan.blocks()[0].request_class(),
+        RequestClass::SafetyOneShot
+    );
 
     let freeze = PollPlanner::new()
         .build_fault_freeze_frame(

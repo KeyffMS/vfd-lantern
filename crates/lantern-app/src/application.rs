@@ -241,7 +241,10 @@ impl ApplicationState {
                     .snapshot
                     .as_ref()
                     .map(|snapshot| snapshot.latest.as_ref());
-                match self.faults.observe(&profile, &event, latest, identity, bus) {
+                match self
+                    .faults
+                    .observe(&profile, &event, latest, identity, *bus)
+                {
                     Ok(Some(detection)) => {
                         vec![ApplicationEffect::Faults(FaultEffect::CaptureFreezeFrame {
                             event_id: detection.event_id,
@@ -299,7 +302,7 @@ impl ApplicationState {
                     format!("fault-{}-{}", active.session_id.get(), event_id.get());
                 vec![ApplicationEffect::Faults(FaultEffect::Export {
                     suggested_name,
-                    event,
+                    event: Box::new(event),
                 })]
             }
             FaultAction::ExportFinished(result) => {
