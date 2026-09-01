@@ -246,6 +246,7 @@ impl ApplicationState {
                         vec![ApplicationEffect::Faults(FaultEffect::CaptureFreezeFrame {
                             event_id: detection.event_id,
                             session_id: detection.session_id,
+                            profile: Arc::clone(&profile),
                             parameters: detection.freeze_frame_parameters,
                         })]
                     }

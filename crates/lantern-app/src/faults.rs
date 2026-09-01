@@ -70,6 +70,7 @@ pub enum FaultEffect {
     CaptureFreezeFrame {
         event_id: FaultEventId,
         session_id: SessionId,
+        profile: Arc<ValidatedDeviceProfile>,
         parameters: Vec<ParameterId>,
     },
     Export {

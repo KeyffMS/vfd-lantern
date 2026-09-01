@@ -4,6 +4,7 @@
 
 mod cli;
 mod connection_runtime;
+mod fault_runtime;
 mod monitoring_runtime;
 mod panic_support;
 mod profile_commands;
@@ -111,6 +112,7 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
         action_tx,
         Arc::clone(&discovery),
         paths.diagnostics_directory.clone(),
+        paths.fault_report_directory.clone(),
         settings.clone(),
     );
     let mut application = ApplicationRuntime::new(state, runner);

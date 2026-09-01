@@ -47,7 +47,9 @@ pub fn spawn_freeze_frame_capture(
                     .unwrap_or(u64::MAX)
                     .saturating_add(u64::try_from(block_index).unwrap_or(u64::MAX)),
             );
-            let deadline = Instant::now().checked_add(timeout).unwrap_or_else(Instant::now);
+            let deadline = Instant::now()
+                .checked_add(timeout)
+                .unwrap_or_else(Instant::now);
             let request = ReadBusRequest::one_shot(
                 BusRequestContext::interactive(request_id, session_id, deadline, None),
                 slave_id,
@@ -72,10 +74,7 @@ pub fn spawn_freeze_frame_capture(
                                 TelemetryQuality::DecodeError,
                                 "freeze-frame block slice is invalid".to_owned(),
                             ));
-                            errors.push(format!(
-                                "{}: invalid register slice",
-                                slice.parameter_id
-                            ));
+                            errors.push(format!("{}: invalid register slice", slice.parameter_id));
                             continue;
                         };
                         let raw = match RawRegisters::new(words.to_vec()) {
@@ -153,11 +152,13 @@ fn complete(
     captured: Vec<FreezeFrameValue>,
     errors: Vec<String>,
 ) {
-    let _ = action_tx.send(ApplicationAction::Faults(FaultAction::FreezeFrameCompleted {
-        event_id,
-        captured,
-        errors,
-    }));
+    let _ = action_tx.send(ApplicationAction::Faults(
+        FaultAction::FreezeFrameCompleted {
+            event_id,
+            captured,
+            errors,
+        },
+    ));
 }
 
 fn failed_value(
@@ -181,7 +182,9 @@ fn quality_for_bus_error(error: &BusError) -> TelemetryQuality {
         BusError::TimeoutBeforeSend | BusError::ResponseTimeout => TelemetryQuality::Timeout,
         BusError::ProtocolException { .. } => TelemetryQuality::ProtocolException,
         BusError::PortRemoved | BusError::Shutdown => TelemetryQuality::Disconnected,
-        BusError::InvalidFrameOrTransport | BusError::InvalidResponse => TelemetryQuality::DecodeError,
+        BusError::InvalidFrameOrTransport | BusError::InvalidResponse => {
+            TelemetryQuality::DecodeError
+        }
         BusError::PermissionDenied
         | BusError::PortBusy
         | BusError::Io(_)

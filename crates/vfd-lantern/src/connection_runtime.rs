@@ -6,16 +6,17 @@ use std::{
 
 use lantern_app::{
     ApplicationAction, ApplicationEffect, ApplicationEffectError, BusControlPort, ConnectionAction,
-    ConnectionEffect, EffectRunner, IdentificationReportExportV1, IdentificationRequest,
-    PortDiscoveryPort, PortSelection, SessionEffect, SessionFault, SessionInput, SlaveId,
-    ValidatedSettings, identification_error_attempt, identify_profile_via_bus,
+    ConnectionEffect, EffectRunner, FaultAction, FaultEffect, IdentificationReportExportV1,
+    IdentificationRequest, PortDiscoveryPort, PortSelection, SessionEffect, SessionFault,
+    SessionInput, SlaveId, ValidatedSettings, identification_error_attempt,
+    identify_profile_via_bus,
 };
-use lantern_storage::create_new_synced;
+use lantern_storage::{create_new_synced, write_fault_report};
 use lantern_transport::{BusActorHandle, UdevDiscovery, open_serial_bus_with_identity};
 use lantern_tui::TerminalGuard;
 use tokio::{sync::mpsc, task::JoinHandle};
 
-use crate::monitoring_runtime::MonitoringRuntime;
+use crate::{fault_runtime::spawn_freeze_frame_capture, monitoring_runtime::MonitoringRuntime};
 
 const MANUAL_PATH_WATCH_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -39,6 +40,7 @@ pub struct TuiEffectRunner {
     runtime: Arc<Mutex<RuntimeState>>,
     monitoring: MonitoringRuntime,
     diagnostics_directory: PathBuf,
+    fault_report_directory: PathBuf,
 }
 
 impl TuiEffectRunner {
@@ -48,6 +50,7 @@ impl TuiEffectRunner {
         action_tx: mpsc::UnboundedSender<ApplicationAction>,
         discovery: Arc<UdevDiscovery>,
         diagnostics_directory: PathBuf,
+        fault_report_directory: PathBuf,
         settings: ValidatedSettings,
     ) -> Self {
         let monitoring = MonitoringRuntime::new(settings, action_tx.clone());
@@ -58,6 +61,7 @@ impl TuiEffectRunner {
             runtime: Arc::new(Mutex::new(RuntimeState::default())),
             monitoring,
             diagnostics_directory,
+            fault_report_directory,
         }
     }
 
@@ -247,6 +251,47 @@ impl TuiEffectRunner {
         }
     }
 
+    fn execute_fault(&mut self, effect: FaultEffect) -> Result<(), ApplicationEffectError> {
+        match effect {
+            FaultEffect::CaptureFreezeFrame {
+                event_id,
+                session_id,
+                profile,
+                parameters,
+            } => {
+                let (bus, slave_id) = {
+                    let state = lock_runtime(&self.runtime);
+                    (
+                        state.bus.as_ref().map(|active| active.handle.clone()),
+                        state.bus.as_ref().map(|active| active.slave_id),
+                    )
+                };
+                spawn_freeze_frame_capture(
+                    profile,
+                    bus,
+                    slave_id,
+                    event_id,
+                    session_id,
+                    parameters,
+                    self.action_tx.clone(),
+                );
+                Ok(())
+            }
+            FaultEffect::Export {
+                suggested_name,
+                event,
+            } => {
+                let result =
+                    write_fault_report(&self.fault_report_directory, &suggested_name, &event)
+                        .map_err(|error| error.to_string());
+                send_action(
+                    &self.action_tx,
+                    ApplicationAction::Faults(FaultAction::ExportFinished(result)),
+                )
+            }
+        }
+    }
+
     fn execute_session(&mut self, effect: SessionEffect) -> Result<(), ApplicationEffectError> {
         match effect {
             SessionEffect::RestoreTerminal => self
@@ -282,6 +327,7 @@ impl EffectRunner for TuiEffectRunner {
         match effect {
             ApplicationEffect::Connection(effect) => self.execute_connection(effect),
             ApplicationEffect::Monitoring(effect) => self.monitoring.execute(effect),
+            ApplicationEffect::Faults(effect) => self.execute_fault(effect),
             ApplicationEffect::Session(effect) => self.execute_session(effect),
         }
     }
