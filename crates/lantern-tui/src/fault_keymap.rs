@@ -10,11 +10,10 @@ pub fn map_fault_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Opt
     let events = visible_fault_events(view.faults(), &ui.faults);
     let selected = ui.selected_index.min(events.len().saturating_sub(1));
     match key.code {
-        KeyCode::Down | KeyCode::Char('j') => {
-            (selected + 1 < events.len()).then(|| MappedAction::Ui(UiAction::SelectionNext))
-        }
+        KeyCode::Down | KeyCode::Char('j') => (selected + 1 < events.len())
+            .then_some(MappedAction::Ui(UiAction::SelectionNext)),
         KeyCode::Up | KeyCode::Char('k') => {
-            (selected > 0).then(|| MappedAction::Ui(UiAction::SelectionPrevious))
+            (selected > 0).then_some(MappedAction::Ui(UiAction::SelectionPrevious))
         }
         KeyCode::Char('o') => Some(MappedAction::Ui(UiAction::ToggleFaultUnacknowledged)),
         KeyCode::Char('u') => Some(MappedAction::Ui(UiAction::ToggleFaultUnknown)),
