@@ -1,0 +1,51 @@
+name: Refresh issue 18 cargo-vet exemptions
+
+on:
+  push:
+    branches: [agent/issue-18]
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-18
+          fetch-depth: 0
+      - name: Refresh exact cargo-vet exemptions and verify supply chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          file=supply-chain/config.toml
+
+          perl -0pi -e 's/(\[\[exemptions\.log\]\]\nversion = ")0\.4\.33("\ncriteria = "safe-to-deploy")/${1}0.4.34${2}/' "$file"
+          perl -0pi -e 's/(\[\[exemptions\.pkg-config\]\]\nversion = ")0\.3\.33("\ncriteria = "safe-to-deploy")/${1}0.3.34${2}/' "$file"
+          perl -0pi -e 's/(\[\[exemptions\.ref-cast\]\]\nversion = ")1\.0\.26("\ncriteria = "safe-to-deploy")/${1}1.0.27${2}/' "$file"
+          perl -0pi -e 's/(\[\[exemptions\.ref-cast-impl\]\]\nversion = ")1\.0\.26("\ncriteria = "safe-to-deploy")/${1}1.0.27${2}/' "$file"
+          perl -0pi -e 's/(\[\[exemptions\.serialport\]\]\nversion = ")4\.9\.0("\ncriteria = "safe-to-deploy")/${1}4.10.0${2}/' "$file"
+          perl -0pi -e 's/(\[\[exemptions\.syn\]\]\nversion = ")3\.0\.3("\ncriteria = "safe-to-deploy")/${1}3.0.4${2}/' "$file"
+
+          grep -A2 -F '[[exemptions.log]]' "$file" | grep -F 'version = "0.4.34"'
+          grep -A2 -F '[[exemptions.pkg-config]]' "$file" | grep -F 'version = "0.3.34"'
+          grep -A2 -F '[[exemptions.ref-cast]]' "$file" | grep -F 'version = "1.0.27"'
+          grep -A2 -F '[[exemptions.ref-cast-impl]]' "$file" | grep -F 'version = "1.0.27"'
+          grep -A2 -F '[[exemptions.serialport]]' "$file" | grep -F 'version = "4.10.0"'
+          grep -A2 -F '[[exemptions.syn]]' "$file" | grep -F 'version = "3.0.4"'
+
+          export CARGO_INSTALL_ROOT="$HOME/.cache/vfd-lantern-cargo-tools"
+          export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
+          export PATH="$CARGO_INSTALL_ROOT/bin:$PATH"
+          sh scripts/install-cargo-tools.sh supply-chain
+          export CARGO_VET_REPORT=target/supply-chain/cargo-vet-summary-amd64.json
+          sh scripts/check-supply-chain.sh
+
+          git rm .github/workflows/issue18-cargo-vet-refresh.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore(#18): refresh cargo-vet exemptions for lockfile updates'
+          git push origin HEAD:agent/issue-18
