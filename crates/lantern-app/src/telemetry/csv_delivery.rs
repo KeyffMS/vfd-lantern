@@ -11,10 +11,19 @@ pub(super) struct CsvDeliveryState {
 }
 
 impl CsvDeliveryState {
-    pub(super) fn start(&mut self, parameters: impl IntoIterator<Item = ParameterId>) {
+    /// Enables one explicit logging selection. A duplicate Start is rejected
+    /// without changing the active selection or discarding a pending gap.
+    pub(super) fn start(
+        &mut self,
+        parameters: impl IntoIterator<Item = ParameterId>,
+    ) -> bool {
+        if self.enabled {
+            return false;
+        }
         self.enabled = true;
         self.parameters = parameters.into_iter().collect();
         self.pending_gap = None;
+        true
     }
 
     pub(super) fn stop(&mut self) -> Option<TelemetryGapCore> {
@@ -96,7 +105,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(3);
         let parameter = ParameterId::parse("status.frequency").expect("parameter");
         let mut state = CsvDeliveryState::default();
-        state.start([parameter]);
+        assert!(state.start([parameter]));
         assert_eq!(state.publish(&sample(1), &tx), 0);
         assert_eq!(state.publish(&sample(2), &tx), 0);
         assert_eq!(state.publish(&sample(3), &tx), 0);
@@ -129,12 +138,34 @@ mod tests {
         let (tx, _rx) = mpsc::channel(1);
         let parameter = ParameterId::parse("status.frequency").expect("parameter");
         let mut state = CsvDeliveryState::default();
-        state.start([parameter]);
+        assert!(state.start([parameter]));
         assert_eq!(state.publish(&sample(1), &tx), 0);
         assert_eq!(state.publish(&sample(2), &tx), 1);
         let gap = state.stop().expect("pending gap");
         assert_eq!(gap.dropped_count, 1);
         assert_eq!(gap.start_monotonic.as_nanos(), 20);
         assert!(!state.is_enabled());
+    }
+
+    #[test]
+    fn duplicate_start_preserves_selection_and_pending_gap() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let selected = ParameterId::parse("status.frequency").expect("parameter");
+        let replacement = ParameterId::parse("status.other").expect("parameter");
+        let mut state = CsvDeliveryState::default();
+        assert!(state.start([selected]));
+
+        assert_eq!(state.publish(&sample(1), &tx), 0);
+        assert_eq!(state.publish(&sample(2), &tx), 1);
+        assert!(!state.start([replacement]));
+
+        let CsvTelemetryItem::Sample(first) = rx.try_recv().expect("first sample") else {
+            panic!("sample")
+        };
+        assert_eq!(first.request_id.get(), 1);
+
+        let gap = state.stop().expect("pending gap must survive duplicate start");
+        assert_eq!(gap.dropped_count, 1);
+        assert_eq!(gap.start_monotonic.as_nanos(), 20);
     }
 }
