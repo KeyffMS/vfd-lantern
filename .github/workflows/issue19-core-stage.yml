@@ -82,6 +82,10 @@ jobs:
           grep -F 'request.pending_gap.as_ref()' "$writer"
           test "$(grep -c 'reply.send(result)' "$writer")" -eq 2
 
+          runtime=crates/vfd-lantern/src/monitoring_runtime.rs
+          perl -0pi -e "s/fn drain\(mut receiver: mpsc::Receiver<TelemetryEvent>\) -> JoinHandle<\(\)> \{/fn drain<T: Send + 'static>(mut receiver: mpsc::Receiver<T>) -> JoinHandle<()> {/" "$runtime"
+          grep -F "fn drain<T: Send + 'static>" "$runtime"
+
           cargo fmt --all
           cargo check --workspace --all-features
           cargo check --workspace --all-features --locked
