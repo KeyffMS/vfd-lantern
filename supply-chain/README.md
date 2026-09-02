@@ -30,3 +30,10 @@ for this graph in `config.toml` are reviewed policy **exemptions**, not a claim
 that VFD Lantern independently audited those crates. `cargo-deny`, `cargo-audit`
 and `cargo-vet` remain mandatory CI gates, and any dependency version change must
 receive fresh policy coverage in the same pull request.
+
+## Issue #18 fault diagnostics lockfile refresh
+
+The fault diagnostics work changes the locked dependency graph and therefore
+refreshes six existing `safe-to-deploy` exemptions to the exact versions selected
+by `Cargo.lock`. The policy remains version-pinned: no wildcard exemption is
+introduced, and `cargo-vet` must report zero unvetted dependencies before merge.
