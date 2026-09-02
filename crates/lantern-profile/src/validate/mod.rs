@@ -263,6 +263,7 @@ pub enum FaultSourceKind {
 pub struct ValidatedFaultSource {
     pub kind: FaultSourceKind,
     pub parameter_id: ParameterId,
+    pub no_fault: u64,
 }
 
 /// Validated fault metadata.

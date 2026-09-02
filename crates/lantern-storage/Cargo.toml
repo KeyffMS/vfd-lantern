@@ -16,6 +16,8 @@ directories.workspace = true
 tempfile.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_jcs.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

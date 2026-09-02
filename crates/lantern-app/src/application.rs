@@ -7,7 +7,8 @@ use thiserror::Error;
 use crate::{
     AuditHealth, Authorization, BusError, ConnectionAction, ConnectionAttemptKind,
     ConnectionEffect, ConnectionFailure, ConnectionStep, ConnectionWizardState,
-    ConnectionWizardView, Connectivity, MAX_PARAMETER_BROWSER_VISIBLE, MonitoringAction,
+    ConnectionWizardView, Connectivity, FaultAction, FaultEffect, FaultIdentityContext,
+    FaultTimelineView, FaultTracker, MAX_PARAMETER_BROWSER_VISIBLE, MonitoringAction,
     MonitoringEffect, MonitoringRuntimeSnapshot, MonitoringView, OperationState, ParameterAction,
     ParameterBrowserView, ParameterDescriptorView, ParameterIntentContext, ProfileRegistry,
     ScopeSelection, SerialConnectError, SessionEffect, SessionFault, SessionInput, SessionState,
@@ -71,6 +72,7 @@ pub struct ApplicationState {
     connection: ConnectionWizardState,
     monitoring: ApplicationMonitoringState,
     parameters: ApplicationParameterState,
+    faults: FaultTracker,
 }
 
 impl Default for ApplicationState {
@@ -82,6 +84,7 @@ impl Default for ApplicationState {
             connection: ConnectionWizardState::default(),
             monitoring: ApplicationMonitoringState::default(),
             parameters: ApplicationParameterState::default(),
+            faults: FaultTracker::default(),
         }
     }
 }
@@ -106,6 +109,7 @@ impl ApplicationState {
             connection: ConnectionWizardState::new(suggested_device, suggested_slave),
             monitoring: ApplicationMonitoringState::default(),
             parameters: ApplicationParameterState::default(),
+            faults: FaultTracker::default(),
         }
     }
 
@@ -163,6 +167,7 @@ impl ApplicationState {
                 .view(&self.registry, self.active_profile.as_ref()),
             monitoring,
             parameters,
+            faults: self.faults.view(),
         }
     }
 
@@ -189,6 +194,7 @@ impl ApplicationState {
                     self.connection.step = ConnectionStep::Profile;
                     self.monitoring = ApplicationMonitoringState::default();
                     self.parameters = ApplicationParameterState::default();
+                    self.faults = FaultTracker::default();
                 }
                 self.registry = registry;
                 Vec::new()
@@ -200,6 +206,7 @@ impl ApplicationState {
             ApplicationAction::Connection(action) => self.reduce_connection(action),
             ApplicationAction::Monitoring(action) => self.reduce_monitoring(action),
             ApplicationAction::Parameters(action) => self.reduce_parameters(action),
+            ApplicationAction::Faults(action) => self.reduce_faults(action),
             ApplicationAction::Session(input) => {
                 let effects = self.session.transition(input);
                 if matches!(
@@ -208,12 +215,102 @@ impl ApplicationState {
                 ) {
                     self.monitoring = ApplicationMonitoringState::default();
                     self.parameters = ApplicationParameterState::default();
+                    self.faults = FaultTracker::default();
                 }
                 self.translate_session_effects(effects)
             }
         }
     }
 
+    fn reduce_faults(&mut self, action: FaultAction) -> Vec<ApplicationEffect> {
+        match action {
+            FaultAction::ObserveTelemetry { event, bus } => {
+                let Some(profile) = self.selected_profile() else {
+                    return Vec::new();
+                };
+                let identity = match self.session.state() {
+                    SessionState::Active(active) => FaultIdentityContext {
+                        session_id: active.session_id,
+                        fingerprint: active.identity.device.fingerprint.clone(),
+                        profile_hash: active.identity.profile_hash.to_hex(),
+                    },
+                    _ => return Vec::new(),
+                };
+                let latest = self
+                    .monitoring
+                    .snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.latest.as_ref());
+                match self
+                    .faults
+                    .observe(&profile, &event, latest, identity, *bus)
+                {
+                    Ok(Some(detection)) => {
+                        vec![ApplicationEffect::Faults(FaultEffect::CaptureFreezeFrame {
+                            event_id: detection.event_id,
+                            session_id: detection.session_id,
+                            profile: Arc::clone(&profile),
+                            parameters: detection.freeze_frame_parameters,
+                        })]
+                    }
+                    Ok(None) => Vec::new(),
+                    Err(error) => {
+                        self.faults.set_error(error.to_string());
+                        Vec::new()
+                    }
+                }
+            }
+            FaultAction::FreezeFrameCompleted {
+                event_id,
+                captured,
+                errors,
+            } => {
+                self.faults
+                    .complete_freeze_frame(event_id, captured, errors);
+                Vec::new()
+            }
+            FaultAction::Acknowledge(event_id) => {
+                self.faults.acknowledge(event_id);
+                Vec::new()
+            }
+            FaultAction::Export(event_id) => {
+                let active = match self.session.state() {
+                    SessionState::Active(active) => active,
+                    _ => {
+                        self.faults.set_error(
+                            "fault export requires an active Verified session".to_owned(),
+                        );
+                        return Vec::new();
+                    }
+                };
+                let Some(event) = self.faults.export_event(event_id) else {
+                    self.faults
+                        .set_error("fault event is no longer in the bounded timeline".to_owned());
+                    return Vec::new();
+                };
+                if event.event.session_id != active.session_id
+                    || event.event.fingerprint != active.identity.device.fingerprint
+                    || event.event.profile_hash != active.identity.profile_hash.to_hex()
+                {
+                    self.faults.set_error(
+                        "fault export identity does not match the active Verified session"
+                            .to_owned(),
+                    );
+                    return Vec::new();
+                }
+                let suggested_name =
+                    format!("fault-{}-{}", active.session_id.get(), event_id.get());
+                vec![ApplicationEffect::Faults(FaultEffect::Export {
+                    suggested_name,
+                    event: Box::new(event),
+                })]
+            }
+            FaultAction::ExportFinished(result) => {
+                self.faults.export_finished(result);
+                Vec::new()
+            }
+        }
+    }
     fn reduce_parameters(&mut self, action: ParameterAction) -> Vec<ApplicationEffect> {
         let Some(profile) = self.selected_profile() else {
             self.parameters.error =
@@ -633,6 +730,7 @@ impl ApplicationState {
         self.connection.last_identification = None;
         self.monitoring = ApplicationMonitoringState::default();
         self.parameters = ApplicationParameterState::default();
+        self.faults = FaultTracker::default();
         let session_effects = self.session.transition(SessionInput::Connect);
         debug_assert_eq!(session_effects, vec![SessionEffect::OpenPort]);
         vec![ApplicationEffect::Connection(effect)]
@@ -652,6 +750,7 @@ impl ApplicationState {
         if matches!(self.session.state(), SessionState::Disconnected { .. }) {
             self.monitoring = ApplicationMonitoringState::default();
             self.parameters = ApplicationParameterState::default();
+            self.faults = FaultTracker::default();
         }
         self.translate_session_effects(effects)
     }
@@ -780,6 +879,7 @@ impl ApplicationState {
                     {
                         self.monitoring = ApplicationMonitoringState::for_profile(&profile);
                         self.parameters = ApplicationParameterState::for_profile(&profile);
+                        self.faults = FaultTracker::default();
                         translated.push(ApplicationEffect::Monitoring(MonitoringEffect::Start {
                             profile,
                             session_id,
@@ -800,6 +900,7 @@ impl ApplicationState {
                     ));
                     self.monitoring = ApplicationMonitoringState::default();
                     self.parameters = ApplicationParameterState::default();
+                    self.faults = FaultTracker::default();
                 }
                 translated
             }
@@ -1047,6 +1148,7 @@ pub struct ApplicationView {
     connection: ConnectionWizardView,
     monitoring: MonitoringView,
     parameters: ParameterBrowserView,
+    faults: FaultTimelineView,
 }
 
 impl Default for ApplicationView {
@@ -1058,6 +1160,7 @@ impl Default for ApplicationView {
             connection: ConnectionWizardState::default().view(&ProfileRegistry::default(), None),
             monitoring: MonitoringView::default(),
             parameters: ParameterBrowserView::default(),
+            faults: FaultTimelineView::default(),
         }
     }
 }
@@ -1097,6 +1200,11 @@ impl ApplicationView {
     pub const fn parameters(&self) -> &ParameterBrowserView {
         &self.parameters
     }
+
+    #[must_use]
+    pub const fn faults(&self) -> &FaultTimelineView {
+        &self.faults
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1106,6 +1214,7 @@ pub enum ApplicationAction {
     Connection(ConnectionAction),
     Monitoring(MonitoringAction),
     Parameters(ParameterAction),
+    Faults(FaultAction),
     Session(SessionInput),
 }
 
@@ -1113,6 +1222,7 @@ pub enum ApplicationAction {
 pub enum ApplicationEffect {
     Connection(ConnectionEffect),
     Monitoring(MonitoringEffect),
+    Faults(FaultEffect),
     Session(SessionEffect),
 }
 

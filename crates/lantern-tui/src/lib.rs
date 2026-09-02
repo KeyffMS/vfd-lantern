@@ -2,6 +2,9 @@
 
 #![forbid(unsafe_code)]
 
+mod fault_keymap;
+mod fault_render;
+mod fault_state;
 mod forms;
 mod input;
 mod keymap;
@@ -18,6 +21,7 @@ mod theme;
 mod ui_state;
 mod widgets;
 
+pub use fault_state::*;
 pub use forms::*;
 pub use input::*;
 pub use keymap::*;

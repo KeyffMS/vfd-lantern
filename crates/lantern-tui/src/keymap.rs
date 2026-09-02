@@ -7,7 +7,9 @@ use lantern_app::{
 };
 
 use crate::{
-    ConnectionEdit, Screen, UiAction, UiState, monitoring_parameter_matches_filter,
+    ConnectionEdit, Screen, UiAction, UiState,
+    fault_keymap::map_fault_key,
+    monitoring_parameter_matches_filter,
     parameter_keymap::{map_parameter_editor_key, map_parameter_key},
     profile_matches_filter,
 };
@@ -28,7 +30,7 @@ pub struct KeyBinding {
     pub description: &'static str,
 }
 
-pub const HELP_BINDINGS: [KeyBinding; 36] = [
+pub const HELP_BINDINGS: [KeyBinding; 42] = [
     KeyBinding {
         key: "1..9",
         description: "select top-level screen",
@@ -150,6 +152,30 @@ pub const HELP_BINDINGS: [KeyBinding; 36] = [
         description: "clear staged WriteIntent preview",
     },
     KeyBinding {
+        key: "Faults j/k",
+        description: "select bounded fault timeline event",
+    },
+    KeyBinding {
+        key: "Faults a",
+        description: "acknowledge selected event locally",
+    },
+    KeyBinding {
+        key: "Faults e",
+        description: "export selected Verified fault report",
+    },
+    KeyBinding {
+        key: "Faults p",
+        description: "open source parameter in Parameters",
+    },
+    KeyBinding {
+        key: "Faults o/u",
+        description: "filter unacknowledged / unknown events",
+    },
+    KeyBinding {
+        key: "Faults reset",
+        description: "not available; diagnostics are read-only",
+    },
+    KeyBinding {
         key: "Tab",
         description: "next focus",
     },
@@ -242,6 +268,12 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
 
     if ui.screen == Screen::Scope
         && let Some(action) = map_scope_key(ui, view, key)
+    {
+        return Some(action);
+    }
+
+    if ui.screen == Screen::Faults
+        && let Some(action) = map_fault_key(ui, view, key)
     {
         return Some(action);
     }

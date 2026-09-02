@@ -7,7 +7,9 @@ use ratatui::{
 };
 
 use crate::{
-    ConnectionEdit, HELP_BINDINGS, Screen, Theme, UiState, monitoring_parameter_matches_filter,
+    ConnectionEdit, HELP_BINDINGS, Screen, Theme, UiState,
+    fault_render::fault_lines,
+    monitoring_parameter_matches_filter,
     monitoring_render::{
         cursor_label, format_monitoring_value, scope_plot, scope_range, scope_window_label,
         visible_scope_points,
@@ -38,11 +40,7 @@ pub fn render_screen(
             "#17",
             "Backup, semantic diff and guarded restore remain owned by #17.",
         ),
-        Screen::Faults => planned_lines(
-            "Faults",
-            "#18",
-            "Fault tracking and freeze-frame policy remain owned by #18.",
-        ),
+        Screen::Faults => fault_lines(view, ui),
         Screen::BusDiagnostics => planned_lines(
             "Bus diagnostics",
             "later diagnostics integration",

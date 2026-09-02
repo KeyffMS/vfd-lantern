@@ -682,7 +682,11 @@ fn run_case(simulator_binary: &Path, product_binary: &Path, case: Case) -> Resul
     thread::sleep(SCREEN_SETTLE);
     product.quit()?;
     let records = simulator.stop()?;
-    assert_read_only(case.name(), &records, case.expected_requests())?;
+    if matches!(case, Case::MatchProcessOff | Case::MatchDisarmed) {
+        assert_read_only_at_least(case.name(), &records, case.expected_requests())?;
+    } else {
+        assert_read_only(case.name(), &records, case.expected_requests())?;
+    }
 
     if matches!(case, Case::MismatchExport) {
         let reports = env.reports()?;
@@ -738,7 +742,7 @@ fn run_reconnect_case(simulator_binary: &Path, product_binary: &Path) -> Result<
 
     product.quit()?;
     let second_records = second.stop()?;
-    assert_read_only("reconnect-initial", &first_records, 2)?;
+    assert_read_only_at_least("reconnect-initial", &first_records, 2)?;
     assert_read_only("reconnect-replacement", &second_records, 1)?;
     Ok(())
 }
@@ -769,6 +773,25 @@ fn assert_read_only(case: &str, records: &[LogRecord], expected: usize) -> Resul
     ensure!(
         records.len() == expected,
         "{case} sent {} requests; expected {expected}",
+        records.len()
+    );
+    ensure!(
+        records
+            .iter()
+            .all(|record| matches!(record.function, 3 | 4)),
+        "{case} emitted non-read Modbus function"
+    );
+    Ok(())
+}
+
+fn assert_read_only_at_least(
+    case: &str,
+    records: &[LogRecord],
+    expected_minimum: usize,
+) -> Result<()> {
+    ensure!(
+        records.len() >= expected_minimum,
+        "{case} sent {} requests; expected at least {expected_minimum}",
         records.len()
     );
     ensure!(

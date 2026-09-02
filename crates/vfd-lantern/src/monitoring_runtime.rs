@@ -4,14 +4,15 @@ use std::{
 };
 
 use lantern_app::{
-    ApplicationAction, ApplicationEffectError, BusControlPort, BusError, BusFuture, LinkSettings,
-    MonitoringAction, MonitoringDiagnosticsView, MonitoringEffect, MonitoringRuntimeSnapshot,
-    MonotonicClock, ParameterId, PollCadences, PollExecutor, PollExecutorHandle, PollPlan,
-    PollPlanner, PollPlannerConfig, RawRegisters, ReadBusPort, ReadBusRequest, ReadSubscription,
-    ScopeHistoryView, ScopeSelection, SessionId, TelemetryConsumers, TelemetryEvent,
-    TelemetryPipeline, TelemetryPipelineConfig, TelemetryPipelineHandle, TokioMonotonicClock,
-    ValidatedDeviceProfile, ValidatedSettings, dashboard_subscriptions,
-    parameter_browser_subscriptions, parameter_refresh_subscription, scope_subscriptions,
+    ApplicationAction, ApplicationEffectError, BusControlPort, BusError, BusFuture, FaultAction,
+    LinkSettings, MonitoringAction, MonitoringDiagnosticsView, MonitoringEffect,
+    MonitoringRuntimeSnapshot, MonotonicClock, ParameterId, PollCadences, PollExecutor,
+    PollExecutorHandle, PollPlan, PollPlanner, PollPlannerConfig, RawRegisters, ReadBusPort,
+    ReadBusRequest, ReadSubscription, ScopeHistoryView, ScopeSelection, SessionId,
+    TelemetryConsumers, TelemetryEvent, TelemetryPipeline, TelemetryPipelineConfig,
+    TelemetryPipelineHandle, TokioMonotonicClock, ValidatedDeviceProfile, ValidatedSettings,
+    dashboard_subscriptions, fault_subscription, parameter_browser_subscriptions,
+    parameter_refresh_subscription, scope_subscriptions,
 };
 use lantern_transport::BusActorHandle;
 use tokio::{
@@ -232,7 +233,11 @@ impl MonitoringRuntime {
                 return Err(error.to_string());
             }
         };
-        let consumer_tasks = drain_consumers(consumers);
+        let consumer_tasks = drain_consumers(
+            consumers,
+            self.action_tx.clone(),
+            Arc::downgrade(&self.shared),
+        );
         {
             let mut state = lock_state(&self.shared.state);
             if state.bus.is_none() {
@@ -715,6 +720,9 @@ fn monitoring_subscriptions(
         parameter_browser_subscriptions(profile, parameter_browser_parameters)
             .map_err(|error| error.to_string())?,
     );
+    if let Some(fault) = fault_subscription(profile).map_err(|error| error.to_string())? {
+        subscriptions.push(fault);
+    }
     Ok(subscriptions)
 }
 
@@ -733,14 +741,63 @@ fn validate_monitoring_plan(plan: &PollPlan) -> Result<(), String> {
     ))
 }
 
-fn drain_consumers(consumers: TelemetryConsumers) -> Vec<JoinHandle<()>> {
+fn drain_consumers(
+    consumers: TelemetryConsumers,
+    action_tx: mpsc::UnboundedSender<ApplicationAction>,
+    shared: Weak<MonitoringShared>,
+) -> Vec<JoinHandle<()>> {
     let TelemetryConsumers {
         tui: _tui,
         csv,
         fault,
         diagnostics,
     } = consumers;
-    vec![drain(csv), drain(fault), drain(diagnostics)]
+    vec![
+        drain(csv),
+        forward_faults(fault, action_tx, shared),
+        drain(diagnostics),
+    ]
+}
+
+fn forward_faults(
+    mut receiver: mpsc::Receiver<TelemetryEvent>,
+    action_tx: mpsc::UnboundedSender<ApplicationAction>,
+    shared: Weak<MonitoringShared>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(event) = receiver.recv().await {
+            let Some(shared) = shared.upgrade() else {
+                return;
+            };
+            let (is_fault_source, bus) = {
+                let state = lock_state(&shared.state);
+                let Some(active) = state.active.as_ref() else {
+                    continue;
+                };
+                let is_fault_source = active
+                    .profile
+                    .fault_source()
+                    .is_some_and(|source| source.parameter_id == event.parameter_id);
+                let bus = state
+                    .bus
+                    .as_ref()
+                    .map_or_else(Default::default, |bus| bus.statistics());
+                (is_fault_source, bus)
+            };
+            if !is_fault_source {
+                continue;
+            }
+            if action_tx
+                .send(ApplicationAction::Faults(FaultAction::ObserveTelemetry {
+                    event,
+                    bus: Box::new(bus),
+                }))
+                .is_err()
+            {
+                return;
+            }
+        }
+    })
 }
 
 fn drain(mut receiver: mpsc::Receiver<TelemetryEvent>) -> JoinHandle<()> {
