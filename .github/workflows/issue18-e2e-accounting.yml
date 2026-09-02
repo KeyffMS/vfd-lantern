@@ -34,6 +34,7 @@ jobs:
           cargo fmt --all
           cargo test --workspace --all-features --locked
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo build --workspace --all-features --locked
           cargo run --locked -p lantern-sim --example connection_process_acceptance
 
           git rm .github/workflows/issue18-e2e-accounting.yml
