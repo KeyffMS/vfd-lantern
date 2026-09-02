@@ -101,7 +101,7 @@ impl CsvWriterHandle {
     pub async fn start(&self, request: CsvWriterStart) -> Result<(), String> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.control
-            .send(CsvWriterCommand::Start(request, reply_tx))
+            .send(CsvWriterCommand::Start(Box::new(request), reply_tx))
             .map_err(|_| "CSV writer actor is not available".to_owned())?;
         reply_rx
             .await
@@ -111,7 +111,7 @@ impl CsvWriterHandle {
     pub async fn stop(&self, request: CsvWriterStop) -> Result<(), String> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.control
-            .send(CsvWriterCommand::Stop(request, reply_tx))
+            .send(CsvWriterCommand::Stop(Box::new(request), reply_tx))
             .map_err(|_| "CSV writer actor is not available".to_owned())?;
         reply_rx
             .await
@@ -137,9 +137,7 @@ pub struct CsvWriterActor;
 
 impl CsvWriterActor {
     #[must_use]
-    pub fn spawn(
-        data: mpsc::Receiver<CsvTelemetryItem>,
-    ) -> (CsvWriterHandle, JoinHandle<()>) {
+    pub fn spawn(data: mpsc::Receiver<CsvTelemetryItem>) -> (CsvWriterHandle, JoinHandle<()>) {
         let (control_tx, control_rx) = mpsc::unbounded_channel();
         let (status_tx, status_rx) = watch::channel(CsvWriterStatus {
             queue_capacity: data.max_capacity(),
@@ -155,8 +153,8 @@ impl CsvWriterActor {
 }
 
 enum CsvWriterCommand {
-    Start(CsvWriterStart, oneshot::Sender<Result<(), String>>),
-    Stop(CsvWriterStop, oneshot::Sender<Result<(), String>>),
+    Start(Box<CsvWriterStart>, oneshot::Sender<Result<(), String>>),
+    Stop(Box<CsvWriterStop>, oneshot::Sender<Result<(), String>>),
     Shutdown,
 }
 
@@ -197,7 +195,7 @@ async fn run_actor(
                         let result = if active.is_some() {
                             Err("CSV logging is already active".to_owned())
                         } else {
-                            match start_logger(request) {
+                            match start_logger(*request) {
                                 Ok(logger) => {
                                     publish_status(&status_tx, &data, CsvWriterState::Running, &logger, None);
                                     active = Some(logger);
@@ -214,31 +212,56 @@ async fn run_actor(
                     }
                     CsvWriterCommand::Stop(request, reply) => {
                         let result = if let Some(mut logger) = active.take() {
-                            while let Ok(item) = data.try_recv() {
-                                if let Err(error) = write_item(&mut logger, item) {
-                                    let message = fail_logger(&mut logger, error);
-                                    publish_status(&status_tx, &data, CsvWriterState::Failed, &logger, Some(message.clone()));
-                                    let _ = reply.send(Err(message));
-                                    continue;
+                            let mut failure = None;
+                            while failure.is_none() {
+                                match data.try_recv() {
+                                    Ok(item) => {
+                                        if let Err(error) = write_item(&mut logger, item) {
+                                            failure = Some(error);
+                                        }
+                                    }
+                                    Err(_) => break,
                                 }
                             }
-                            if let Some(gap) = request.pending_gap
-                                && let Err(error) = write_gap(&mut logger, &gap)
+                            if failure.is_none()
+                                && let Some(gap) = request.pending_gap.as_ref()
+                                && let Err(error) = write_gap(&mut logger, gap)
                             {
-                                let message = fail_logger(&mut logger, error);
-                                publish_status(&status_tx, &data, CsvWriterState::Failed, &logger, Some(message.clone()));
-                                let _ = reply.send(Err(message));
-                                continue;
+                                failure = Some(error);
                             }
-                            match finalize_logger(&mut logger, request) {
-                                Ok(()) => {
-                                    publish_status(&status_tx, &data, CsvWriterState::Completed, &logger, None);
-                                    Ok(())
-                                }
-                                Err(error) => {
-                                    let message = fail_logger(&mut logger, error);
-                                    publish_status(&status_tx, &data, CsvWriterState::Failed, &logger, Some(message.clone()));
-                                    Err(message)
+                            if let Some(error) = failure {
+                                let message = fail_logger(&mut logger, error);
+                                publish_status(
+                                    &status_tx,
+                                    &data,
+                                    CsvWriterState::Failed,
+                                    &logger,
+                                    Some(message.clone()),
+                                );
+                                Err(message)
+                            } else {
+                                match finalize_logger(&mut logger, *request) {
+                                    Ok(()) => {
+                                        publish_status(
+                                            &status_tx,
+                                            &data,
+                                            CsvWriterState::Completed,
+                                            &logger,
+                                            None,
+                                        );
+                                        Ok(())
+                                    }
+                                    Err(error) => {
+                                        let message = fail_logger(&mut logger, error);
+                                        publish_status(
+                                            &status_tx,
+                                            &data,
+                                            CsvWriterState::Failed,
+                                            &logger,
+                                            Some(message.clone()),
+                                        );
+                                        Err(message)
+                                    }
                                 }
                             }
                         } else {
@@ -307,7 +330,10 @@ fn start_logger(request: CsvWriterStart) -> Result<RunningLogger, CsvWriterError
         .delimiter(b',')
         .has_headers(false)
         .from_writer(file);
-    if let Err(error) = writer.write_record(CSV_HEADER).and_then(|()| writer.flush().map_err(csv::Error::from)) {
+    if let Err(error) = writer
+        .write_record(CSV_HEADER)
+        .and_then(|()| writer.flush().map_err(csv::Error::from))
+    {
         let _ = std::fs::remove_file(&request.csv_path);
         return Err(error.into());
     }
@@ -469,9 +495,7 @@ fn sync_logger(logger: &mut RunningLogger) -> Result<(), CsvWriterError> {
 }
 
 fn persist_running_artifacts(logger: &mut RunningLogger) -> Result<(), CsvWriterError> {
-    logger.checkpoint.rows_written = logger
-        .samples_written
-        .saturating_add(logger.gaps_written);
+    logger.checkpoint.rows_written = logger.samples_written.saturating_add(logger.gaps_written);
     logger.checkpoint.dropped_count = logger.dropped_count;
     logger.checkpoint.last_update_utc = now_utc_text()?;
     logger.checkpoint.status = CsvSessionStatusV1::Running;
@@ -506,11 +530,10 @@ fn fail_logger(logger: &mut RunningLogger, error: CsvWriterError) -> String {
     logger.sidecar.last_error = Some(message.clone());
     logger.checkpoint.status = CsvSessionStatusV1::Failed;
     logger.checkpoint.last_error = Some(message.clone());
-    logger.checkpoint.rows_written = logger
-        .samples_written
-        .saturating_add(logger.gaps_written);
+    logger.checkpoint.rows_written = logger.samples_written.saturating_add(logger.gaps_written);
     logger.checkpoint.dropped_count = logger.dropped_count;
-    logger.checkpoint.last_update_utc = now_utc_text().unwrap_or_else(|_| logger.checkpoint.started_utc.clone());
+    logger.checkpoint.last_update_utc =
+        now_utc_text().unwrap_or_else(|_| logger.checkpoint.started_utc.clone());
     let _ = logger.writer.flush();
     let _ = update_csv_session_sidecar(&logger.sidecar_path, &logger.sidecar);
     let _ = write_csv_runtime_checkpoint(&logger.checkpoint_path, &logger.checkpoint);
@@ -650,11 +673,12 @@ enum CsvWriterError {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, sync::Arc};
+    use std::fs;
 
     use lantern_domain::{
         CsvTelemetryItem, EngineeringValue, LoggingId, MonotonicInstant, ParameterId, RawRegisters,
-        RequestId, SessionId, TelemetryGapCore, TelemetryQuality, TelemetrySampleCore, UtcTimestamp,
+        RequestId, SessionId, TelemetryGapCore, TelemetryQuality, TelemetrySampleCore,
+        UtcTimestamp,
     };
     use tempfile::tempdir;
     use tokio::sync::mpsc;
@@ -709,7 +733,11 @@ mod tests {
         )
     }
 
-    fn sample(value: EngineeringValue, quality: TelemetryQuality, request: u64) -> TelemetrySampleCore {
+    fn sample(
+        value: EngineeringValue,
+        quality: TelemetryQuality,
+        request: u64,
+    ) -> TelemetrySampleCore {
         TelemetrySampleCore {
             session_id: SessionId::new(7),
             parameter_id: ParameterId::parse("status.frequency").expect("parameter"),
@@ -717,7 +745,9 @@ mod tests {
             engineering: value,
             quality,
             monotonic_time: MonotonicInstant::from_nanos(u128::from(request) * 100),
-            utc_time: UtcTimestamp::from_unix_nanos(1_700_000_000_000_000_000 + i128::from(request)),
+            utc_time: UtcTimestamp::from_unix_nanos(
+                1_700_000_000_000_000_000 + i128::from(request),
+            ),
             request_id: RequestId::new(request),
         }
     }
@@ -782,9 +812,21 @@ mod tests {
         assert!(!checkpoint_path.exists());
 
         let source = fs::read_to_string(&csv_path).expect("CSV");
-        let mut reader = csv::ReaderBuilder::new().has_headers(true).from_reader(source.as_bytes());
-        assert_eq!(reader.headers().expect("headers").iter().collect::<Vec<_>>(), super::CSV_HEADER);
-        let records = reader.records().collect::<Result<Vec<_>, _>>().expect("records");
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(source.as_bytes());
+        assert_eq!(
+            reader
+                .headers()
+                .expect("headers")
+                .iter()
+                .collect::<Vec<_>>(),
+            super::CSV_HEADER
+        );
+        let records = reader
+            .records()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("records");
         assert_eq!(records.len(), 6);
         assert_eq!(&records[0][1], "sample");
         assert_eq!(&records[0][11], "1234ABCD");
@@ -794,7 +836,8 @@ mod tests {
         assert_eq!(&records[5][7], "2000");
         assert_eq!(&records[5][17], "3");
 
-        let sidecar_json: serde_json::Value = serde_json::from_slice(&fs::read(sidecar_path).expect("sidecar")).expect("JSON");
+        let sidecar_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(sidecar_path).expect("sidecar")).expect("JSON");
         assert_eq!(sidecar_json["status"], "completed");
         assert_eq!(sidecar_json["counts"]["samples"], 5);
         assert_eq!(sidecar_json["counts"]["dropped"], 3);
@@ -825,7 +868,8 @@ mod tests {
         assert!(sidecar_path.exists());
         assert!(checkpoint_path.exists());
         task.abort();
-        let sidecar_json: serde_json::Value = serde_json::from_slice(&fs::read(sidecar_path).expect("sidecar")).expect("JSON");
+        let sidecar_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(sidecar_path).expect("sidecar")).expect("JSON");
         assert_eq!(sidecar_json["status"], "running");
     }
 

@@ -29,12 +29,12 @@ pub use fault_plan::*;
 pub use faults::*;
 pub use identification::*;
 pub use lantern_domain::{
-    ByteOrder, DeviceFingerprint, EngineeringValue, FaultEvent, FaultEventId, FaultMeaning,
-    FaultSeverity, FaultTransition, FreezeFrame, FreezeFrameCompleteness, FreezeFrameValue,
-    IdentificationMatch, LinkSettings, ModbusFunction, ModbusTable, MonotonicInstant,
-    ParameterAccess, ParameterId, QuantityKind, RawRegisters, RegisterEncoding, RequestId,
-    RequiredDriveState, RestorePolicy, SessionId, SlaveId, TelemetryQuality, UnitId, UtcTimestamp,
-    WordOrder, WriteIntent,
+    ByteOrder, CsvTelemetryItem, DeviceFingerprint, EngineeringValue, FaultEvent, FaultEventId,
+    FaultMeaning, FaultSeverity, FaultTransition, FreezeFrame, FreezeFrameCompleteness,
+    FreezeFrameValue, IdentificationMatch, LinkSettings, LoggingId, ModbusFunction, ModbusTable,
+    MonotonicInstant, ParameterAccess, ParameterId, QuantityKind, RawRegisters, RegisterEncoding,
+    RequestId, RequiredDriveState, RestorePolicy, SessionId, SlaveId, TelemetryGapCore,
+    TelemetryQuality, UnitId, UtcTimestamp, WordOrder, WriteIntent,
 };
 pub use lantern_profile::{AddressNotation, ValidatedDeviceProfile};
 pub use monitoring::*;

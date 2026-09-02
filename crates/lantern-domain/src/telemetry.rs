@@ -190,6 +190,9 @@ mod tests {
         assert_eq!(gap.start_utc.as_unix_nanos(), 100);
         assert_eq!(gap.end_utc.as_unix_nanos(), 200);
         assert_eq!(gap.dropped_count, 2);
-        assert!(matches!(CsvTelemetryItem::Gap(gap), CsvTelemetryItem::Gap(_)));
+        assert!(matches!(
+            CsvTelemetryItem::Gap(gap),
+            CsvTelemetryItem::Gap(_)
+        ));
     }
 }

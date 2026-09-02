@@ -1,3 +1,4 @@
+mod csv_delivery;
 mod downsample;
 mod model;
 mod pipeline;

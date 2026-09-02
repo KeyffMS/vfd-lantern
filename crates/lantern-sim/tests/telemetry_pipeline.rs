@@ -216,17 +216,17 @@ async fn verified_pty_polling_maps_timeout_exception_and_recovery_into_telemetry
 
     let parameter_id = ParameterId::parse("status.output_frequency").expect("parameter");
 
-    let timeout_event = next_parameter_event(&mut consumers.csv, &parameter_id).await;
+    let timeout_event = next_parameter_event(&mut consumers.diagnostics, &parameter_id).await;
     assert_eq!(timeout_event.quality, TelemetryQuality::Timeout);
     assert!(timeout_event.sample.is_none());
     assert!(timeout_event.error.is_some());
 
-    let exception_event = next_parameter_event(&mut consumers.csv, &parameter_id).await;
+    let exception_event = next_parameter_event(&mut consumers.diagnostics, &parameter_id).await;
     assert_eq!(exception_event.quality, TelemetryQuality::ProtocolException);
     assert!(exception_event.sample.is_none());
     assert!(exception_event.error.is_some());
 
-    let recovery_event = next_parameter_event(&mut consumers.csv, &parameter_id).await;
+    let recovery_event = next_parameter_event(&mut consumers.diagnostics, &parameter_id).await;
     assert_eq!(recovery_event.quality, TelemetryQuality::Good);
     assert!(recovery_event.error.is_none());
     assert!(recovery_event.sample.is_some());

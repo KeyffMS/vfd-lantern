@@ -60,7 +60,7 @@ impl TelemetryPipelineConfig {
                 .memory_limit_mib
                 .saturating_mul(BYTES_PER_MIB)
                 .max(1),
-            csv_capacity: settings.queues.telemetry.max(1),
+            csv_capacity: settings.queues.csv_logging,
             fault_capacity: settings.queues.telemetry_critical.max(1),
             diagnostics_capacity: settings.queues.background.max(1),
         }

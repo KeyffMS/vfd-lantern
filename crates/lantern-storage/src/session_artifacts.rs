@@ -1,4 +1,7 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use lantern_domain::{LoggingId, SessionId};
 use serde::{Deserialize, Serialize};
@@ -311,11 +314,11 @@ fn validate_sidecar(sidecar: &CsvSessionSidecarV1) -> Result<(), SessionArtifact
     Ok(())
 }
 
-fn validate_checkpoint(
-    checkpoint: &CsvRuntimeCheckpointV1,
-) -> Result<(), SessionArtifactError> {
+fn validate_checkpoint(checkpoint: &CsvRuntimeCheckpointV1) -> Result<(), SessionArtifactError> {
     if checkpoint.schema_version != CSV_RUNTIME_CHECKPOINT_SCHEMA_VERSION {
-        return Err(SessionArtifactError::InvalidSchema(checkpoint.schema_version));
+        return Err(SessionArtifactError::InvalidSchema(
+            checkpoint.schema_version,
+        ));
     }
     if checkpoint.csv_path.as_os_str().is_empty() {
         return Err(SessionArtifactError::InvalidContent(
@@ -421,16 +424,6 @@ mod tests {
         let final_json: serde_json::Value =
             serde_json::from_slice(&fs::read(&sidecar_path).expect("read sidecar")).expect("JSON");
         assert_eq!(final_json["status"], "completed");
-        assert!(checkpoint_path.exists().not());
-    }
-
-    trait BoolNot {
-        fn not(self) -> bool;
-    }
-
-    impl BoolNot for bool {
-        fn not(self) -> bool {
-            !self
-        }
+        assert!(!checkpoint_path.exists());
     }
 }

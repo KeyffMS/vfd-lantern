@@ -40,12 +40,12 @@ impl CsvDeliveryState {
             return 0;
         }
 
-        if let Some(mut gap) = self.pending_gap.take() {
-            if sender.try_send(CsvTelemetryItem::Gap(gap.clone())).is_err() {
-                gap.extend_with_dropped_sample(sample);
-                self.pending_gap = Some(gap);
-                return 1;
-            }
+        if let Some(mut gap) = self.pending_gap.take()
+            && sender.try_send(CsvTelemetryItem::Gap(gap.clone())).is_err()
+        {
+            gap.extend_with_dropped_sample(sample);
+            self.pending_gap = Some(gap);
+            return 1;
         }
 
         if sender

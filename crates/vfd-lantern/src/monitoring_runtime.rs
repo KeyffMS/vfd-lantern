@@ -800,7 +800,7 @@ fn forward_faults(
     })
 }
 
-fn drain(mut receiver: mpsc::Receiver<TelemetryEvent>) -> JoinHandle<()> {
+fn drain<T: Send + 'static>(mut receiver: mpsc::Receiver<T>) -> JoinHandle<()> {
     tokio::spawn(async move { while receiver.recv().await.is_some() {} })
 }
 
