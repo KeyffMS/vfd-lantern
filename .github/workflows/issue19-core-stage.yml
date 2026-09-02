@@ -34,10 +34,13 @@ jobs:
           perl -0pi -e 's/csv_capacity: settings\.queues\.telemetry\.max\(1\),/csv_capacity: settings.queues.csv_logging,/' "$model"
           grep -F 'csv_capacity: settings.queues.csv_logging,' "$model"
 
+          telemetry_mod=crates/lantern-app/src/telemetry/mod.rs
+          perl -0pi -e 's/mod downsample;/mod csv_delivery;\nmod downsample;/' "$telemetry_mod"
+          grep -F 'mod csv_delivery;' "$telemetry_mod"
+
           pipeline=crates/lantern-app/src/telemetry/pipeline.rs
           perl -0pi -e 's/(use lantern_domain::\{\n)/$1    CsvTelemetryItem, TelemetryGapCore,\n/' "$pipeline"
-          perl -0pi -e 's/mod state;/mod csv_delivery;\nmod state;/' "$pipeline"
-          perl -0pi -e 's/(use state::\{PipelineState, lock_state, quality_for_bus_error\};)/use csv_delivery::CsvDeliveryState;\n\n$1/' "$pipeline"
+          perl -0pi -e 's/(use state::\{PipelineState, lock_state, quality_for_bus_error\};)/use super::csv_delivery::CsvDeliveryState;\n\n$1/' "$pipeline"
           perl -0pi -e 's/pub csv: mpsc::Receiver<TelemetryEvent>,/pub csv: mpsc::Receiver<CsvTelemetryItem>,/' "$pipeline"
           perl -0pi -e 's/(diagnostics: diagnostics_tx,\n)/$1            csv_delivery: Mutex::new(CsvDeliveryState::default()),\n/' "$pipeline"
           perl -0pi -e 's/(    pub fn clear_histories\(&self, parameter_ids: &\[ParameterId\]\) \{)/    pub fn start_csv_logging(&self, parameter_ids: impl IntoIterator<Item = ParameterId>) {\n        self.shared\n            .csv_delivery\n            .lock()\n            .unwrap_or_else(std::sync::PoisonError::into_inner)\n            .start(parameter_ids);\n    }\n\n    pub fn stop_csv_logging(&self) -> Option<TelemetryGapCore> {\n        self.shared\n            .csv_delivery\n            .lock()\n            .unwrap_or_else(std::sync::PoisonError::into_inner)\n            .stop()\n    }\n\n    #[must_use]\n    pub fn csv_logging_active(&self) -> bool {\n        self.shared\n            .csv_delivery\n            .lock()\n            .unwrap_or_else(std::sync::PoisonError::into_inner)\n            .is_enabled()\n    }\n\n$1/' "$pipeline"
@@ -75,7 +78,6 @@ jobs:
           perl -0pi -e 's/\n    trait BoolNot \{.*?\n    \}\n\n    impl BoolNot for bool \{.*?\n    \}\n//s' "$artifacts"
 
           cargo fmt --all
-          # Bootstrap only exact workspace-pinned packages newly activated by lantern-storage.
           cargo check --workspace --all-features
           cargo check --workspace --all-features --locked
           cargo test -p lantern-domain --locked
