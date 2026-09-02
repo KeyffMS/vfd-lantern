@@ -14,6 +14,8 @@ Repeated observations of the same state do not create duplicate events; they upd
 
 The periodic fault source is registered with the common `PollPlanner` as `SubscriptionReason::Fault`, bounded by an explicit maximum age. The planner maps this periodic demand to `TelemetryCritical`; periodic fault traffic cannot request `SafetyOneShot`.
 
+A Verified session may therefore continue to emit periodic read-only fault-source traffic after identification completes. Process-level acceptance treats that traffic as valid only while every additional request remains a Modbus read; it does not assume a fixed post-connect request count.
+
 A diagnostic freeze-frame is a bounded one-shot plan built by the same application planner. Its reads use `Interactive`. The plan is limited to 64 parameters and ordinary Modbus read limits. Queue-full, timeout, decode, disconnect, or partial-read failures reduce freeze-frame completeness but do not remove the fault event.
 
 Fault diagnostics never create a write request. There is no fault-reset API or TUI action in 1.0.
