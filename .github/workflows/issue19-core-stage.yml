@@ -75,9 +75,8 @@ jobs:
           perl -0pi -e 's/\n    trait BoolNot \{.*?\n    \}\n\n    impl BoolNot for bool \{.*?\n    \}\n//s' "$artifacts"
 
           cargo fmt --all
-          # Adding direct uses of already-pinned workspace crates changes package dependency metadata.
-          # Refresh only the lockfile metadata offline, then enforce --locked for every validation.
-          cargo check --workspace --all-features --offline
+          # Bootstrap only exact workspace-pinned packages newly activated by lantern-storage.
+          cargo check --workspace --all-features
           cargo check --workspace --all-features --locked
           cargo test -p lantern-domain --locked
           cargo test -p lantern-app --all-features --locked telemetry -- --nocapture
