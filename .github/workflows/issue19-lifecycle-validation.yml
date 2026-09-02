@@ -1,0 +1,40 @@
+name: Validate issue 19 CSV lifecycle
+
+on:
+  push:
+    branches: [agent/issue-19]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-19
+          fetch-depth: 0
+
+      - name: Validate CSV lifecycle invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo check --workspace --all-features --locked
+          cargo build --workspace --all-features --locked
+          cargo test --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo run --locked -p lantern-sim --example connection_process_acceptance
+
+      - name: Remove validation helper
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/issue19-lifecycle-validation.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore(#19): remove lifecycle validation helper'
+          git push origin HEAD:agent/issue-19
