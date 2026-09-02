@@ -112,7 +112,18 @@ impl CsvLoggingCoordinator {
         );
 
         self.pipeline.start_csv_logging(parameter_ids);
-        if writer.status().state != CsvWriterState::Running {
+        let start_failed = {
+            let mut state = lock(&self.state);
+            if *state == CsvLoggingLifecycleState::Failed
+                || writer.status().state != CsvWriterState::Running
+            {
+                true
+            } else {
+                *state = CsvLoggingLifecycleState::Running;
+                false
+            }
+        };
+        if start_failed {
             let gap = self.pipeline.stop_csv_logging();
             *lock(&self.failure_gap) = gap;
             let _ = relay_control.send(RelayCommand::Abort);
@@ -124,7 +135,6 @@ impl CsvLoggingCoordinator {
             return Err("CSV writer failed while enabling telemetry delivery".to_owned());
         }
 
-        set_state(&self.state, CsvLoggingLifecycleState::Running);
         self.active = Some(ActiveCsvLogging {
             writer,
             writer_task,
