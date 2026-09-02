@@ -21,7 +21,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Dedicated bounded CSV queue: default 8192, validated 1024..65536.
           settings=crates/lantern-app/src/settings.rs
           perl -0pi -e 's/(pub telemetry: Option<usize>,\n)/$1    pub csv_logging: Option<usize>,\n/' "$settings"
           perl -0pi -e 's/(pub telemetry: usize,\n)/$1    pub csv_logging: usize,\n/' "$settings"
@@ -31,12 +30,10 @@ jobs:
           grep -F 'csv_logging: 8_192,' "$settings"
           grep -F 'bounded("csv_logging", value, 1_024, 65_536)?' "$settings"
 
-          # Telemetry pipeline config uses the dedicated queue.
           model=crates/lantern-app/src/telemetry/model.rs
           perl -0pi -e 's/csv_capacity: settings\.queues\.telemetry\.max\(1\),/csv_capacity: settings.queues.csv_logging,/' "$model"
           grep -F 'csv_capacity: settings.queues.csv_logging,' "$model"
 
-          # Pipeline CSV producer sends only selected sample cores and accumulates exact gaps.
           pipeline=crates/lantern-app/src/telemetry/pipeline.rs
           perl -0pi -e 's/(use lantern_domain::\{\n)/$1    CsvTelemetryItem, TelemetryGapCore,\n/' "$pipeline"
           perl -0pi -e 's/mod state;/mod csv_delivery;\nmod state;/' "$pipeline"
@@ -53,7 +50,6 @@ jobs:
           grep -F 'csv_delivery.publish(sample, &self.csv)' "$pipeline"
           grep -F 'pub fn stop_csv_logging(&self) -> Option<TelemetryGapCore>' "$pipeline"
 
-          # Re-export CSV domain primitives through lantern-app for the composition root.
           app_lib=crates/lantern-app/src/lib.rs
           perl -0pi -e 's/(ByteOrder, )/$1CsvTelemetryItem, /' "$app_lib"
           perl -0pi -e 's/(SessionId, SlaveId, )/$1TelemetryGapCore, /' "$app_lib"
@@ -62,7 +58,6 @@ jobs:
           grep -F 'TelemetryGapCore' "$app_lib"
           grep -F 'LoggingId' "$app_lib"
 
-          # Storage actor dependencies are already pinned in the workspace lock graph.
           storage_toml=crates/lantern-storage/Cargo.toml
           perl -0pi -e 's/(sha2\.workspace = true\n)/$1csv.workspace = true\ntime.workspace = true\ntokio.workspace = true\n/' "$storage_toml"
           grep -F 'csv.workspace = true' "$storage_toml"
@@ -75,12 +70,14 @@ jobs:
           grep -F 'CsvWriterActor' "$storage_lib"
           grep -F 'CsvRuntimeCheckpointV1' "$storage_lib"
 
-          # Simplify the storage artifact assertion.
           artifacts=crates/lantern-storage/src/session_artifacts.rs
           perl -0pi -e 's/assert!\(checkpoint_path\.exists\(\)\.not\(\)\);/assert!(!checkpoint_path.exists());/' "$artifacts"
           perl -0pi -e 's/\n    trait BoolNot \{.*?\n    \}\n\n    impl BoolNot for bool \{.*?\n    \}\n//s' "$artifacts"
 
           cargo fmt --all
+          # Adding direct uses of already-pinned workspace crates changes package dependency metadata.
+          # Refresh only the lockfile metadata offline, then enforce --locked for every validation.
+          cargo check --workspace --all-features --offline
           cargo check --workspace --all-features --locked
           cargo test -p lantern-domain --locked
           cargo test -p lantern-app --all-features --locked telemetry -- --nocapture
