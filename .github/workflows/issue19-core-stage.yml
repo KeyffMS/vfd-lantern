@@ -1,0 +1,95 @@
+name: Stage issue 19 CSV core
+
+on:
+  push:
+    branches: [agent/issue-19]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-19
+          fetch-depth: 0
+      - name: Integrate CSV delivery and writer core
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Dedicated bounded CSV queue: default 8192, validated 1024..65536.
+          settings=crates/lantern-app/src/settings.rs
+          perl -0pi -e 's/(pub telemetry: Option<usize>,\n)/$1    pub csv_logging: Option<usize>,\n/' "$settings"
+          perl -0pi -e 's/(pub telemetry: usize,\n)/$1    pub csv_logging: usize,\n/' "$settings"
+          perl -0pi -e 's/(telemetry: 256,\n)/$1                csv_logging: 8_192,\n/' "$settings"
+          perl -0pi -e 's/(set!\(telemetry, 4_096\);\n)/$1    if let Some(value) = document.csv_logging {\n        settings.queues.csv_logging = bounded("csv_logging", value, 1_024, 65_536)?;\n    }\n/' "$settings"
+          grep -F 'pub csv_logging: usize,' "$settings"
+          grep -F 'csv_logging: 8_192,' "$settings"
+          grep -F 'bounded("csv_logging", value, 1_024, 65_536)?' "$settings"
+
+          # Telemetry pipeline config uses the dedicated queue.
+          model=crates/lantern-app/src/telemetry/model.rs
+          perl -0pi -e 's/csv_capacity: settings\.queues\.telemetry\.max\(1\),/csv_capacity: settings.queues.csv_logging,/' "$model"
+          grep -F 'csv_capacity: settings.queues.csv_logging,' "$model"
+
+          # Pipeline CSV producer sends only selected sample cores and accumulates exact gaps.
+          pipeline=crates/lantern-app/src/telemetry/pipeline.rs
+          perl -0pi -e 's/(use lantern_domain::\{\n)/$1    CsvTelemetryItem, TelemetryGapCore,\n/' "$pipeline"
+          perl -0pi -e 's/mod state;/mod csv_delivery;\nmod state;/' "$pipeline"
+          perl -0pi -e 's/(use state::\{PipelineState, lock_state, quality_for_bus_error\};)/use csv_delivery::CsvDeliveryState;\n\n$1/' "$pipeline"
+          perl -0pi -e 's/pub csv: mpsc::Receiver<TelemetryEvent>,/pub csv: mpsc::Receiver<CsvTelemetryItem>,/' "$pipeline"
+          perl -0pi -e 's/(diagnostics: diagnostics_tx,\n)/$1            csv_delivery: Mutex::new(CsvDeliveryState::default()),\n/' "$pipeline"
+          perl -0pi -e 's/(    pub fn clear_histories\(&self, parameter_ids: &\[ParameterId\]\) \{)/    pub fn start_csv_logging(&self, parameter_ids: impl IntoIterator<Item = ParameterId>) {\n        self.shared\n            .csv_delivery\n            .lock()\n            .unwrap_or_else(std::sync::PoisonError::into_inner)\n            .start(parameter_ids);\n    }\n\n    pub fn stop_csv_logging(&self) -> Option<TelemetryGapCore> {\n        self.shared\n            .csv_delivery\n            .lock()\n            .unwrap_or_else(std::sync::PoisonError::into_inner)\n            .stop()\n    }\n\n    #[must_use]\n    pub fn csv_logging_active(&self) -> bool {\n        self.shared\n            .csv_delivery\n            .lock()\n            .unwrap_or_else(std::sync::PoisonError::into_inner)\n            .is_enabled()\n    }\n\n$1/' "$pipeline"
+          perl -0pi -e 's/(    diagnostics: mpsc::Sender<TelemetryEvent>,\n)/$1    csv_delivery: Mutex<CsvDeliveryState>,\n/' "$pipeline"
+          perl -0pi -e 's/(    csv: )mpsc::Sender<TelemetryEvent>/$1mpsc::Sender<CsvTelemetryItem>/' "$pipeline"
+          perl -0pi -e 's/        let mut csv_drops = 0_u64;\n        let mut fault_drops = 0_u64;\n        let mut diagnostics_drops = 0_u64;\n        for event in events \{\n            if self\.csv\.try_send\(event\.clone\(\)\)\.is_err\(\) \{\n                csv_drops = csv_drops\.saturating_add\(1\);\n            \}/        let mut csv_drops = 0_u64;\n        let mut fault_drops = 0_u64;\n        let mut diagnostics_drops = 0_u64;\n        let mut csv_delivery = self\n            .csv_delivery\n            .lock()\n            .unwrap_or_else(std::sync::PoisonError::into_inner);\n        for event in events {\n            if let Some(sample) = event.sample.as_ref() {\n                csv_drops = csv_drops.saturating_add(csv_delivery.publish(sample, \&self.csv));\n            }/s' "$pipeline"
+          perl -0pi -e 's/(        if csv_drops != 0 \|\| fault_drops != 0 \|\| diagnostics_drops != 0 \{)/        drop(csv_delivery);\n$1/' "$pipeline"
+          grep -F 'pub csv: mpsc::Receiver<CsvTelemetryItem>,' "$pipeline"
+          grep -F 'csv_delivery: Mutex<CsvDeliveryState>,' "$pipeline"
+          grep -F 'csv_delivery.publish(sample, &self.csv)' "$pipeline"
+          grep -F 'pub fn stop_csv_logging(&self) -> Option<TelemetryGapCore>' "$pipeline"
+
+          # Re-export CSV domain primitives through lantern-app for the composition root.
+          app_lib=crates/lantern-app/src/lib.rs
+          perl -0pi -e 's/(ByteOrder, )/$1CsvTelemetryItem, /' "$app_lib"
+          perl -0pi -e 's/(SessionId, SlaveId, )/$1TelemetryGapCore, /' "$app_lib"
+          perl -0pi -e 's/(LinkSettings, )/$1LoggingId, /' "$app_lib"
+          grep -F 'CsvTelemetryItem' "$app_lib"
+          grep -F 'TelemetryGapCore' "$app_lib"
+          grep -F 'LoggingId' "$app_lib"
+
+          # Storage actor dependencies are already pinned in the workspace lock graph.
+          storage_toml=crates/lantern-storage/Cargo.toml
+          perl -0pi -e 's/(sha2\.workspace = true\n)/$1csv.workspace = true\ntime.workspace = true\ntokio.workspace = true\n/' "$storage_toml"
+          grep -F 'csv.workspace = true' "$storage_toml"
+          grep -F 'tokio.workspace = true' "$storage_toml"
+
+          storage_lib=crates/lantern-storage/src/lib.rs
+          perl -0pi -e 's/mod fault_report;/mod fault_report;\nmod csv_writer;/' "$storage_lib"
+          perl -0pi -e 's/(pub use fault_report::\{FAULT_REPORT_SUFFIX, FaultReportError, write_fault_report\};\n)/$1pub use csv_writer::{CSV_HEADER, CSV_SCHEMA_VERSION, CsvWriterActor, CsvWriterHandle, CsvWriterStart, CsvWriterState, CsvWriterStatus, CsvWriterStop};\n/' "$storage_lib"
+          perl -0pi -e 's/pub use session_artifacts::\{\n    CsvSessionSidecarV1, LoggingRuntimeCheckpointV1, SessionArtifactError,\n    write_csv_session_sidecar, write_logging_runtime_checkpoint,\n\};/pub use session_artifacts::{\n    CSV_RUNTIME_CHECKPOINT_SCHEMA_VERSION, CSV_SESSION_SIDECAR_SCHEMA_VERSION,\n    CsvBusStatisticsV1, CsvChannelV1, CsvCountsV1, CsvFaultSummaryV1, CsvGapSummaryV1,\n    CsvLinkSettingsV1, CsvQualityCountsV1, CsvRuntimeCheckpointV1, CsvScaleV1,\n    CsvSessionSidecarV1, CsvSessionStatusV1, LoggingRuntimeCheckpointV1, SessionArtifactError,\n    create_csv_session_sidecar, remove_csv_runtime_checkpoint, update_csv_session_sidecar,\n    write_csv_runtime_checkpoint, write_csv_session_sidecar, write_logging_runtime_checkpoint,\n};/s' "$storage_lib"
+          grep -F 'CsvWriterActor' "$storage_lib"
+          grep -F 'CsvRuntimeCheckpointV1' "$storage_lib"
+
+          # Simplify the storage artifact assertion.
+          artifacts=crates/lantern-storage/src/session_artifacts.rs
+          perl -0pi -e 's/assert!\(checkpoint_path\.exists\(\)\.not\(\)\);/assert!(!checkpoint_path.exists());/' "$artifacts"
+          perl -0pi -e 's/\n    trait BoolNot \{.*?\n    \}\n\n    impl BoolNot for bool \{.*?\n    \}\n//s' "$artifacts"
+
+          cargo fmt --all
+          cargo check --workspace --all-features --locked
+          cargo test -p lantern-domain --locked
+          cargo test -p lantern-app --all-features --locked telemetry -- --nocapture
+          cargo test -p lantern-storage --all-features --locked -- --nocapture
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+          git rm .github/workflows/issue19-core-stage.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(#19): establish bounded CSV delivery and writer core'
+          git push origin HEAD:agent/issue-19
