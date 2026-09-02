@@ -4,6 +4,7 @@
 
 mod artifacts;
 mod atomic;
+mod csv_lifecycle;
 mod csv_writer;
 mod fault_report;
 mod paths;
@@ -15,6 +16,7 @@ use lantern_app::{ArtifactStoragePort, ProfileSource, ProfileSourceError};
 
 pub use artifacts::{StorageError, read_bounded, write_new};
 pub use atomic::{AtomicWriteError, atomic_write, create_new_synced};
+pub use csv_lifecycle::{CsvLoggingCoordinator, CsvLoggingLifecycleState};
 pub use csv_writer::{
     CSV_HEADER, CSV_SCHEMA_VERSION, CsvWriterActor, CsvWriterHandle, CsvWriterStart,
     CsvWriterState, CsvWriterStatus, CsvWriterStop,
