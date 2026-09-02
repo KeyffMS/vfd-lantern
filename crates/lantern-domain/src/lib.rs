@@ -36,8 +36,8 @@ pub use modbus::{
 pub use quantity::{QuantityKind, UnitError, UnitId};
 pub use rust_decimal::Decimal;
 pub use telemetry::{
-    MonotonicInstant, RawRegisters, RawRegistersError, TelemetryQuality, TelemetrySampleCore,
-    UtcTimestamp,
+    CsvTelemetryItem, MonotonicInstant, RawRegisters, RawRegistersError, TelemetryGapCore,
+    TelemetryQuality, TelemetrySampleCore, UtcTimestamp,
 };
 pub use value::{EngineeringValue, FixedScale, RoundingMode, ScaleError};
 pub use write::{PreparedWritePlan, ReadBackOutcome, WriteIntent, WriteOutcome};
