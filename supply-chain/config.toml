@@ -457,7 +457,7 @@ version = "0.4.14"
 criteria = "safe-to-deploy"
 
 [[exemptions.log]]
-version = "0.4.33"
+version = "0.4.34"
 criteria = "safe-to-deploy"
 
 [[exemptions.lru]]
@@ -605,7 +605,7 @@ version = "0.2.17"
 criteria = "safe-to-deploy"
 
 [[exemptions.pkg-config]]
-version = "0.3.33"
+version = "0.3.34"
 criteria = "safe-to-deploy"
 
 [[exemptions.portable-atomic]]
@@ -705,11 +705,11 @@ version = "0.5.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.ref-cast]]
-version = "1.0.26"
+version = "1.0.27"
 criteria = "safe-to-deploy"
 
 [[exemptions.ref-cast-impl]]
-version = "1.0.26"
+version = "1.0.27"
 criteria = "safe-to-deploy"
 
 [[exemptions.regex]]
@@ -801,7 +801,7 @@ version = "1.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.serialport]]
-version = "4.9.0"
+version = "4.10.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.sha2]]
@@ -869,7 +869,7 @@ version = "2.0.119"
 criteria = "safe-to-deploy"
 
 [[exemptions.syn]]
-version = "3.0.3"
+version = "3.0.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.tempfile]]
