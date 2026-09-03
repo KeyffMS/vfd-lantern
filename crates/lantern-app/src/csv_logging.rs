@@ -90,7 +90,7 @@ pub fn csv_subscriptions(
 mod tests {
     use lantern_profile::{ProfileFormat, parse_and_validate_profile};
 
-    use crate::{ParameterId, RequestClass};
+    use crate::{FrequencyClass, ParameterId, SubscriptionReason};
 
     use super::csv_subscriptions;
 
@@ -105,7 +105,9 @@ mod tests {
         let subscriptions = csv_subscriptions(&profile, &[parameter.clone(), parameter])
             .expect("subscriptions");
         assert_eq!(subscriptions.len(), 1);
-        assert_eq!(subscriptions[0].request_class(), RequestClass::Telemetry);
-        assert_eq!(subscriptions[0].reason(), crate::SubscriptionReason::Csv);
+        assert_eq!(subscriptions[0].frequency(), FrequencyClass::Normal);
+        assert_eq!(subscriptions[0].reason(), SubscriptionReason::Csv);
+        assert!(!subscriptions[0].history_required());
+        assert_eq!(subscriptions[0].maximum_age(), Duration::from_secs(2));
     }
 }
