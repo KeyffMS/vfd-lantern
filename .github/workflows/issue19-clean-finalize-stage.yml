@@ -1,0 +1,36 @@
+name: Stage issue 19 clean CSV finalization
+
+on:
+  push:
+    branches:
+      - agent/issue-19
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-19
+          fetch-depth: 0
+      - name: Validate clean CSV finalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --edition=2024 .github/scripts/issue19_clean_finalize_stage.rs -o /tmp/issue19-clean-finalize
+          /tmp/issue19-clean-finalize
+          cargo fmt --all
+          cargo check --workspace --all-features --locked
+          cargo test --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          git rm .github/workflows/issue19-clean-finalize-stage.yml
+          git rm .github/scripts/issue19_clean_finalize_stage.rs
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(#19): finalize CSV before session teardown'
+          git push origin HEAD:agent/issue-19
