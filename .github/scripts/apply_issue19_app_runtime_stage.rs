@@ -16,9 +16,23 @@ fn apply_top_level_replacements(spec: &str) {
             let mut pos = cursor + "replace(".len();
             let path = parse_string(spec, &mut pos);
             expect_comma(spec, &mut pos);
-            let old = parse_string(spec, &mut pos);
+            let mut old = parse_string(spec, &mut pos);
             expect_comma(spec, &mut pos);
-            let new = parse_string(spec, &mut pos);
+            let mut new = parse_string(spec, &mut pos);
+            if path == "crates/vfd-lantern/src/monitoring_runtime.rs"
+                && old.contains("            MonitoringEffect::ClearHistory { .. }")
+            {
+                old = old.replacen(
+                    "            MonitoringEffect::ClearHistory { .. }",
+                    "            | MonitoringEffect::ClearHistory { .. }",
+                    1,
+                );
+                new = new.replacen(
+                    "            MonitoringEffect::ClearHistory { .. }",
+                    "            | MonitoringEffect::ClearHistory { .. }",
+                    1,
+                );
+            }
             replace_once(Path::new(&path), &old, &new);
             cursor = pos;
         } else {
