@@ -10,8 +10,8 @@ use lantern_domain::{
     UtcTimestamp,
 };
 use lantern_storage::{
-    CsvBusStatisticsV1, CsvChannelV1, CsvFaultSummaryV1, CsvLinkSettingsV1,
-    CsvSessionSidecarV1, CsvWriterActor, CsvWriterStart, CsvWriterState, CsvWriterStop,
+    CsvBusStatisticsV1, CsvChannelV1, CsvFaultSummaryV1, CsvLinkSettingsV1, CsvSessionSidecarV1,
+    CsvWriterActor, CsvWriterStart, CsvWriterState, CsvWriterStop,
 };
 use tempfile::tempdir;
 use tokio::sync::mpsc;
@@ -61,7 +61,11 @@ fn sidecar(encoding: &str) -> CsvSessionSidecarV1 {
     )
 }
 
-fn sample(value: EngineeringValue, quality: TelemetryQuality, request_id: u64) -> TelemetrySampleCore {
+fn sample(
+    value: EngineeringValue,
+    quality: TelemetryQuality,
+    request_id: u64,
+) -> TelemetrySampleCore {
     TelemetrySampleCore {
         session_id: SessionId::new(7),
         parameter_id: ParameterId::parse("status.frequency").expect("parameter"),
@@ -69,9 +73,7 @@ fn sample(value: EngineeringValue, quality: TelemetryQuality, request_id: u64) -
         engineering: value,
         quality,
         monotonic_time: MonotonicInstant::from_nanos(u128::from(request_id) * 100),
-        utc_time: UtcTimestamp::from_unix_nanos(
-            1_700_000_000_000_000_000 + i128::from(request_id),
-        ),
+        utc_time: UtcTimestamp::from_unix_nanos(1_700_000_000_000_000_000 + i128::from(request_id)),
         request_id: RequestId::new(request_id),
     }
 }
@@ -270,7 +272,10 @@ async fn distinct_gap_waves_remain_distinct_and_counted() {
         .records()
         .collect::<Result<Vec<_>, _>>()
         .expect("records");
-    assert_eq!(records.iter().map(|row| &row[1]).collect::<Vec<_>>(), ["gap", "sample", "gap"]);
+    assert_eq!(
+        records.iter().map(|row| &row[1]).collect::<Vec<_>>(),
+        ["gap", "sample", "gap"]
+    );
     assert_eq!(&records[0][17], "2");
     assert_eq!(&records[2][17], "3");
 
@@ -355,7 +360,8 @@ async fn failed_writer_finalization_keeps_pending_gap_summary_and_checkpoint() {
     assert!(sidecar_json["gaps"]["last_gap_end_utc"].is_string());
 
     let checkpoint_json: serde_json::Value =
-        serde_json::from_slice(&fs::read(&checkpoint_path).expect("failed checkpoint")).expect("json");
+        serde_json::from_slice(&fs::read(&checkpoint_path).expect("failed checkpoint"))
+            .expect("json");
     assert_eq!(checkpoint_json["status"], "failed");
     assert_eq!(checkpoint_json["dropped_count"], 7);
 

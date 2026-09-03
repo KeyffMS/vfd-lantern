@@ -208,6 +208,14 @@ criteria = "safe-to-deploy"
 version = "0.6.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.csv]]
+version = "1.4.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.csv-core]]
+version = "0.1.13"
+criteria = "safe-to-deploy"
+
 [[exemptions.darling]]
 version = "0.24.1"
 criteria = "safe-to-deploy"
@@ -914,6 +922,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.time-core]]
 version = "0.1.9"
+criteria = "safe-to-deploy"
+
+[[exemptions.time-macros]]
+version = "0.2.32"
 criteria = "safe-to-deploy"
 
 [[exemptions.tokio]]

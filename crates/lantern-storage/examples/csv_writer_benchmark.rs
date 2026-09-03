@@ -5,8 +5,8 @@ use lantern_domain::{
     RawRegisters, RequestId, SessionId, TelemetryQuality, TelemetrySampleCore, UtcTimestamp,
 };
 use lantern_storage::{
-    CsvBusStatisticsV1, CsvChannelV1, CsvFaultSummaryV1, CsvLinkSettingsV1,
-    CsvSessionSidecarV1, CsvWriterActor, CsvWriterStart, CsvWriterStop,
+    CsvBusStatisticsV1, CsvChannelV1, CsvFaultSummaryV1, CsvLinkSettingsV1, CsvSessionSidecarV1,
+    CsvWriterActor, CsvWriterStart, CsvWriterStop,
 };
 use tempfile::tempdir;
 use tokio::sync::mpsc;
