@@ -1,0 +1,36 @@
+name: Stage issue 19 CSV TUI
+
+on:
+  push:
+    branches:
+      - agent/issue-19
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-19
+          fetch-depth: 0
+      - name: Integrate CSV logging TUI
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --edition=2024 .github/scripts/issue19_tui_stage.rs -o /tmp/issue19-tui-stage
+          /tmp/issue19-tui-stage
+          cargo fmt --all
+          cargo check --workspace --all-features --locked
+          cargo test --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          git rm .github/workflows/issue19-tui-stage.yml
+          git rm .github/scripts/issue19_tui_stage.rs
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(#19): expose CSV logging controls in TUI'
+          git push origin HEAD:agent/issue-19
