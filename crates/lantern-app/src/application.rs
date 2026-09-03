@@ -132,6 +132,8 @@ impl ApplicationState {
                         &self.monitoring.dashboard_parameters,
                         &self.monitoring.scope,
                         self.monitoring.snapshot.as_ref(),
+                        &self.monitoring.csv_parameters,
+                        &self.monitoring.csv_status,
                         self.monitoring.error.as_deref(),
                     )
                 })
