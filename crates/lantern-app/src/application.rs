@@ -217,7 +217,16 @@ impl ApplicationState {
             ApplicationAction::Parameters(action) => self.reduce_parameters(action),
             ApplicationAction::Faults(action) => self.reduce_faults(action),
             ApplicationAction::Session(input) => {
+                let previous_session_id = self.session.session_id();
                 let effects = self.session.transition(input);
+                let csv_finalize = effects
+                    .contains(&SessionEffect::StopPlanner)
+                    .then(|| self.csv_stop_effect(previous_session_id))
+                    .flatten();
+                let mut translated = self.translate_session_effects(effects);
+                if let Some(effect) = csv_finalize {
+                    translated.insert(0, effect);
+                }
                 if matches!(
                     self.session.state(),
                     SessionState::Disconnected { .. } | SessionState::ShuttingDown
@@ -226,7 +235,7 @@ impl ApplicationState {
                     self.parameters = ApplicationParameterState::default();
                     self.faults = FaultTracker::default();
                 }
-                self.translate_session_effects(effects)
+                translated
             }
         }
     }
@@ -1079,6 +1088,34 @@ impl ApplicationState {
         }
     }
 
+    fn csv_stop_effect(&self, session_id: Option<SessionId>) -> Option<ApplicationEffect> {
+        if !matches!(
+            self.monitoring.csv_status.state,
+            CsvLoggingStateView::Starting | CsvLoggingStateView::Running
+        ) {
+            return None;
+        }
+        let session_id = session_id?;
+        let fault_view = self.faults.view();
+        Some(ApplicationEffect::Monitoring(
+            MonitoringEffect::StopCsvLogging {
+                session_id,
+                faults: CsvLoggingFaultSummary {
+                    events: u64::try_from(fault_view.events.len()).unwrap_or(u64::MAX),
+                    acknowledged: u64::try_from(
+                        fault_view
+                            .events
+                            .iter()
+                            .filter(|event| event.event.acknowledged)
+                            .count(),
+                    )
+                    .unwrap_or(u64::MAX),
+                    evicted: fault_view.evicted_events,
+                },
+            },
+        ))
+    }
+
     fn selected_profile(&self) -> Option<Arc<ValidatedDeviceProfile>> {
         self.active_profile
             .as_ref()
@@ -1095,7 +1132,12 @@ impl ApplicationState {
     }
 
     fn translate_session_effects(&mut self, effects: Vec<SessionEffect>) -> Vec<ApplicationEffect> {
-        let mut translated = Vec::with_capacity(effects.len());
+        let mut translated = Vec::with_capacity(effects.len() + 1);
+        if effects.contains(&SessionEffect::StopPlanner)
+            && let Some(effect) = self.csv_stop_effect(self.session.session_id())
+        {
+            translated.push(effect);
+        }
         for effect in effects {
             match effect {
                 SessionEffect::ClosePort => {
@@ -1421,10 +1463,17 @@ fn session_fault_for_connect_error(error: &SerialConnectError) -> SessionFault {
 mod tests {
     use std::{path::PathBuf, sync::Arc};
 
+    use lantern_domain::{
+        DeviceFingerprint, IdentificationMatch, IdentificationReport, SessionId,
+        VerifiedDeviceIdentity,
+    };
+
     use crate::{
-        ApplicationAction, ApplicationEffect, ApplicationState, ConnectionAction, ConnectionEffect,
-        EffectRunner, PackagedProfilesManifestV1, PortSnapshot, ProfileRegistry, ProfileSource,
-        ProfileSourceFormat, ProfileSourceTier, SerialPortDescriptor, SessionPhaseView,
+        AdapterIdentity, ApplicationAction, ApplicationEffect, ApplicationState, ConnectionAction,
+        ConnectionEffect, CsvLoggingStateView, EffectRunner, LoggingId, MonitoringEffect,
+        PackagedProfilesManifestV1, PortSnapshot, ProfileRegistry, ProfileSource,
+        ProfileSourceFormat, ProfileSourceTier, SerialPortDescriptor, SessionEffect, SessionInput,
+        SessionPhaseView, VerifiedSessionIdentity,
     };
 
     use super::{ApplicationEffectError, ApplicationRuntime, ApplicationView};
@@ -1471,6 +1520,75 @@ mod tests {
             runtime.state().session().state(),
             crate::SessionState::ShuttingDown
         ));
+    }
+
+    #[test]
+    fn session_teardown_finalizes_active_csv_before_stopping_planner() {
+        let registry = registry();
+        let profile_id = registry.entries().keys().next().expect("profile").clone();
+        let profile = registry.get(&profile_id).expect("entry").profile();
+        let mut state = ApplicationState::with_registry(Arc::clone(&registry), false);
+        state.active_profile = Some(profile_id.clone());
+        let adapter = AdapterIdentity {
+            stable_id: Some(PathBuf::from("/dev/serial/by-id/demo")),
+            canonical_device: PathBuf::from("/dev/ttyUSB0"),
+            vendor_id: Some(1),
+            product_id: Some(2),
+            serial_number: Some("demo".to_owned()),
+        };
+        state.session.transition(SessionInput::Connect);
+        state
+            .session
+            .transition(SessionInput::PortOpened { identity: adapter });
+        let session_id = SessionId::new(7);
+        state
+            .session
+            .transition(SessionInput::IdentificationFinished {
+                report: IdentificationReport {
+                    profile_id: profile_id.clone(),
+                    outcome: IdentificationMatch::Match,
+                    probes: Box::new([]),
+                },
+                verified: Some(VerifiedSessionIdentity {
+                    device: VerifiedDeviceIdentity {
+                        profile_id,
+                        fingerprint: DeviceFingerprint::parse("device.demo").expect("fingerprint"),
+                        probes: Box::new([]),
+                    },
+                    profile_hash: profile.profile_hash(),
+                }),
+                session_id,
+            });
+        state.monitoring.csv_status.state = CsvLoggingStateView::Running;
+        state.monitoring.csv_status.logging_id = Some(LoggingId::new(9));
+
+        let effects = state.reduce(ApplicationAction::Session(SessionInput::Shutdown));
+        assert!(matches!(
+            effects.first(),
+            Some(ApplicationEffect::Monitoring(MonitoringEffect::StopCsvLogging {
+                session_id: actual,
+                ..
+            })) if *actual == session_id
+        ));
+        let csv_index = effects
+            .iter()
+            .position(|effect| {
+                matches!(
+                    effect,
+                    ApplicationEffect::Monitoring(MonitoringEffect::StopCsvLogging { .. })
+                )
+            })
+            .expect("CSV stop");
+        let planner_index = effects
+            .iter()
+            .position(|effect| {
+                matches!(
+                    effect,
+                    ApplicationEffect::Session(SessionEffect::StopPlanner)
+                )
+            })
+            .expect("planner stop");
+        assert!(csv_index < planner_index);
     }
 
     #[test]

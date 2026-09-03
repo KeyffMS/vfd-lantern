@@ -676,12 +676,10 @@ impl MonitoringRuntime {
                 .map_or_else(Default::default, |bus| bus.statistics());
             (Arc::clone(&active.csv_logging), bus_stop)
         };
-        let runtime = self.clone();
-        let action_tx = self.action_tx.clone();
-        tokio::spawn(async move {
+        let (before, result) = block_on_csv(async {
+            let mut coordinator = coordinator.lock().await;
+            let before = coordinator.writer_status();
             let result = coordinator
-                .lock()
-                .await
                 .stop(CsvWriterStop {
                     stopped_utc: system_utc_timestamp(),
                     pending_gap: None,
@@ -693,23 +691,21 @@ impl MonitoringRuntime {
                     },
                 })
                 .await;
-            let _ = runtime.clear_csv_parameters(session_id);
-            let status = match result {
-                Ok(()) => CsvLoggingRuntimeStatus {
-                    state: CsvLoggingStateView::Completed,
-                    ..CsvLoggingRuntimeStatus::default()
-                },
-                Err(message) => CsvLoggingRuntimeStatus {
-                    state: CsvLoggingStateView::Failed,
-                    last_error: Some(message),
-                    ..CsvLoggingRuntimeStatus::default()
-                },
-            };
-            let _ = action_tx.send(ApplicationAction::Monitoring(
-                MonitoringAction::CsvLoggingRuntimeStatus { session_id, status },
-            ));
-        });
-        Ok(())
+            (before, result)
+        })?;
+        let _ = self.clear_csv_parameters(session_id);
+        let mut status = before.map(app_csv_status).unwrap_or_default();
+        match &result {
+            Ok(()) => status.state = CsvLoggingStateView::Completed,
+            Err(message) => {
+                status.state = CsvLoggingStateView::Failed;
+                status.last_error = Some(message.clone());
+            }
+        }
+        let _ = self.action_tx.send(ApplicationAction::Monitoring(
+            MonitoringAction::CsvLoggingRuntimeStatus { session_id, status },
+        ));
+        result
     }
 
     fn clear_csv_parameters(&self, session_id: SessionId) -> Result<(), String> {
@@ -1261,6 +1257,21 @@ fn utc_text(timestamp: lantern_app::UtcTimestamp) -> Result<String, String> {
         .map_err(|error| error.to_string())?
         .format(&Rfc3339)
         .map_err(|error| error.to_string())
+}
+
+fn block_on_csv<F>(future: F) -> Result<F::Output, String>
+where
+    F: std::future::Future,
+{
+    let handle = tokio::runtime::Handle::try_current().map_err(|error| {
+        format!("CSV finalization requires the application Tokio runtime: {error}")
+    })?;
+    match handle.runtime_flavor() {
+        tokio::runtime::RuntimeFlavor::MultiThread => {
+            Ok(tokio::task::block_in_place(|| handle.block_on(future)))
+        }
+        _ => Err("CSV finalization requires the multi-thread application Tokio runtime".to_owned()),
+    }
 }
 
 fn lock_state(state: &Mutex<MonitoringState>) -> MutexGuard<'_, MonitoringState> {
