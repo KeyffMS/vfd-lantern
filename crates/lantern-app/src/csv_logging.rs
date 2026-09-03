@@ -4,8 +4,8 @@ use lantern_domain::{DeviceFingerprint, LinkSettings, LoggingId, ParameterId, Se
 use lantern_profile::ValidatedDeviceProfile;
 
 use crate::{
-    AdapterIdentity, FrequencyClass, MonitoringError, ProfileOrigin, ReadSubscription, SubscriberId,
-    SubscriptionReason,
+    AdapterIdentity, FrequencyClass, MonitoringError, ProfileOrigin, ReadSubscription,
+    SubscriberId, SubscriptionReason,
 };
 
 const CSV_MAXIMUM_AGE: Duration = Duration::from_secs(2);
@@ -104,8 +104,8 @@ mod tests {
         )
         .expect("profile");
         let parameter = ParameterId::parse("status.output_frequency").expect("parameter");
-        let subscriptions = csv_subscriptions(&profile, &[parameter.clone(), parameter])
-            .expect("subscriptions");
+        let subscriptions =
+            csv_subscriptions(&profile, &[parameter.clone(), parameter]).expect("subscriptions");
         assert_eq!(subscriptions.len(), 1);
         assert_eq!(subscriptions[0].frequency(), FrequencyClass::Normal);
         assert_eq!(subscriptions[0].reason(), SubscriptionReason::Csv);

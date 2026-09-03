@@ -2490,6 +2490,7 @@ dependencies = [
  "lantern-tui",
  "serde_json",
  "tempfile",
+ "time",
  "tokio",
 ]
 

@@ -67,6 +67,11 @@ impl CsvLoggingCoordinator {
         *lock(&self.state)
     }
 
+    #[must_use]
+    pub fn writer_status(&self) -> Option<CsvWriterStatus> {
+        self.active.as_ref().map(|active| active.writer.status())
+    }
+
     /// Starts storage first and enables the non-blocking telemetry producer
     /// only after the writer acknowledged a Running state.
     pub async fn start(

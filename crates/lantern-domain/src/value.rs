@@ -142,10 +142,34 @@ impl FixedScale {
         raw.to_i128().ok_or(ScaleError::NotRepresentable)
     }
 
+    /// Returns the configured multiplier.
+    #[must_use]
+    pub const fn multiplier(&self) -> Decimal {
+        self.multiplier
+    }
+
+    /// Returns the configured divisor.
+    #[must_use]
+    pub const fn divisor(&self) -> Decimal {
+        self.divisor
+    }
+
+    /// Returns the configured offset.
+    #[must_use]
+    pub const fn offset(&self) -> Decimal {
+        self.offset
+    }
+
     /// Returns the configured decimal places.
     #[must_use]
     pub const fn decimal_places(&self) -> u32 {
         self.decimal_places
+    }
+
+    /// Returns the configured rounding policy.
+    #[must_use]
+    pub const fn rounding(&self) -> RoundingMode {
+        self.rounding
     }
 }
 
