@@ -24,6 +24,7 @@ jobs:
           rustc --edition=2024 .github/scripts/apply_issue19_app_runtime_stage.rs -o /tmp/apply-issue19-runtime
           /tmp/apply-issue19-runtime
           cargo fmt --all
+          cargo check --workspace --all-features
           cargo check --workspace --all-features --locked
           cargo test --workspace --all-features --locked
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
