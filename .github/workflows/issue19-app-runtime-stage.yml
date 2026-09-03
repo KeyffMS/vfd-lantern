@@ -23,6 +23,10 @@ jobs:
           set -euo pipefail
           rustc --edition=2024 .github/scripts/apply_issue19_app_runtime_stage.rs -o /tmp/apply-issue19-runtime
           /tmp/apply-issue19-runtime
+          sed -i '/impl TuiRuntimePaths/,/^}/ s/diagnostics_directory: paths\.diagnostics_directory/diagnostics_directory/' crates/vfd-lantern/src/connection_runtime.rs
+          sed -i '/impl TuiRuntimePaths/,/^}/ s/fault_report_directory: paths\.fault_report_directory/fault_report_directory/' crates/vfd-lantern/src/connection_runtime.rs
+          sed -i '/impl TuiEffectRunner/,/^}/ s/^            diagnostics_directory,$/            diagnostics_directory: paths.diagnostics_directory,/' crates/vfd-lantern/src/connection_runtime.rs
+          sed -i '/impl TuiEffectRunner/,/^}/ s/^            fault_report_directory,$/            fault_report_directory: paths.fault_report_directory,/' crates/vfd-lantern/src/connection_runtime.rs
           cargo fmt --all
           cargo check --workspace --all-features
           cargo check --workspace --all-features --locked
