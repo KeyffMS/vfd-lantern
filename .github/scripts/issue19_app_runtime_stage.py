@@ -1,0 +1,797 @@
+from pathlib import Path
+
+
+def replace(path: str, old: str, new: str) -> None:
+    p = Path(path)
+    text = p.read_text()
+    if old not in text:
+        raise SystemExit(f"anchor not found in {path}: {old[:120]!r}")
+    p.write_text(text.replace(old, new, 1))
+
+
+replace(
+    "crates/lantern-domain/src/value.rs",
+    "    /// Returns the configured decimal places.\n    #[must_use]\n    pub const fn decimal_places(&self) -> u32 {\n        self.decimal_places\n    }\n",
+    "    /// Returns the configured multiplier.\n    #[must_use]\n    pub const fn multiplier(&self) -> Decimal {\n        self.multiplier\n    }\n\n    /// Returns the configured divisor.\n    #[must_use]\n    pub const fn divisor(&self) -> Decimal {\n        self.divisor\n    }\n\n    /// Returns the configured offset.\n    #[must_use]\n    pub const fn offset(&self) -> Decimal {\n        self.offset\n    }\n\n    /// Returns the configured decimal places.\n    #[must_use]\n    pub const fn decimal_places(&self) -> u32 {\n        self.decimal_places\n    }\n\n    /// Returns the configured rounding policy.\n    #[must_use]\n    pub const fn rounding(&self) -> RoundingMode {\n        self.rounding\n    }\n",
+)
+replace(
+    "crates/lantern-domain/src/codec.rs",
+    "    /// Returns word ordering for multi-register values.\n    #[must_use]\n    pub const fn word_order(&self) -> WordOrder {\n        self.word_order\n    }\n",
+    "    /// Returns word ordering for multi-register values.\n    #[must_use]\n    pub const fn word_order(&self) -> WordOrder {\n        self.word_order\n    }\n\n    /// Returns the validated fixed-point scale when this encoding uses one.\n    #[must_use]\n    pub const fn fixed_scale(&self) -> Option<&FixedScale> {\n        self.fixed_scale.as_ref()\n    }\n",
+)
+
+replace(
+    "crates/lantern-app/src/monitoring.rs",
+    "    FrequencyClass, MonitoringRuntimeSnapshot, PollPlanError, ReadSubscription, SubscriberId,\n    SubscriptionReason,\n",
+    "    CsvLoggingFaultSummary, CsvLoggingRuntimeStatus, CsvLoggingStartContext, FrequencyClass,\n    MonitoringRuntimeSnapshot, PollPlanError, ReadSubscription, SubscriberId, SubscriptionReason,\n",
+)
+replace(
+    "crates/lantern-app/src/monitoring.rs",
+    "    ToggleScopeParameter(ParameterId),\n",
+    "    ToggleCsvParameter(ParameterId),\n    StartCsvLogging,\n    StopCsvLogging,\n    CsvLoggingRuntimeStatus {\n        session_id: SessionId,\n        status: CsvLoggingRuntimeStatus,\n    },\n    ToggleScopeParameter(ParameterId),\n",
+)
+replace(
+    "crates/lantern-app/src/monitoring.rs",
+    "    ClearHistory {\n        parameter_ids: Vec<ParameterId>,\n    },\n    Stop,\n",
+    "    ClearHistory {\n        parameter_ids: Vec<ParameterId>,\n    },\n    StartCsvLogging {\n        context: Box<CsvLoggingStartContext>,\n    },\n    StopCsvLogging {\n        session_id: SessionId,\n        faults: CsvLoggingFaultSummary,\n    },\n    Stop,\n",
+)
+
+replace(
+    "crates/lantern-app/src/lib.rs",
+    "    ByteOrder, CsvTelemetryItem, DeviceFingerprint, EngineeringValue, FaultEvent, FaultEventId,\n",
+    "    ByteOrder, CsvTelemetryItem, DataBits, DeviceFingerprint, EngineeringValue, FaultEvent,\n    FaultEventId, FixedScale, Parity, RoundingMode, Rs485Mode, StopBits,\n",
+)
+
+replace(
+    "crates/lantern-app/src/application.rs",
+    "    AuditHealth, Authorization, BusError, ConnectionAction, ConnectionAttemptKind,\n",
+    "    AuditHealth, Authorization, BusError, ConnectionAction, ConnectionAttemptKind,\n    CsvLoggingFaultSummary, CsvLoggingRuntimeStatus, CsvLoggingStartContext, CsvLoggingStateView,\n",
+)
+replace(
+    "crates/lantern-app/src/application.rs",
+    "    FaultTimelineView, FaultTracker, MAX_PARAMETER_BROWSER_VISIBLE, MonitoringAction,\n",
+    "    FaultTimelineView, FaultTracker, LoggingId, MAX_PARAMETER_BROWSER_VISIBLE, MonitoringAction,\n",
+)
+replace(
+    "crates/lantern-app/src/application.rs",
+    "    snapshot: Option<MonitoringRuntimeSnapshot>,\n    error: Option<String>,\n",
+    "    snapshot: Option<MonitoringRuntimeSnapshot>,\n    csv_parameters: Vec<ParameterId>,\n    csv_status: CsvLoggingRuntimeStatus,\n    next_logging_id: u128,\n    error: Option<String>,\n",
+)
+replace(
+    "crates/lantern-app/src/application.rs",
+    "            snapshot: None,\n            error: None,\n",
+    "            snapshot: None,\n            csv_parameters: Vec::new(),\n            csv_status: CsvLoggingRuntimeStatus::default(),\n            next_logging_id: 1,\n            error: None,\n",
+)
+replace(
+    "crates/lantern-app/src/application.rs",
+    "            MonitoringAction::ToggleScopeParameter(parameter_id) => {\n",
+    """            MonitoringAction::ToggleCsvParameter(parameter_id) => {
+                let Some(profile) = self.selected_profile() else {
+                    return Vec::new();
+                };
+                if self.session.session_id().is_none()
+                    || matches!(
+                        self.monitoring.csv_status.state,
+                        CsvLoggingStateView::Starting
+                            | CsvLoggingStateView::Running
+                            | CsvLoggingStateView::Finalizing
+                    )
+                {
+                    return Vec::new();
+                }
+                if profile.parameter(&parameter_id).is_none() {
+                    self.monitoring.error = Some(format!(
+                        "parameter {parameter_id} is not present in the active validated profile"
+                    ));
+                    return Vec::new();
+                }
+                if let Some(index) = self
+                    .monitoring
+                    .csv_parameters
+                    .iter()
+                    .position(|existing| existing == &parameter_id)
+                {
+                    self.monitoring.csv_parameters.remove(index);
+                } else {
+                    self.monitoring.csv_parameters.push(parameter_id);
+                }
+                self.monitoring.error = None;
+                Vec::new()
+            }
+            MonitoringAction::StartCsvLogging => {
+                if self.monitoring.csv_parameters.is_empty() {
+                    self.monitoring.error = Some("select at least one CSV logging channel".to_owned());
+                    return Vec::new();
+                }
+                if matches!(
+                    self.monitoring.csv_status.state,
+                    CsvLoggingStateView::Starting
+                        | CsvLoggingStateView::Running
+                        | CsvLoggingStateView::Finalizing
+                ) {
+                    return Vec::new();
+                }
+                let (session_id, fingerprint, adapter) = match self.session.state() {
+                    SessionState::Active(active)
+                        if matches!(&active.connectivity, Connectivity::Connected) =>
+                    {
+                        (
+                            active.session_id,
+                            active.identity.device.fingerprint.clone(),
+                            active.port_identity.clone(),
+                        )
+                    }
+                    _ => {
+                        self.monitoring.error = Some(
+                            "CSV logging requires a connected Verified session".to_owned(),
+                        );
+                        return Vec::new();
+                    }
+                };
+                let Some(link) = self.connection.link else {
+                    self.monitoring.error = Some("CSV logging is missing link settings".to_owned());
+                    return Vec::new();
+                };
+                let Some(profile_id) = self.active_profile.as_ref() else {
+                    return Vec::new();
+                };
+                let Some(entry) = self.registry.get(profile_id) else {
+                    return Vec::new();
+                };
+                let profile = Arc::clone(entry.profile());
+                let profile_origin = entry.origin();
+                let logging_id = LoggingId::new(self.monitoring.next_logging_id.max(1));
+                self.monitoring.next_logging_id = logging_id.get().saturating_add(1);
+                self.monitoring.csv_status = CsvLoggingRuntimeStatus {
+                    state: CsvLoggingStateView::Starting,
+                    logging_id: Some(logging_id),
+                    ..CsvLoggingRuntimeStatus::default()
+                };
+                self.monitoring.error = None;
+                vec![ApplicationEffect::Monitoring(MonitoringEffect::StartCsvLogging {
+                    context: Box::new(CsvLoggingStartContext {
+                        session_id,
+                        logging_id,
+                        profile,
+                        profile_origin,
+                        fingerprint,
+                        adapter,
+                        link,
+                        parameters: self.monitoring.csv_parameters.clone(),
+                    }),
+                })]
+            }
+            MonitoringAction::StopCsvLogging => {
+                if !matches!(
+                    self.monitoring.csv_status.state,
+                    CsvLoggingStateView::Starting | CsvLoggingStateView::Running
+                ) {
+                    return Vec::new();
+                }
+                let Some(session_id) = self.session.session_id() else {
+                    return Vec::new();
+                };
+                let fault_view = self.faults.view();
+                let faults = CsvLoggingFaultSummary {
+                    events: u64::try_from(fault_view.events.len()).unwrap_or(u64::MAX),
+                    acknowledged: u64::try_from(
+                        fault_view
+                            .events
+                            .iter()
+                            .filter(|event| event.event.acknowledged)
+                            .count(),
+                    )
+                    .unwrap_or(u64::MAX),
+                    evicted: fault_view.evicted_events,
+                };
+                self.monitoring.csv_status.state = CsvLoggingStateView::Finalizing;
+                vec![ApplicationEffect::Monitoring(MonitoringEffect::StopCsvLogging {
+                    session_id,
+                    faults,
+                })]
+            }
+            MonitoringAction::CsvLoggingRuntimeStatus { session_id, status } => {
+                if self.session.session_id() == Some(session_id) {
+                    self.monitoring.csv_status = status;
+                }
+                Vec::new()
+            }
+            MonitoringAction::ToggleScopeParameter(parameter_id) => {
+""",
+)
+
+replace(
+    "crates/lantern-storage/src/csv_lifecycle.rs",
+    "    #[must_use]\n    pub fn state(&self) -> CsvLoggingLifecycleState {\n        *lock(&self.state)\n    }\n",
+    "    #[must_use]\n    pub fn state(&self) -> CsvLoggingLifecycleState {\n        *lock(&self.state)\n    }\n\n    #[must_use]\n    pub fn writer_status(&self) -> Option<CsvWriterStatus> {\n        self.active.as_ref().map(|active| active.writer.status())\n    }\n",
+)
+
+replace(
+    "crates/vfd-lantern/Cargo.toml",
+    "tokio.workspace = true\n",
+    "tokio.workspace = true\ntime.workspace = true\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "use std::{\n    sync::{Arc, Mutex, MutexGuard, Weak},\n    time::{Duration, Instant},\n};\n",
+    "use std::{\n    path::PathBuf,\n    sync::{Arc, Mutex, MutexGuard, Weak},\n    time::{Duration, Instant, SystemTime, UNIX_EPOCH},\n};\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "    ApplicationAction, ApplicationEffectError, BusControlPort, BusError, BusFuture, FaultAction,\n",
+    "    ApplicationAction, ApplicationEffectError, BusControlPort, BusError, BusFuture, CsvLoggingFaultSummary,\n    CsvLoggingRuntimeStatus, CsvLoggingStartContext, CsvLoggingStateView, DataBits, FaultAction,\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "    LinkSettings, MonitoringAction, MonitoringDiagnosticsView, MonitoringEffect,\n",
+    "    LinkSettings, MonitoringAction, MonitoringDiagnosticsView, MonitoringEffect, Parity,\n    ProfileOrigin, QuantityKind, RegisterEncoding, RoundingMode, Rs485Mode, StopBits,\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "    dashboard_subscriptions, fault_subscription, parameter_browser_subscriptions,\n",
+    "    csv_subscriptions, dashboard_subscriptions, fault_subscription, parameter_browser_subscriptions,\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "use lantern_transport::BusActorHandle;\n",
+    "use lantern_storage::{\n    AppPaths, CsvBusStatisticsV1, CsvChannelV1, CsvFaultSummaryV1, CsvLinkSettingsV1,\n    CsvLoggingCoordinator, CsvScaleV1, CsvSessionSidecarV1, CsvWriterStart, CsvWriterState,\n    CsvWriterStatus, CsvWriterStop,\n};\nuse lantern_transport::BusActorHandle;\nuse time::{OffsetDateTime, format_description::well_known::Rfc3339};\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "    settings: Arc<ValidatedSettings>,\n    action_tx: mpsc::UnboundedSender<ApplicationAction>,\n",
+    "    settings: Arc<ValidatedSettings>,\n    action_tx: mpsc::UnboundedSender<ApplicationAction>,\n    csv_directory: PathBuf,\n    session_runtime_directory: PathBuf,\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "    parameter_browser_parameters: Vec<ParameterId>,\n    pending_parameter_browser_parameters: Vec<ParameterId>,\n",
+    "    parameter_browser_parameters: Vec<ParameterId>,\n    pending_parameter_browser_parameters: Vec<ParameterId>,\n    csv_parameters: Vec<ParameterId>,\n    csv_logging: Arc<tokio::sync::Mutex<CsvLoggingCoordinator>>,\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "        settings: ValidatedSettings,\n        action_tx: mpsc::UnboundedSender<ApplicationAction>,\n    ) -> Self {\n",
+    "        settings: ValidatedSettings,\n        action_tx: mpsc::UnboundedSender<ApplicationAction>,\n        csv_directory: PathBuf,\n        session_runtime_directory: PathBuf,\n    ) -> Self {\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "            settings: Arc::new(settings),\n            action_tx,\n",
+    "            settings: Arc::new(settings),\n            action_tx,\n            csv_directory,\n            session_runtime_directory,\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "            MonitoringEffect::ClearHistory { .. }\n            | MonitoringEffect::Stop => self.current_session(),\n",
+    "            MonitoringEffect::ClearHistory { .. }\n            | MonitoringEffect::StartCsvLogging { .. }\n            | MonitoringEffect::StopCsvLogging { .. }\n            | MonitoringEffect::Stop => self.current_session(),\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "            MonitoringEffect::ClearHistory { parameter_ids } => self.clear_history(&parameter_ids),\n            MonitoringEffect::Stop => {\n",
+    "            MonitoringEffect::ClearHistory { parameter_ids } => self.clear_history(&parameter_ids),\n            MonitoringEffect::StartCsvLogging { context } => self.start_csv_logging(*context),\n            MonitoringEffect::StopCsvLogging { session_id, faults } => self.stop_csv_logging(session_id, faults),\n            MonitoringEffect::Stop => {\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "        let subscriptions = monitoring_subscriptions(&profile, &dashboard_parameters, &scope, &[])?;\n",
+    "        let subscriptions = monitoring_subscriptions(&profile, &dashboard_parameters, &scope, &[], &[])?;\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "        let consumer_tasks = drain_consumers(\n            consumers,\n            self.action_tx.clone(),\n            Arc::downgrade(&self.shared),\n        );\n",
+    "        let TelemetryConsumers { tui: _tui, csv, fault, diagnostics } = consumers;\n        let csv_logging = Arc::new(tokio::sync::Mutex::new(CsvLoggingCoordinator::new(\n            pipeline.clone(),\n            csv,\n        )));\n        let consumer_tasks = drain_consumers(\n            fault,\n            diagnostics,\n            self.action_tx.clone(),\n            Arc::downgrade(&self.shared),\n        );\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "                pending_parameter_browser_parameters: Vec::new(),\n                poll,\n",
+    "                pending_parameter_browser_parameters: Vec::new(),\n                csv_parameters: Vec::new(),\n                csv_logging,\n                poll,\n",
+)
+
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "        let parameters = {\n            let state = lock_state(&self.shared.state);\n            state\n                .active\n                .as_ref()\n                .map(|active| active.parameter_browser_parameters.clone())\n                .ok_or_else(|| \"monitoring runtime is not active\".to_owned())?\n        };\n        self.reconfigure_all(dashboard_parameters, scope, parameters)\n",
+    "        let (parameters, csv_parameters) = {\n            let state = lock_state(&self.shared.state);\n            state\n                .active\n                .as_ref()\n                .map(|active| (active.parameter_browser_parameters.clone(), active.csv_parameters.clone()))\n                .ok_or_else(|| \"monitoring runtime is not active\".to_owned())?\n        };\n        self.reconfigure_all(dashboard_parameters, scope, parameters, csv_parameters)\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "        parameter_browser_parameters: Vec<ParameterId>,\n    ) -> Result<(), String> {\n",
+    "        parameter_browser_parameters: Vec<ParameterId>,\n        csv_parameters: Vec<ParameterId>,\n    ) -> Result<(), String> {\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "            &parameter_browser_parameters,\n        )?;\n",
+    "            &parameter_browser_parameters,\n            &csv_parameters,\n        )?;\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "        active.parameter_browser_parameters = parameter_browser_parameters;\n        Ok(())\n",
+    "        active.parameter_browser_parameters = parameter_browser_parameters;\n        active.csv_parameters = csv_parameters;\n        Ok(())\n",
+)
+
+runtime_path = Path("crates/vfd-lantern/src/monitoring_runtime.rs")
+text = runtime_path.read_text()
+text = text.replace(
+    "        let (dashboard, scope, parameters) = {\n            let state = lock_state(&self.shared.state);\n            if state.parameter_browser_generation != generation {\n",
+    "        let (dashboard, scope, parameters, csv_parameters) = {\n            let state = lock_state(&self.shared.state);\n            if state.parameter_browser_generation != generation {\n",
+    1,
+)
+text = text.replace(
+    "                active.pending_parameter_browser_parameters.clone(),\n            )\n        };\n        self.reconfigure_all(dashboard, scope, parameters)\n",
+    "                active.pending_parameter_browser_parameters.clone(),\n                active.csv_parameters.clone(),\n            )\n        };\n        self.reconfigure_all(dashboard, scope, parameters, csv_parameters)\n",
+    1,
+)
+idx = text.find("    fn restore_after_refresh")
+if idx < 0:
+    raise SystemExit("restore_after_refresh anchor missing")
+before, after = text[:idx], text[idx:]
+after = after.replace(
+    "        let (dashboard, scope, parameters) = {\n",
+    "        let (dashboard, scope, parameters, csv_parameters) = {\n",
+    1,
+)
+after = after.replace(
+    "                active.parameter_browser_parameters.clone(),\n            )\n        };\n        self.reconfigure_all(dashboard, scope, parameters)\n",
+    "                active.parameter_browser_parameters.clone(),\n                active.csv_parameters.clone(),\n            )\n        };\n        self.reconfigure_all(dashboard, scope, parameters, csv_parameters)\n",
+    1,
+)
+runtime_path.write_text(before + after)
+
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "                &active.parameter_browser_parameters,\n            )?;\n",
+    "                &active.parameter_browser_parameters,\n                &active.csv_parameters,\n            )?;\n",
+)
+
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "    fn clear_history(&self, parameter_ids: &[ParameterId]) -> Result<(), String> {\n",
+    """    fn start_csv_logging(&self, context: CsvLoggingStartContext) -> Result<(), String> {
+        let (coordinator, bus_start) = {
+            let mut state = lock_state(&self.shared.state);
+            if state.verified_session != Some(context.session_id) {
+                return Err("CSV logging requires the active Verified session".to_owned());
+            }
+            let bus_start = state
+                .bus
+                .as_ref()
+                .map_or_else(Default::default, |bus| bus.statistics());
+            let active = state
+                .active
+                .as_mut()
+                .filter(|active| active.session_id == context.session_id)
+                .ok_or_else(|| "CSV logging session is not active in monitoring runtime".to_owned())?;
+            for parameter_id in &context.parameters {
+                if active.profile.parameter(parameter_id).is_none() {
+                    return Err(format!("unknown CSV logging parameter {parameter_id}"));
+                }
+            }
+            let subscriptions = monitoring_subscriptions(
+                &active.profile,
+                &active.dashboard_parameters,
+                &active.scope,
+                &active.parameter_browser_parameters,
+                &context.parameters,
+            )?;
+            let plan = Arc::new(
+                active
+                    .planner
+                    .build(
+                        &active.profile,
+                        subscriptions,
+                        active.planner_config,
+                        Instant::now(),
+                    )
+                    .map_err(|error| error.to_string())?,
+            );
+            validate_monitoring_plan(&plan)?;
+            active
+                .pipeline
+                .update_plan(Arc::clone(&plan))
+                .map_err(|error| error.to_string())?;
+            active
+                .poll
+                .update_plan(Arc::clone(&plan))
+                .map_err(|error| error.to_string())?;
+            active.plan = plan;
+            active.csv_parameters = context.parameters.clone();
+            (Arc::clone(&active.csv_logging), bus_start)
+        };
+
+        let start = csv_writer_start(
+            &context,
+            &self.csv_directory,
+            &self.session_runtime_directory,
+            bus_start,
+        )?;
+        let csv_path = start.csv_path.clone();
+        let runtime = self.clone();
+        let action_tx = self.action_tx.clone();
+        let session_id = context.session_id;
+        let logging_id = context.logging_id;
+        let parameters = context.parameters.clone();
+        tokio::spawn(async move {
+            let result = coordinator.lock().await.start(parameters, start).await;
+            match result {
+                Ok(()) => {
+                    let status = CsvLoggingRuntimeStatus {
+                        state: CsvLoggingStateView::Running,
+                        logging_id: Some(logging_id),
+                        csv_path: Some(csv_path),
+                        ..CsvLoggingRuntimeStatus::default()
+                    };
+                    let _ = action_tx.send(ApplicationAction::Monitoring(
+                        MonitoringAction::CsvLoggingRuntimeStatus { session_id, status },
+                    ));
+                    spawn_csv_status_task(runtime, coordinator, session_id);
+                }
+                Err(message) => {
+                    let _ = runtime.clear_csv_parameters(session_id);
+                    let status = CsvLoggingRuntimeStatus {
+                        state: CsvLoggingStateView::Failed,
+                        logging_id: Some(logging_id),
+                        csv_path: Some(csv_path),
+                        last_error: Some(message),
+                        ..CsvLoggingRuntimeStatus::default()
+                    };
+                    let _ = action_tx.send(ApplicationAction::Monitoring(
+                        MonitoringAction::CsvLoggingRuntimeStatus { session_id, status },
+                    ));
+                }
+            }
+        });
+        Ok(())
+    }
+
+    fn stop_csv_logging(
+        &self,
+        session_id: SessionId,
+        faults: CsvLoggingFaultSummary,
+    ) -> Result<(), String> {
+        let (coordinator, bus_stop) = {
+            let state = lock_state(&self.shared.state);
+            let active = state
+                .active
+                .as_ref()
+                .filter(|active| active.session_id == session_id)
+                .ok_or_else(|| "CSV logging session is not active".to_owned())?;
+            let bus_stop = state
+                .bus
+                .as_ref()
+                .map_or_else(Default::default, |bus| bus.statistics());
+            (Arc::clone(&active.csv_logging), bus_stop)
+        };
+        let runtime = self.clone();
+        let action_tx = self.action_tx.clone();
+        tokio::spawn(async move {
+            let result = coordinator
+                .lock()
+                .await
+                .stop(CsvWriterStop {
+                    stopped_utc: system_utc_timestamp(),
+                    pending_gap: None,
+                    bus_stop,
+                    faults: CsvFaultSummaryV1 {
+                        events: faults.events,
+                        acknowledged: faults.acknowledged,
+                        evicted: faults.evicted,
+                    },
+                })
+                .await;
+            let _ = runtime.clear_csv_parameters(session_id);
+            let status = match result {
+                Ok(()) => CsvLoggingRuntimeStatus {
+                    state: CsvLoggingStateView::Completed,
+                    ..CsvLoggingRuntimeStatus::default()
+                },
+                Err(message) => CsvLoggingRuntimeStatus {
+                    state: CsvLoggingStateView::Failed,
+                    last_error: Some(message),
+                    ..CsvLoggingRuntimeStatus::default()
+                },
+            };
+            let _ = action_tx.send(ApplicationAction::Monitoring(
+                MonitoringAction::CsvLoggingRuntimeStatus { session_id, status },
+            ));
+        });
+        Ok(())
+    }
+
+    fn clear_csv_parameters(&self, session_id: SessionId) -> Result<(), String> {
+        let (dashboard, scope, browser) = {
+            let state = lock_state(&self.shared.state);
+            let active = state
+                .active
+                .as_ref()
+                .filter(|active| active.session_id == session_id)
+                .ok_or_else(|| "CSV logging session is no longer active".to_owned())?;
+            (
+                active.dashboard_parameters.clone(),
+                active.scope.clone(),
+                active.parameter_browser_parameters.clone(),
+            )
+        };
+        self.reconfigure_all(dashboard, scope, browser, Vec::new())
+    }
+
+    fn clear_history(&self, parameter_ids: &[ParameterId]) -> Result<(), String> {
+""",
+)
+
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "    parameter_browser_parameters: &[ParameterId],\n) -> Result<Vec<ReadSubscription>, String> {\n",
+    "    parameter_browser_parameters: &[ParameterId],\n    csv_parameters: &[ParameterId],\n) -> Result<Vec<ReadSubscription>, String> {\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "    if let Some(fault) = fault_subscription(profile).map_err(|error| error.to_string())? {\n",
+    "    subscriptions.extend(csv_subscriptions(profile, csv_parameters).map_err(|error| error.to_string())?);\n    if let Some(fault) = fault_subscription(profile).map_err(|error| error.to_string())? {\n",
+)
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "fn drain_consumers(\n    consumers: TelemetryConsumers,\n    action_tx: mpsc::UnboundedSender<ApplicationAction>,\n    shared: Weak<MonitoringShared>,\n) -> Vec<JoinHandle<()>> {\n    let TelemetryConsumers {\n        tui: _tui,\n        csv,\n        fault,\n        diagnostics,\n    } = consumers;\n    vec![\n        drain(csv),\n        forward_faults(fault, action_tx, shared),\n        drain(diagnostics),\n    ]\n}\n",
+    "fn drain_consumers(\n    fault: mpsc::Receiver<TelemetryEvent>,\n    diagnostics: mpsc::Receiver<TelemetryEvent>,\n    action_tx: mpsc::UnboundedSender<ApplicationAction>,\n    shared: Weak<MonitoringShared>,\n) -> Vec<JoinHandle<()>> {\n    vec![\n        forward_faults(fault, action_tx, shared),\n        drain(diagnostics),\n    ]\n}\n",
+)
+
+replace(
+    "crates/vfd-lantern/src/monitoring_runtime.rs",
+    "fn lock_state(state: &Mutex<MonitoringState>) -> MutexGuard<'_, MonitoringState> {\n",
+    """fn spawn_csv_status_task(
+    runtime: MonitoringRuntime,
+    coordinator: Arc<tokio::sync::Mutex<CsvLoggingCoordinator>>,
+    session_id: SessionId,
+) {
+    let action_tx = runtime.action_tx.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(250));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let status = coordinator.lock().await.writer_status();
+            let Some(status) = status else { return; };
+            let failed = status.state == CsvWriterState::Failed;
+            let _ = action_tx.send(ApplicationAction::Monitoring(
+                MonitoringAction::CsvLoggingRuntimeStatus {
+                    session_id,
+                    status: app_csv_status(status),
+                },
+            ));
+            if failed {
+                let _ = runtime.clear_csv_parameters(session_id);
+                return;
+            }
+        }
+    });
+}
+
+fn app_csv_status(status: CsvWriterStatus) -> CsvLoggingRuntimeStatus {
+    let state = match status.state {
+        CsvWriterState::Idle => CsvLoggingStateView::Idle,
+        CsvWriterState::Running => CsvLoggingStateView::Running,
+        CsvWriterState::Completed => CsvLoggingStateView::Completed,
+        CsvWriterState::Failed => CsvLoggingStateView::Failed,
+    };
+    CsvLoggingRuntimeStatus {
+        state,
+        logging_id: status.logging_id,
+        csv_path: status.csv_path,
+        queue_depth: status.queue_depth,
+        queue_capacity: status.queue_capacity,
+        samples_written: status.samples_written,
+        gaps_written: status.gaps_written,
+        dropped_count: status.dropped_count,
+        flushes: status.flushes,
+        syncs: status.syncs,
+        last_error: status.last_error,
+    }
+}
+
+fn csv_writer_start(
+    context: &CsvLoggingStartContext,
+    csv_directory: &std::path::Path,
+    session_runtime_directory: &std::path::Path,
+    bus_start: lantern_app::BusStatisticsSnapshot,
+) -> Result<CsvWriterStart, String> {
+    let csv_path = csv_directory.join(format!(
+        "telemetry-session-{}-{}.csv",
+        context.session_id.get(),
+        context.logging_id.get()
+    ));
+    let sidecar_path = AppPaths::final_csv_sidecar(&csv_path);
+    let checkpoint_path = session_runtime_directory.join(format!(
+        "session-runtime-{}-{}.json",
+        context.session_id.get(),
+        context.logging_id.get()
+    ));
+    let channels = context
+        .parameters
+        .iter()
+        .map(|parameter_id| csv_channel(&context.profile, parameter_id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let file_name = csv_path
+        .file_name()
+        .ok_or_else(|| "CSV path has no file name".to_owned())?
+        .to_string_lossy()
+        .into_owned();
+    let sidecar = CsvSessionSidecarV1::running(
+        context.session_id,
+        context.logging_id,
+        file_name,
+        env!("CARGO_PKG_VERSION").to_owned(),
+        option_env!("VFD_LANTERN_BUILD_ID")
+            .unwrap_or(env!("CARGO_PKG_VERSION"))
+            .to_owned(),
+        format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+        utc_text(system_utc_timestamp())?,
+        context.profile.profile_id().as_str().to_owned(),
+        context.profile.revision(),
+        profile_origin_text(context.profile_origin).to_owned(),
+        context.profile.profile_hash().to_hex(),
+        context.profile.source_hash().to_hex(),
+        context.fingerprint.as_str().to_owned(),
+        adapter_text(&context.adapter),
+        csv_link(context.link),
+        channels,
+        CsvBusStatisticsV1::from(&bus_start),
+    );
+    Ok(CsvWriterStart {
+        csv_path,
+        sidecar_path,
+        checkpoint_path,
+        sidecar,
+    })
+}
+
+fn csv_channel(
+    profile: &ValidatedDeviceProfile,
+    parameter_id: &ParameterId,
+) -> Result<CsvChannelV1, String> {
+    let parameter = profile
+        .parameter(parameter_id)
+        .ok_or_else(|| format!("unknown CSV channel {parameter_id}"))?;
+    Ok(CsvChannelV1 {
+        parameter_id: parameter.id().as_str().to_owned(),
+        parameter_code: parameter.code().to_owned(),
+        name: parameter.name().to_owned(),
+        quantity: quantity_text(parameter.quantity()),
+        unit_id: parameter.unit().as_str().to_owned(),
+        unit_label: parameter.unit().as_str().to_owned(),
+        encoding: encoding_text(parameter.codec().encoding()).to_owned(),
+        scale: parameter.codec().fixed_scale().map(|scale| CsvScaleV1 {
+            multiplier: scale.multiplier().normalize().to_string(),
+            divisor: scale.divisor().normalize().to_string(),
+            offset: scale.offset().normalize().to_string(),
+            decimal_places: scale.decimal_places(),
+            rounding: rounding_text(scale.rounding()).to_owned(),
+        }),
+    })
+}
+
+fn quantity_text(quantity: &QuantityKind) -> String {
+    match quantity {
+        QuantityKind::Frequency => "frequency".to_owned(),
+        QuantityKind::RotationalSpeed => "rotational_speed".to_owned(),
+        QuantityKind::Current => "current".to_owned(),
+        QuantityKind::Voltage => "voltage".to_owned(),
+        QuantityKind::Power => "power".to_owned(),
+        QuantityKind::Energy => "energy".to_owned(),
+        QuantityKind::Torque => "torque".to_owned(),
+        QuantityKind::Temperature => "temperature".to_owned(),
+        QuantityKind::Time => "time".to_owned(),
+        QuantityKind::Ratio => "ratio".to_owned(),
+        QuantityKind::Pressure => "pressure".to_owned(),
+        QuantityKind::Flow => "flow".to_owned(),
+        QuantityKind::Count => "count".to_owned(),
+        QuantityKind::DigitalState => "digital_state".to_owned(),
+        QuantityKind::Unitless => "unitless".to_owned(),
+        QuantityKind::Custom(id) => format!("custom:{}", id.as_str()),
+    }
+}
+
+const fn encoding_text(value: RegisterEncoding) -> &'static str {
+    match value {
+        RegisterEncoding::Unsigned16 => "unsigned16",
+        RegisterEncoding::Signed16 => "signed16",
+        RegisterEncoding::Unsigned32 => "unsigned32",
+        RegisterEncoding::Signed32 => "signed32",
+        RegisterEncoding::Unsigned64 => "unsigned64",
+        RegisterEncoding::Signed64 => "signed64",
+        RegisterEncoding::Float32 => "float32",
+        RegisterEncoding::Float64 => "float64",
+        RegisterEncoding::Bcd16 => "bcd16",
+        RegisterEncoding::Bcd32 => "bcd32",
+        RegisterEncoding::Enum16 => "enum16",
+        RegisterEncoding::Enum32 => "enum32",
+        RegisterEncoding::Bitfield16 => "bitfield16",
+        RegisterEncoding::Bitfield32 => "bitfield32",
+        RegisterEncoding::Bitfield64 => "bitfield64",
+    }
+}
+
+const fn rounding_text(value: RoundingMode) -> &'static str {
+    match value {
+        RoundingMode::MidpointNearestEven => "midpoint_nearest_even",
+        RoundingMode::MidpointAwayFromZero => "midpoint_away_from_zero",
+        RoundingMode::TowardZero => "toward_zero",
+        RoundingMode::AwayFromZero => "away_from_zero",
+        RoundingMode::TowardPositiveInfinity => "toward_positive_infinity",
+        RoundingMode::TowardNegativeInfinity => "toward_negative_infinity",
+    }
+}
+
+const fn profile_origin_text(value: ProfileOrigin) -> &'static str {
+    match value {
+        ProfileOrigin::Explicit => "explicit",
+        ProfileOrigin::User => "user",
+        ProfileOrigin::Packaged => "packaged",
+        ProfileOrigin::LocalUntrusted => "local_untrusted",
+    }
+}
+
+fn adapter_text(adapter: &lantern_app::AdapterIdentity) -> String {
+    adapter
+        .stable_id
+        .as_ref()
+        .unwrap_or(&adapter.canonical_device)
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn csv_link(link: LinkSettings) -> CsvLinkSettingsV1 {
+    CsvLinkSettingsV1 {
+        baud_rate: link.baud_rate.get(),
+        parity: match link.parity {
+            Parity::None => "none",
+            Parity::Even => "even",
+            Parity::Odd => "odd",
+        }
+        .to_owned(),
+        data_bits: match link.data_bits {
+            DataBits::Seven => "7",
+            DataBits::Eight => "8",
+        }
+        .to_owned(),
+        stop_bits: match link.stop_bits {
+            StopBits::One => "1",
+            StopBits::Two => "2",
+        }
+        .to_owned(),
+        response_timeout_ms: u64::try_from(link.response_timeout.as_millis()).unwrap_or(u64::MAX),
+        slave_id: link.slave_id.get(),
+        rs485_mode: match link.rs485_mode {
+            Rs485Mode::AdapterManaged => "adapter_managed",
+            Rs485Mode::LinuxIoctl => "linux_ioctl",
+        }
+        .to_owned(),
+    }
+}
+
+fn system_utc_timestamp() -> lantern_app::UtcTimestamp {
+    let nanos = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => i128::try_from(duration.as_nanos()).unwrap_or(i128::MAX),
+        Err(error) => -i128::try_from(error.duration().as_nanos()).unwrap_or(i128::MAX),
+    };
+    lantern_app::UtcTimestamp::from_unix_nanos(nanos)
+}
+
+fn utc_text(timestamp: lantern_app::UtcTimestamp) -> Result<String, String> {
+    OffsetDateTime::from_unix_timestamp_nanos(timestamp.as_unix_nanos())
+        .map_err(|error| error.to_string())?
+        .format(&Rfc3339)
+        .map_err(|error| error.to_string())
+}
+
+fn lock_state(state: &Mutex<MonitoringState>) -> MutexGuard<'_, MonitoringState> {
+""",
+)
+
+replace(
+    "crates/vfd-lantern/src/connection_runtime.rs",
+    "        fault_report_directory: PathBuf,\n        settings: ValidatedSettings,\n",
+    "        fault_report_directory: PathBuf,\n        csv_directory: PathBuf,\n        session_runtime_directory: PathBuf,\n        settings: ValidatedSettings,\n",
+)
+replace(
+    "crates/vfd-lantern/src/connection_runtime.rs",
+    "        let monitoring = MonitoringRuntime::new(settings, action_tx.clone());\n",
+    "        let monitoring = MonitoringRuntime::new(\n            settings,\n            action_tx.clone(),\n            csv_directory,\n            session_runtime_directory,\n        );\n",
+)
+replace(
+    "crates/vfd-lantern/src/main.rs",
+    "        paths.fault_report_directory.clone(),\n        settings.clone(),\n",
+    "        paths.fault_report_directory.clone(),\n        paths.csv_directory.clone(),\n        paths.session_runtime_directory.clone(),\n        settings.clone(),\n",
+)
