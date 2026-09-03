@@ -88,6 +88,8 @@ pub fn csv_subscriptions(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use lantern_profile::{ProfileFormat, parse_and_validate_profile};
 
     use crate::{FrequencyClass, ParameterId, SubscriptionReason};
