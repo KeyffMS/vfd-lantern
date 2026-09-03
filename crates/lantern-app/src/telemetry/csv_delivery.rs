@@ -13,10 +13,7 @@ pub(super) struct CsvDeliveryState {
 impl CsvDeliveryState {
     /// Enables one explicit logging selection. A duplicate Start is rejected
     /// without changing the active selection or discarding a pending gap.
-    pub(super) fn start(
-        &mut self,
-        parameters: impl IntoIterator<Item = ParameterId>,
-    ) -> bool {
+    pub(super) fn start(&mut self, parameters: impl IntoIterator<Item = ParameterId>) -> bool {
         if self.enabled {
             return false;
         }
@@ -164,7 +161,9 @@ mod tests {
         };
         assert_eq!(first.request_id.get(), 1);
 
-        let gap = state.stop().expect("pending gap must survive duplicate start");
+        let gap = state
+            .stop()
+            .expect("pending gap must survive duplicate start");
         assert_eq!(gap.dropped_count, 1);
         assert_eq!(gap.start_monotonic.as_nanos(), 20);
     }

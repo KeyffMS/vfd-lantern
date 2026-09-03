@@ -98,11 +98,7 @@ impl CsvLoggingCoordinator {
         }
 
         let (relay_control, relay_rx) = mpsc::unbounded_channel();
-        let relay_task = tokio::spawn(run_relay(
-            Arc::clone(&self.source),
-            writer_tx,
-            relay_rx,
-        ));
+        let relay_task = tokio::spawn(run_relay(Arc::clone(&self.source), writer_tx, relay_rx));
         let guard_task = spawn_failure_guard(
             writer.subscribe(),
             self.pipeline.clone(),
@@ -281,7 +277,9 @@ async fn drain_source(
 ) {
     loop {
         let item = source.lock().await.try_recv();
-        let Ok(item) = item else { return; };
+        let Ok(item) = item else {
+            return;
+        };
         if let Some(sink) = sink
             && sink.send(item).await.is_err()
         {
