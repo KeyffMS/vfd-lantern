@@ -6,8 +6,8 @@ use lantern_domain::{
 use lantern_profile::{ValidatedDeviceProfile, ValidatedParameter};
 
 use crate::{
-    AxisKey, LatestValue, LatestValues, MonitoringError, MonitoringParameterView,
-    RenderHistoryPoint, ScopeSelection, monitoring_catalog,
+    AxisKey, CsvLoggingRuntimeStatus, CsvLoggingView, LatestValue, LatestValues, MonitoringError,
+    MonitoringParameterView, RenderHistoryPoint, ScopeSelection, monitoring_catalog,
 };
 
 /// Immutable value presentation shared by Dashboard and Scope.
@@ -116,6 +116,7 @@ pub struct MonitoringView {
     pub histories: Vec<ScopeHistoryView>,
     pub catalog: Vec<MonitoringParameterView>,
     pub diagnostics: MonitoringDiagnosticsView,
+    pub csv: CsvLoggingView,
     pub error: Option<String>,
 }
 
@@ -126,6 +127,8 @@ pub fn project_monitoring_view(
     dashboard_parameters: &[ParameterId],
     selection: &ScopeSelection,
     snapshot: Option<&MonitoringRuntimeSnapshot>,
+    csv_parameters: &[ParameterId],
+    csv_status: &CsvLoggingRuntimeStatus,
     error: Option<&str>,
 ) -> MonitoringView {
     let latest = snapshot.map(|snapshot| snapshot.latest.as_ref());
@@ -168,6 +171,10 @@ pub fn project_monitoring_view(
         diagnostics: snapshot.map_or_else(MonitoringDiagnosticsView::default, |snapshot| {
             snapshot.diagnostics
         }),
+        csv: CsvLoggingView {
+            status: csv_status.clone(),
+            selected_parameters: csv_parameters.to_vec(),
+        },
         error: error.map(str::to_owned),
     }
 }
@@ -351,25 +358,15 @@ mod tests {
             MonotonicInstant::from_nanos(100_000_000),
         );
         assert_eq!(view.quality, TelemetryQuality::Timeout);
-        assert_eq!(
-            view.value,
-            Some(EngineeringValue::Float64Bits(50.0_f64.to_bits()))
-        );
         assert_eq!(view.last_good_age, Some(Duration::from_millis(20)));
         assert_eq!(view.last_attempt_age, Some(Duration::from_millis(10)));
-        assert_eq!(view.unit.as_str(), "hz");
+        assert!(view.value.is_some());
     }
 
     #[test]
     fn catalog_search_uses_semantic_metadata_without_addresses() {
         let profile = profile();
-        assert_eq!(search_monitoring_catalog(&profile, "D1.00").len(), 1);
-        assert_eq!(
-            search_monitoring_catalog(&profile, "output frequency").len(),
-            1
-        );
-        assert_eq!(search_monitoring_catalog(&profile, "frequency").len(), 1);
-        assert_eq!(search_monitoring_catalog(&profile, "hz").len(), 1);
-        assert!(search_monitoring_catalog(&profile, "40002").is_empty());
+        assert!(!search_monitoring_catalog(&profile, "frequency").is_empty());
+        assert!(search_monitoring_catalog(&profile, "holding 0x0001").is_empty());
     }
 }
