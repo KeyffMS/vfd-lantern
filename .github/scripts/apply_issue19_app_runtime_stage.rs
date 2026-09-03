@@ -5,6 +5,7 @@ fn main() {
         .expect("read transform specification");
     apply_top_level_replacements(&spec);
     apply_runtime_tuple_replacements();
+    apply_tui_runtime_paths_grouping();
 }
 
 fn apply_top_level_replacements(spec: &str) {
@@ -64,6 +65,42 @@ fn apply_runtime_tuple_replacements() {
         "    fn restore_after_refresh",
         "                active.parameter_browser_parameters.clone(),\n            )\n        };\n        self.reconfigure_all(dashboard, scope, parameters)\n",
         "                active.parameter_browser_parameters.clone(),\n                active.csv_parameters.clone(),\n            )\n        };\n        self.reconfigure_all(dashboard, scope, parameters, csv_parameters)\n",
+    );
+}
+
+fn apply_tui_runtime_paths_grouping() {
+    let connection = Path::new("crates/vfd-lantern/src/connection_runtime.rs");
+    replace_once(
+        connection,
+        "pub struct TuiEffectRunner {\n",
+        "pub struct TuiRuntimePaths {\n    diagnostics_directory: PathBuf,\n    fault_report_directory: PathBuf,\n    csv_directory: PathBuf,\n    session_runtime_directory: PathBuf,\n}\n\nimpl TuiRuntimePaths {\n    #[must_use]\n    pub fn new(\n        diagnostics_directory: PathBuf,\n        fault_report_directory: PathBuf,\n        csv_directory: PathBuf,\n        session_runtime_directory: PathBuf,\n    ) -> Self {\n        Self {\n            diagnostics_directory,\n            fault_report_directory,\n            csv_directory,\n            session_runtime_directory,\n        }\n    }\n}\n\npub struct TuiEffectRunner {\n",
+    );
+    replace_once(
+        connection,
+        "        diagnostics_directory: PathBuf,\n        fault_report_directory: PathBuf,\n        csv_directory: PathBuf,\n        session_runtime_directory: PathBuf,\n        settings: ValidatedSettings,\n",
+        "        paths: TuiRuntimePaths,\n        settings: ValidatedSettings,\n",
+    );
+    replace_once(
+        connection,
+        "        let monitoring = MonitoringRuntime::new(\n            settings,\n            action_tx.clone(),\n            csv_directory,\n            session_runtime_directory,\n        );\n",
+        "        let monitoring = MonitoringRuntime::new(\n            settings,\n            action_tx.clone(),\n            paths.csv_directory.clone(),\n            paths.session_runtime_directory.clone(),\n        );\n",
+    );
+    replace_once(
+        connection,
+        "            diagnostics_directory,\n            fault_report_directory,\n",
+        "            diagnostics_directory: paths.diagnostics_directory,\n            fault_report_directory: paths.fault_report_directory,\n",
+    );
+
+    let main = Path::new("crates/vfd-lantern/src/main.rs");
+    replace_once(
+        main,
+        "    connection_runtime::TuiEffectRunner,\n",
+        "    connection_runtime::{TuiEffectRunner, TuiRuntimePaths},\n",
+    );
+    replace_once(
+        main,
+        "        paths.diagnostics_directory.clone(),\n        paths.fault_report_directory.clone(),\n        paths.csv_directory.clone(),\n        paths.session_runtime_directory.clone(),\n        settings.clone(),\n",
+        "        TuiRuntimePaths::new(\n            paths.diagnostics_directory.clone(),\n            paths.fault_report_directory.clone(),\n            paths.csv_directory.clone(),\n            paths.session_runtime_directory.clone(),\n        ),\n        settings.clone(),\n",
     );
 }
 
