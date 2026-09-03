@@ -21,22 +21,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! command -v python3 >/dev/null 2>&1; then
-            if command -v sudo >/dev/null 2>&1; then
-              sudo apt-get update
-              sudo apt-get install -y python3
-            else
-              apt-get update
-              apt-get install -y python3
-            fi
-          fi
-          python3 .github/scripts/issue19_app_runtime_stage.py
+          rustc --edition=2024 .github/scripts/apply_issue19_app_runtime_stage.rs -o /tmp/apply-issue19-runtime
+          /tmp/apply-issue19-runtime
           cargo fmt --all
           cargo check --workspace --all-features --locked
           cargo test --workspace --all-features --locked
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
           git rm .github/workflows/issue19-app-runtime-stage.yml
           git rm .github/scripts/issue19_app_runtime_stage.py
+          git rm .github/scripts/apply_issue19_app_runtime_stage.rs
           git add -A
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
