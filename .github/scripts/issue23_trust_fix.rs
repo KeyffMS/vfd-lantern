@@ -24,4 +24,23 @@ fn main() {
         "    collections::BTreeMap,\n",
         "",
     );
+    replace_once(
+        "crates/vfd-lantern/src/monitoring_runtime.rs",
+        r#"const fn profile_origin_text(value: ProfileOrigin) -> &'static str {
+    match value {
+        ProfileOrigin::Explicit => "explicit",
+        ProfileOrigin::User => "user",
+        ProfileOrigin::Packaged => "packaged",
+        ProfileOrigin::LocalUntrusted => "local_untrusted",
+    }
+}
+"#,
+        r#"const fn profile_origin_text(value: ProfileOrigin) -> &'static str {
+    match value {
+        ProfileOrigin::Packaged => "packaged",
+        ProfileOrigin::LocalUntrusted => "local_untrusted",
+    }
+}
+"#,
+    );
 }
