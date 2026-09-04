@@ -1,0 +1,37 @@
+name: Stage issue 16 write core
+
+on:
+  push:
+    branches:
+      - agent/issue-16
+
+permissions:
+  contents: write
+
+jobs:
+  core:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-16
+          fetch-depth: 0
+      - name: Integrate and validate write core
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --edition=2024 .github/scripts/issue16_core_stage.rs -o /tmp/issue16-core-stage
+          /tmp/issue16-core-stage
+          cargo fmt --all
+          cargo check --workspace --all-features --locked
+          cargo test --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          sh scripts/check-architecture.sh
+          git rm .github/workflows/issue16-core-stage.yml
+          git rm .github/scripts/issue16_core_stage.rs
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(#16): integrate two-phase guarded write core'
+          git push origin HEAD:agent/issue-16
