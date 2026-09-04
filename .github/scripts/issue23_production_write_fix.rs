@@ -43,4 +43,35 @@ fn main() {
 "#,
         "\n",
     );
+    replace_once(
+        "crates/lantern-app/src/parameters.rs",
+        "    WritePrepared(Result<PreparedWritePlan, String>),\n",
+        "    WritePrepared(Box<Result<PreparedWritePlan, String>>),\n",
+    );
+    replace_once(
+        "crates/lantern-app/src/application.rs",
+        "            ParameterAction::WritePrepared(result) => {\n                match result {\n",
+        "            ParameterAction::WritePrepared(result) => {\n                match *result {\n",
+    );
+    replace_once(
+        "crates/vfd-lantern/src/write_runtime.rs",
+        "                        ParameterAction::WritePrepared(result),\n",
+        "                        ParameterAction::WritePrepared(Box::new(result)),\n",
+    );
+    replace_once(
+        "crates/lantern-app/src/write_flow.rs",
+        "use crate::{PreparedWritePlan, WriteConfirmation, WriteSessionSnapshot};\n",
+        "use crate::{WriteConfirmation, WriteSessionSnapshot};\n",
+    );
+    replace_once(
+        "crates/lantern-app/src/write_flow.rs",
+        r#"
+#[derive(Clone, Debug)]
+pub enum WriteRuntimeAction {
+    Prepared(Result<PreparedWritePlan, String>),
+    Completed(Result<String, String>),
+}
+"#,
+        "\n",
+    );
 }
