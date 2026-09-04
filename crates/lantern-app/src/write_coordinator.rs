@@ -637,7 +637,12 @@ impl WriteCoordinator {
             parameter_id: plan.parameter_id.clone(),
             context_hash: plan.context_hash.clone(),
             old_raw: final_old,
+            old_engineering: plan.previous_engineering.clone(),
             target_raw: plan.target_raw.clone(),
+            target_engineering: plan.requested_engineering.clone(),
+            write_function: parameter
+                .write_function()
+                .expect("manual write parameter was validated with a write function"),
         };
 
         if !self.audit.is_available() {

@@ -42,5 +42,6 @@ pub use telemetry::{
 pub use value::{EngineeringValue, FixedScale, RoundingMode, ScaleError};
 pub use write::{
     DecisionAuditRecord, DecisionOutcome, DeviceWriteOutcome, DeviceWritePreparation,
+    OperationAuditFinish, OperationAuditOutcome, OperationAuditStart, OperationToken,
     PreparedToken, ReadBackEvidence, ReadBackOutcome, WriteIntent, WriteOutcome,
 };

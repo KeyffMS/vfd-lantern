@@ -1,285 +1,4 @@
-use std::{fs, path::Path};
-
-fn replace_once(path: &str, old: &str, new: &str) {
-    let path = Path::new(path);
-    let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let Some(index) = text.find(old) else {
-        panic!("anchor not found in {}: {:?}", path.display(), &old[..old.len().min(160)]);
-    };
-    let mut out = String::with_capacity(text.len() + new.len().saturating_sub(old.len()));
-    out.push_str(&text[..index]);
-    out.push_str(new);
-    out.push_str(&text[index + old.len()..]);
-    fs::write(path, out).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
-}
-
-fn main() {
-    replace_once(
-        "crates/lantern-domain/src/write.rs",
-        r#"use crate::{
-    DeviceFingerprint, EngineeringValue, MonotonicInstant, OperationId, ParameterId, PlanId,
-    RawRegisters, RequestId, SessionId,
-};
-"#,
-        r#"use crate::{
-    BackupId, DeviceFingerprint, EngineeringValue, ModbusFunction, MonotonicInstant, OperationId,
-    ParameterId, PlanId, RawRegisters, RequestId, SessionId,
-};
-"#,
-    );
-
-    replace_once(
-        "crates/lantern-domain/src/write.rs",
-        r#"pub struct DeviceWritePreparation {
-    pub plan_id: PlanId,
-    pub operation_id: OperationId,
-    pub request_id: RequestId,
-    pub session_id: SessionId,
-    pub fingerprint: DeviceFingerprint,
-    pub profile_hash: String,
-    pub parameter_id: ParameterId,
-    pub context_hash: String,
-    pub old_raw: RawRegisters,
-    pub target_raw: RawRegisters,
-}
-"#,
-        r#"pub struct DeviceWritePreparation {
-    pub plan_id: PlanId,
-    pub operation_id: OperationId,
-    pub request_id: RequestId,
-    pub session_id: SessionId,
-    pub fingerprint: DeviceFingerprint,
-    pub profile_hash: String,
-    pub parameter_id: ParameterId,
-    pub context_hash: String,
-    pub old_raw: RawRegisters,
-    pub old_engineering: EngineeringValue,
-    pub target_raw: RawRegisters,
-    pub target_engineering: EngineeringValue,
-    pub write_function: ModbusFunction,
-}
-"#,
-    );
-
-    let domain_write = fs::read_to_string("crates/lantern-domain/src/write.rs").expect("domain write");
-    assert!(!domain_write.contains("pub struct OperationAuditStart"));
-    fs::write(
-        "crates/lantern-domain/src/write.rs",
-        format!(
-            "{domain_write}\n{}",
-            r#"
-/// Durable start record for a guarded multi-step operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OperationAuditStart {
-    pub operation_id: OperationId,
-    pub backup_id: BackupId,
-    pub plan_hash: String,
-    pub session_id: SessionId,
-    pub fingerprint: DeviceFingerprint,
-    pub profile_hash: String,
-    pub at: MonotonicInstant,
-}
-
-/// Final state recorded for a guarded multi-step operation.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum OperationAuditOutcome {
-    Completed,
-    Aborted,
-}
-
-/// Durable finish/abort record for a guarded multi-step operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OperationAuditFinish {
-    pub outcome: OperationAuditOutcome,
-    pub final_step_index: Option<usize>,
-    pub summary: String,
-    pub at: MonotonicInstant,
-}
-
-/// Single-use proof that an operation start is already durable.
-#[derive(Debug, Eq, PartialEq)]
-pub struct OperationToken {
-    token_id: u128,
-    operation_id: OperationId,
-    backup_id: BackupId,
-    plan_hash: String,
-    session_id: SessionId,
-    fingerprint: DeviceFingerprint,
-    profile_hash: String,
-}
-
-impl OperationToken {
-    #[must_use]
-    pub fn for_start(token_id: u128, start: &OperationAuditStart) -> Self {
-        Self {
-            token_id,
-            operation_id: start.operation_id,
-            backup_id: start.backup_id,
-            plan_hash: start.plan_hash.clone(),
-            session_id: start.session_id,
-            fingerprint: start.fingerprint.clone(),
-            profile_hash: start.profile_hash.clone(),
-        }
-    }
-
-    #[must_use]
-    pub const fn token_id(&self) -> u128 {
-        self.token_id
-    }
-
-    #[must_use]
-    pub const fn operation_id(&self) -> OperationId {
-        self.operation_id
-    }
-
-    #[must_use]
-    pub const fn backup_id(&self) -> BackupId {
-        self.backup_id
-    }
-
-    #[must_use]
-    pub fn plan_hash(&self) -> &str {
-        &self.plan_hash
-    }
-
-    #[must_use]
-    pub const fn session_id(&self) -> SessionId {
-        self.session_id
-    }
-
-    #[must_use]
-    pub fn fingerprint(&self) -> &DeviceFingerprint {
-        &self.fingerprint
-    }
-
-    #[must_use]
-    pub fn profile_hash(&self) -> &str {
-        &self.profile_hash
-    }
-
-    #[must_use]
-    pub fn matches_start(&self, start: &OperationAuditStart) -> bool {
-        self.operation_id == start.operation_id
-            && self.backup_id == start.backup_id
-            && self.plan_hash == start.plan_hash
-            && self.session_id == start.session_id
-            && self.fingerprint == start.fingerprint
-            && self.profile_hash == start.profile_hash
-    }
-}
-"#
-        ),
-    )
-    .expect("append operation audit types");
-
-    replace_once(
-        "crates/lantern-domain/src/lib.rs",
-        r#"pub use write::{
-    DecisionAuditRecord, DecisionOutcome, DeviceWriteOutcome, DeviceWritePreparation, PreparedToken,
-    ReadBackEvidence, ReadBackOutcome, WriteIntent, WriteOutcome,
-};
-"#,
-        r#"pub use write::{
-    DecisionAuditRecord, DecisionOutcome, DeviceWriteOutcome, DeviceWritePreparation,
-    OperationAuditFinish, OperationAuditOutcome, OperationAuditStart, OperationToken, PreparedToken,
-    ReadBackEvidence, ReadBackOutcome, WriteIntent, WriteOutcome,
-};
-"#,
-    );
-
-    replace_once(
-        "crates/lantern-app/src/ports.rs",
-        r#"use lantern_domain::{
-    DecisionAuditRecord, DeviceFingerprint, DeviceWriteOutcome, DeviceWritePreparation, DriveState,
-    PreparedToken, ProfileId, ReadBackEvidence, SessionId, SlaveId, WriteOutcome,
-};
-"#,
-        r#"use lantern_domain::{
-    DecisionAuditRecord, DeviceFingerprint, DeviceWriteOutcome, DeviceWritePreparation, DriveState,
-    OperationAuditFinish, OperationAuditStart, OperationToken, PreparedToken, ProfileId,
-    ReadBackEvidence, SessionId, SlaveId, WriteOutcome,
-};
-"#,
-    );
-
-    replace_once(
-        "crates/lantern-app/src/ports.rs",
-        r#"    fn finalize_device_write(
-        &self,
-        _token: PreparedToken,
-        _outcome: DeviceWriteOutcome,
-        _read_back: ReadBackEvidence,
-    ) -> PortFuture<'_, Result<(), AuditError>> {
-        Box::pin(async { Err(AuditError::Unavailable) })
-    }
-}
-"#,
-        r#"    fn finalize_device_write(
-        &self,
-        _token: PreparedToken,
-        _outcome: DeviceWriteOutcome,
-        _read_back: ReadBackEvidence,
-    ) -> PortFuture<'_, Result<(), AuditError>> {
-        Box::pin(async { Err(AuditError::Unavailable) })
-    }
-
-    fn begin_operation(
-        &self,
-        _start: OperationAuditStart,
-    ) -> PortFuture<'_, Result<OperationToken, AuditError>> {
-        Box::pin(async { Err(AuditError::Unavailable) })
-    }
-
-    fn finish_operation(
-        &self,
-        _token: OperationToken,
-        _finish: OperationAuditFinish,
-    ) -> PortFuture<'_, Result<(), AuditError>> {
-        Box::pin(async { Err(AuditError::Unavailable) })
-    }
-}
-"#,
-    );
-
-    replace_once(
-        "crates/lantern-app/src/write_coordinator.rs",
-        r#"            context_hash: plan.context_hash.clone(),
-            old_raw: final_old,
-            target_raw: plan.target_raw.clone(),
-        };
-"#,
-        r#"            context_hash: plan.context_hash.clone(),
-            old_raw: final_old,
-            old_engineering: plan.previous_engineering.clone(),
-            target_raw: plan.target_raw.clone(),
-            target_engineering: plan.requested_engineering.clone(),
-            write_function: parameter
-                .write_function()
-                .expect("manual write parameter was validated with a write function"),
-        };
-"#,
-    );
-
-    replace_once(
-        "crates/lantern-storage/src/lib.rs",
-        "mod artifacts;\n",
-        "mod artifacts;\nmod audit;\n",
-    );
-    replace_once(
-        "crates/lantern-storage/src/lib.rs",
-        r#"pub use artifacts::{StorageError, read_bounded, write_new};
-"#,
-        r#"pub use artifacts::{StorageError, read_bounded, write_new};
-pub use audit::{
-    AUDIT_SCHEMA_VERSION, AuditStorageError, AuditVerification, FilesystemAuditPort,
-    verify_audit_session,
-};
-"#,
-    );
-
-    fs::write(
-        "crates/lantern-storage/src/audit.rs",
-        r#"use std::{
+use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions, Permissions},
     io::Write,
@@ -384,6 +103,7 @@ struct HashMaterial<'a> {
 struct PreparedBinding {
     plan_id: u128,
     request_id: u64,
+    session_id: u128,
     context_hash: String,
 }
 
@@ -432,8 +152,9 @@ impl FilesystemAuditPort {
 
     pub fn finalize_session(&self, session_id: SessionId) -> Result<(), AuditStorageError> {
         let head_path = head_path(&self.root, session_id);
-        let mut head = read_head(&head_path)?
-            .ok_or_else(|| AuditStorageError::Inconsistent("cannot finalize missing head".into()))?;
+        let mut head = read_head(&head_path)?.ok_or_else(|| {
+            AuditStorageError::Inconsistent("cannot finalize missing head".into())
+        })?;
         if head.schema_version != AUDIT_SCHEMA_VERSION {
             return Err(AuditStorageError::Inconsistent(
                 "cannot finalize unsupported audit schema".into(),
@@ -501,6 +222,7 @@ impl AuditPort for FilesystemAuditPort {
                 let binding = PreparedBinding {
                     plan_id: preparation.plan_id.get(),
                     request_id: preparation.request_id.get(),
+                    session_id: preparation.session_id.get(),
                     context_hash: preparation.context_hash.clone(),
                 };
                 self.state
@@ -532,18 +254,12 @@ impl AuditPort for FilesystemAuditPort {
                     && binding.request_id == token.request_id().get()
                     && binding.context_hash == token.context_hash() =>
             {
-                let session_id = session_for_prepared_record(&self.root, token.token_id())
-                    .unwrap_or(SessionId::new(0));
-                if session_id.get() == 0 {
-                    Err(AuditStorageError::InvalidToken)
-                } else {
-                    self.append(
-                        session_id,
-                        0,
-                        "device_write_finalized",
-                        finalize_body(token.token_id(), outcome, &read_back),
-                    )
-                }
+                self.append(
+                    SessionId::new(binding.session_id),
+                    system_time_nanos(),
+                    "device_write_finalized",
+                    finalize_body(token.token_id(), outcome, &read_back),
+                )
             }
             _ => Err(AuditStorageError::InvalidToken),
         }
@@ -653,9 +369,7 @@ fn append_record(
     let journal = journal_path(root, session_id);
     let head_file = head_path(root, session_id);
     let existing_head = read_head(&head_file)?;
-    if existing_head.is_none()
-        && fs::metadata(&journal).is_ok_and(|metadata| metadata.len() != 0)
-    {
+    if existing_head.is_none() && fs::metadata(&journal).is_ok_and(|metadata| metadata.len() != 0) {
         return Err(AuditStorageError::Inconsistent(
             "journal exists without its durable head".into(),
         ));
@@ -710,7 +424,6 @@ fn append_record(
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .write(true)
         .mode(PRIVATE_FILE_MODE)
         .open(&journal)
         .map_err(|error| AuditStorageError::io(&journal, error))?;
@@ -877,27 +590,10 @@ const fn function_name(value: ModbusFunction) -> &'static str {
     }
 }
 
-fn session_for_prepared_record(root: &Path, token_id: u128) -> Option<SessionId> {
-    let needle = format!("\"token_id\":\"{token_id}\"");
-    let entries = fs::read_dir(root).ok()?;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_str()?;
-        let Some(session) = name
-            .strip_prefix("audit_")
-            .and_then(|name| name.strip_suffix(".jsonl"))
-            .and_then(|value| value.parse::<u128>().ok())
-        else {
-            continue;
-        };
-        if fs::read_to_string(entry.path())
-            .ok()
-            .is_some_and(|text| text.contains(&needle))
-        {
-            return Some(SessionId::new(session));
-        }
-    }
-    None
+fn system_time_nanos() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos())
 }
 
 pub fn verify_audit_session(root: &Path, session_id: SessionId) -> AuditVerification {
@@ -925,7 +621,11 @@ pub fn verify_audit_session(root: &Path, session_id: SessionId) -> AuditVerifica
 
     let mut records = Vec::new();
     let mut expected_previous: Option<String> = None;
-    for (index, line) in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).enumerate() {
+    for (index, line) in bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .enumerate()
+    {
         let Ok(record) = serde_json::from_slice::<AuditEnvelope>(line) else {
             return AuditVerification::RecordChanged;
         };
@@ -987,18 +687,17 @@ pub fn verify_audit_session(root: &Path, session_id: SessionId) -> AuditVerifica
 mod tests {
     use std::{fs, os::unix::fs::PermissionsExt};
 
-    use lantern_app::{AuditPort, AuditError};
+    use lantern_app::{AuditError, AuditPort};
     use lantern_domain::{
         BackupId, DecisionAuditRecord, DecisionOutcome, DeviceFingerprint, DeviceWriteOutcome,
         DeviceWritePreparation, EngineeringValue, ModbusFunction, MonotonicInstant,
-        OperationAuditFinish, OperationAuditOutcome, OperationAuditStart, OperationId,
-        ParameterId, PlanId, PreparedToken, RawRegisters, ReadBackEvidence, RequestId, SessionId,
+        OperationAuditFinish, OperationAuditOutcome, OperationAuditStart, OperationId, ParameterId,
+        PlanId, PreparedToken, RawRegisters, ReadBackEvidence, RequestId, SessionId,
     };
     use tempfile::tempdir;
 
     use super::{
-        AuditHead, AuditVerification, FilesystemAuditPort, head_path, journal_path, read_head,
-        verify_audit_session, write_head,
+        AuditVerification, FilesystemAuditPort, head_path, journal_path, verify_audit_session,
     };
 
     fn fingerprint() -> DeviceFingerprint {
@@ -1036,31 +735,43 @@ mod tests {
         let directory = tempdir().expect("tempdir");
         let audit = FilesystemAuditPort::new(directory.path()).expect("audit");
         let session = SessionId::new(1);
-        audit.record_decision(DecisionAuditRecord {
-            plan_id: PlanId::new(1),
-            session_id: session,
-            fingerprint: fingerprint(),
-            profile_hash: "profile-hash".into(),
-            parameter_id: parameter(),
-            context_hash: None,
-            decision: DecisionOutcome::Cancelled,
-            at: MonotonicInstant::from_nanos(7),
-        }).await.expect("decision");
-        assert_eq!(verify_audit_session(directory.path(), session), AuditVerification::ValidOpen);
+        audit
+            .record_decision(DecisionAuditRecord {
+                plan_id: PlanId::new(1),
+                session_id: session,
+                fingerprint: fingerprint(),
+                profile_hash: "profile-hash".into(),
+                parameter_id: parameter(),
+                context_hash: None,
+                decision: DecisionOutcome::Cancelled,
+                at: MonotonicInstant::from_nanos(7),
+            })
+            .await
+            .expect("decision");
+        assert_eq!(
+            verify_audit_session(directory.path(), session),
+            AuditVerification::ValidOpen
+        );
 
         let before = fs::read(journal_path(directory.path(), session)).expect("journal");
-        let error = audit.record_decision(DecisionAuditRecord {
-            plan_id: PlanId::new(2),
-            session_id: session,
-            fingerprint: fingerprint(),
-            profile_hash: "profile-hash".into(),
-            parameter_id: parameter(),
-            context_hash: None,
-            decision: DecisionOutcome::AuditUnavailable,
-            at: MonotonicInstant::from_nanos(8),
-        }).await.expect_err("must reject recursive audit");
+        let error = audit
+            .record_decision(DecisionAuditRecord {
+                plan_id: PlanId::new(2),
+                session_id: session,
+                fingerprint: fingerprint(),
+                profile_hash: "profile-hash".into(),
+                parameter_id: parameter(),
+                context_hash: None,
+                decision: DecisionOutcome::AuditUnavailable,
+                at: MonotonicInstant::from_nanos(8),
+            })
+            .await
+            .expect_err("must reject recursive audit");
         assert!(matches!(error, AuditError::Persistence(_)));
-        assert_eq!(fs::read(journal_path(directory.path(), session)).expect("journal"), before);
+        assert_eq!(
+            fs::read(journal_path(directory.path(), session)).expect("journal"),
+            before
+        );
     }
 
     #[tokio::test]
@@ -1069,24 +780,48 @@ mod tests {
         let audit = FilesystemAuditPort::new(directory.path()).expect("audit");
         let session = SessionId::new(2);
         let preparation = preparation(session);
-        let token = audit.prepare_device_write(preparation.clone()).await.expect("prepare");
+        let token = audit
+            .prepare_device_write(preparation.clone())
+            .await
+            .expect("prepare");
         let token_id = token.token_id();
-        audit.finalize_device_write(
-            token,
-            DeviceWriteOutcome::Verified,
-            ReadBackEvidence::Verified { attempts: 1, raw: raw(100) },
-        ).await.expect("finalize");
-        assert_eq!(verify_audit_session(directory.path(), session), AuditVerification::ValidOpen);
+        audit
+            .finalize_device_write(
+                token,
+                DeviceWriteOutcome::Verified,
+                ReadBackEvidence::Verified {
+                    attempts: 1,
+                    raw: raw(100),
+                },
+            )
+            .await
+            .expect("finalize");
+        assert_eq!(
+            verify_audit_session(directory.path(), session),
+            AuditVerification::ValidOpen
+        );
         let forged = PreparedToken::for_preparation(token_id, &preparation);
-        assert!(audit.finalize_device_write(
-            forged,
-            DeviceWriteOutcome::Verified,
-            ReadBackEvidence::NotAttempted,
-        ).await.is_err());
+        assert!(
+            audit
+                .finalize_device_write(
+                    forged,
+                    DeviceWriteOutcome::Verified,
+                    ReadBackEvidence::NotAttempted,
+                )
+                .await
+                .is_err()
+        );
         let text = fs::read_to_string(journal_path(directory.path(), session)).expect("journal");
         assert!(text.contains("\"write_function\":\"fc06\""));
         assert!(text.contains("\"old_engineering\""));
-        assert_eq!(fs::metadata(journal_path(directory.path(), session)).expect("metadata").permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(journal_path(directory.path(), session))
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
     }
 
     #[tokio::test]
@@ -1105,19 +840,33 @@ mod tests {
         };
         let token = audit.begin_operation(start.clone()).await.expect("begin");
         let token_id = token.token_id();
-        audit.finish_operation(token, OperationAuditFinish {
-            outcome: OperationAuditOutcome::Completed,
-            final_step_index: Some(4),
-            summary: "all verified".into(),
-            at: MonotonicInstant::from_nanos(10),
-        }).await.expect("finish");
+        audit
+            .finish_operation(
+                token,
+                OperationAuditFinish {
+                    outcome: OperationAuditOutcome::Completed,
+                    final_step_index: Some(4),
+                    summary: "all verified".into(),
+                    at: MonotonicInstant::from_nanos(10),
+                },
+            )
+            .await
+            .expect("finish");
         let forged = lantern_domain::OperationToken::for_start(token_id, &start);
-        assert!(audit.finish_operation(forged, OperationAuditFinish {
-            outcome: OperationAuditOutcome::Aborted,
-            final_step_index: Some(4),
-            summary: "retry forbidden".into(),
-            at: MonotonicInstant::from_nanos(11),
-        }).await.is_err());
+        assert!(
+            audit
+                .finish_operation(
+                    forged,
+                    OperationAuditFinish {
+                        outcome: OperationAuditOutcome::Aborted,
+                        final_step_index: Some(4),
+                        summary: "retry forbidden".into(),
+                        at: MonotonicInstant::from_nanos(11),
+                    }
+                )
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1125,58 +874,89 @@ mod tests {
         let directory = tempdir().expect("tempdir");
         let audit = FilesystemAuditPort::new(directory.path()).expect("audit");
         let session = SessionId::new(4);
-        audit.prepare_device_write(preparation(session)).await.expect("prepare");
+        audit
+            .prepare_device_write(preparation(session))
+            .await
+            .expect("prepare");
         let durable_head = fs::read(head_path(directory.path(), session)).expect("head snapshot");
-        audit.record_decision(DecisionAuditRecord {
-            plan_id: PlanId::new(99),
-            session_id: session,
-            fingerprint: fingerprint(),
-            profile_hash: "profile-hash".into(),
-            parameter_id: parameter(),
-            context_hash: None,
-            decision: DecisionOutcome::Cancelled,
-            at: MonotonicInstant::from_nanos(12),
-        }).await.expect("second record");
+        audit
+            .record_decision(DecisionAuditRecord {
+                plan_id: PlanId::new(99),
+                session_id: session,
+                fingerprint: fingerprint(),
+                profile_hash: "profile-hash".into(),
+                parameter_id: parameter(),
+                context_hash: None,
+                decision: DecisionOutcome::Cancelled,
+                at: MonotonicInstant::from_nanos(12),
+            })
+            .await
+            .expect("second record");
         fs::write(head_path(directory.path(), session), &durable_head).expect("restore stale head");
-        assert_eq!(verify_audit_session(directory.path(), session), AuditVerification::Interrupted);
+        assert_eq!(
+            verify_audit_session(directory.path(), session),
+            AuditVerification::Interrupted
+        );
 
-        let current_head: AuditHead = read_head(&head_path(directory.path(), session)).expect("read").expect("head");
         let mut journal = fs::read(journal_path(directory.path(), session)).expect("journal");
         journal.pop();
         fs::write(journal_path(directory.path(), session), &journal).expect("truncate");
-        assert_eq!(verify_audit_session(directory.path(), session), AuditVerification::TailTruncated);
+        assert_eq!(
+            verify_audit_session(directory.path(), session),
+            AuditVerification::TailTruncated
+        );
 
         let session2 = SessionId::new(5);
-        audit.prepare_device_write(preparation(session2)).await.expect("prepare2");
+        audit
+            .prepare_device_write(preparation(session2))
+            .await
+            .expect("prepare2");
         let journal2 = journal_path(directory.path(), session2);
         let mut text = fs::read_to_string(&journal2).expect("journal2");
         text = text.replacen("context-hash", "context-Xash", 1);
         fs::write(&journal2, text).expect("tamper");
-        assert_eq!(verify_audit_session(directory.path(), session2), AuditVerification::RecordChanged);
+        assert_eq!(
+            verify_audit_session(directory.path(), session2),
+            AuditVerification::RecordChanged
+        );
 
         let session3 = SessionId::new(6);
-        audit.prepare_device_write(preparation(session3)).await.expect("prepare3");
-        audit.record_decision(DecisionAuditRecord {
-            plan_id: PlanId::new(100),
-            session_id: session3,
-            fingerprint: fingerprint(),
-            profile_hash: "profile-hash".into(),
-            parameter_id: parameter(),
-            context_hash: None,
-            decision: DecisionOutcome::Cancelled,
-            at: MonotonicInstant::from_nanos(13),
-        }).await.expect("record3");
+        audit
+            .prepare_device_write(preparation(session3))
+            .await
+            .expect("prepare3");
+        audit
+            .record_decision(DecisionAuditRecord {
+                plan_id: PlanId::new(100),
+                session_id: session3,
+                fingerprint: fingerprint(),
+                profile_hash: "profile-hash".into(),
+                parameter_id: parameter(),
+                context_hash: None,
+                decision: DecisionOutcome::Cancelled,
+                at: MonotonicInstant::from_nanos(13),
+            })
+            .await
+            .expect("record3");
         let journal3 = journal_path(directory.path(), session3);
         let text3 = fs::read_to_string(&journal3).expect("journal3");
         let first = text3.lines().next().expect("first");
         fs::write(&journal3, format!("{first}\n")).expect("rollback journal");
-        assert_eq!(verify_audit_session(directory.path(), session3), AuditVerification::RollbackDetected);
+        assert_eq!(
+            verify_audit_session(directory.path(), session3),
+            AuditVerification::RollbackDetected
+        );
 
         let session4 = SessionId::new(7);
-        audit.prepare_device_write(preparation(session4)).await.expect("prepare4");
+        audit
+            .prepare_device_write(preparation(session4))
+            .await
+            .expect("prepare4");
         audit.finalize_session(session4).expect("finalize session");
-        assert_eq!(verify_audit_session(directory.path(), session4), AuditVerification::ValidFinalized);
-        let _ = current_head;
+        assert_eq!(
+            verify_audit_session(directory.path(), session4),
+            AuditVerification::ValidFinalized
+        );
     }
 
     #[test]
@@ -1187,8 +967,4 @@ mod tests {
             AuditVerification::HeadMissing
         );
     }
-}
-"#,
-    )
-    .expect("write audit module");
 }

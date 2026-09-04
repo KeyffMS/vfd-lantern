@@ -2,7 +2,8 @@ use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
 
 use lantern_domain::{
     DecisionAuditRecord, DeviceFingerprint, DeviceWriteOutcome, DeviceWritePreparation, DriveState,
-    PreparedToken, ProfileId, ReadBackEvidence, SessionId, SlaveId, WriteOutcome,
+    OperationAuditFinish, OperationAuditStart, OperationToken, PreparedToken, ProfileId,
+    ReadBackEvidence, SessionId, SlaveId, WriteOutcome,
 };
 use lantern_profile::ValidatedDeviceProfile;
 use thiserror::Error;
@@ -122,6 +123,21 @@ pub trait AuditPort: Send + Sync {
         _token: PreparedToken,
         _outcome: DeviceWriteOutcome,
         _read_back: ReadBackEvidence,
+    ) -> PortFuture<'_, Result<(), AuditError>> {
+        Box::pin(async { Err(AuditError::Unavailable) })
+    }
+
+    fn begin_operation(
+        &self,
+        _start: OperationAuditStart,
+    ) -> PortFuture<'_, Result<OperationToken, AuditError>> {
+        Box::pin(async { Err(AuditError::Unavailable) })
+    }
+
+    fn finish_operation(
+        &self,
+        _token: OperationToken,
+        _finish: OperationAuditFinish,
     ) -> PortFuture<'_, Result<(), AuditError>> {
         Box::pin(async { Err(AuditError::Unavailable) })
     }
