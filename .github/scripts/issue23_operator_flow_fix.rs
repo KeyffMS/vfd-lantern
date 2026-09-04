@@ -73,17 +73,43 @@ fn parameter_lines_inner(
         "        Screen::Parameters => parameter_lines_for_session(\n",
     );
 
-    // Main benchmark browser fixture.
     replace_once(
         "crates/lantern-tui/src/parameter_benchmark.rs",
         "        latest: None,\n        staged_intent: None,\n        error: None,\n    }\n}\n\nfn benchmark_descriptor",
         "        latest: None,\n        staged_intent: None,\n        prepared_write: None,\n        write_status: None,\n        error: None,\n    }\n}\n\nfn benchmark_descriptor",
     );
 
-    // Snapshot/form test fixture later in the same module.
     replace_once(
         "crates/lantern-tui/src/parameter_benchmark.rs",
         "            catalog: Arc::from(vec![descriptor.clone()]),\n            latest: None,\n            staged_intent: None,\n            error: None,\n        };",
         "            catalog: Arc::from(vec![descriptor.clone()]),\n            latest: None,\n            staged_intent: None,\n            prepared_write: None,\n            write_status: None,\n            error: None,\n        };",
+    );
+
+    replace_once(
+        "crates/lantern-tui/src/parameter_benchmark.rs",
+        r#"        let semantic_snapshot = format!(
+            "typed_fixed={}\nno_write_request={}\npreview_language={}",
+            text.contains("Typed editor Fixed: 12_"),
+            text.contains("No write request is created."),
+            text.contains("prepare intent")
+        );
+        insta::assert_snapshot!(semantic_snapshot, @r###"
+        typed_fixed=true
+        no_write_request=true
+        preview_language=true
+        "###);
+"#,
+        r#"        let semantic_snapshot = format!(
+            "typed_fixed={}\nno_write_sent={}\nguarded_language={}",
+            text.contains("Typed editor Fixed: 12_"),
+            text.contains("No write request is created yet."),
+            text.contains("stage intent") && text.contains("prepare/confirm")
+        );
+        insta::assert_snapshot!(semantic_snapshot, @r###"
+        typed_fixed=true
+        no_write_sent=true
+        guarded_language=true
+        "###);
+"#,
     );
 }
