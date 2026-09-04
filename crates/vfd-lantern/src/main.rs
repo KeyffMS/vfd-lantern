@@ -25,8 +25,8 @@ use lantern_app::{
     ProfileRegistry, SessionInput, SessionPhaseView, SettingsLoader, ValidatedSettings,
 };
 use lantern_storage::{
-    AppPaths, FilesystemProfileSource, FilesystemSettingsSource, ProfileLocations,
-    install_diagnostic_logging,
+    AppPaths, DiagnosticsBundleOptions, FilesystemProfileSource, FilesystemSettingsSource,
+    ProfileLocations, collect_diagnostics_bundle, install_diagnostic_logging,
 };
 use lantern_transport::UdevDiscovery;
 use lantern_tui::{MappedAction, Screen, TerminalSession, UiState, visible_parameter_ids};
@@ -68,7 +68,16 @@ async fn main() -> Result<()> {
     let paths = AppPaths::resolve(&settings.paths)?;
     // Diagnostic logging is independent from the durable audit path; changing VFD_LANTERN_LOG
     // can only change this subscriber filter and can never disable AuditPort persistence.
-    let _diagnostic_logging = install_diagnostic_logging(&paths.log_directory, settings.log_level)?;
+    let _diagnostic_logging =
+        match install_diagnostic_logging(&paths.log_directory, settings.log_level) {
+            Ok(logging) => Some(logging),
+            Err(error) => {
+                eprintln!(
+                    "diagnostic logging unavailable; continuing read-only capable runtime: {error}"
+                );
+                None
+            }
+        };
 
     match cli.command {
         Some(Command::Profile(arguments)) => profile_commands::run(arguments.command),
@@ -86,10 +95,38 @@ async fn main() -> Result<()> {
             ),
         },
         Some(Command::Diagnostics(arguments)) => match arguments.command {
-            DiagnosticsCommand::Collect { output } => bail!(
-                "diagnostics collection into {} is implemented by roadmap issue #22",
-                output.display()
-            ),
+            DiagnosticsCommand::Collect {
+                output,
+                include_values,
+                include_csv,
+                include_backup,
+                include_fault_report,
+                include_profile,
+                include_audit,
+            } => {
+                let manifest = collect_diagnostics_bundle(
+                    &paths,
+                    &settings,
+                    &output,
+                    None,
+                    None,
+                    DiagnosticsBundleOptions {
+                        include_values,
+                        include_csv,
+                        include_backup,
+                        include_fault_report,
+                        include_profile,
+                        include_audit,
+                    },
+                )?;
+                println!(
+                    "diagnostics={} files={} warnings={}",
+                    output.display(),
+                    manifest.included.len(),
+                    manifest.warnings.len()
+                );
+                Ok(())
+            }
         },
         None => run_tui(&settings, &paths).await,
     }
@@ -102,7 +139,7 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
 
     let mut terminal = TerminalSession::enter(color_enabled(settings))?;
     let terminal_guard = terminal.guard();
-    install_terminal_panic_hook(Arc::clone(&terminal_guard));
+    install_terminal_panic_hook(Arc::clone(&terminal_guard), paths.panic_directory.clone());
 
     let (action_tx, mut action_rx) = mpsc::unbounded_channel();
     let state = ApplicationState::with_registry_and_suggestions(

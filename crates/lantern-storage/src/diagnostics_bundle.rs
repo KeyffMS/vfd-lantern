@@ -1,55 +1,4 @@
-use std::{fs, path::Path};
-
-fn replace_once(path: &str, old: &str, new: &str) {
-    let path = Path::new(path);
-    let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let Some(index) = text.find(old) else {
-        panic!("anchor not found in {}: {:?}", path.display(), &old[..old.len().min(180)]);
-    };
-    let mut out = String::with_capacity(text.len() + new.len().saturating_sub(old.len()));
-    out.push_str(&text[..index]);
-    out.push_str(new);
-    out.push_str(&text[index + old.len()..]);
-    fs::write(path, out).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
-}
-
-fn main() {
-    replace_once(
-        "crates/lantern-storage/src/lib.rs",
-        "mod csv_writer;\n",
-        "mod csv_writer;\nmod diagnostics_bundle;\n",
-    );
-    replace_once(
-        "crates/lantern-storage/src/lib.rs",
-        "mod paths;\n",
-        "mod panic_report;\nmod paths;\n",
-    );
-    replace_once(
-        "crates/lantern-storage/src/lib.rs",
-        r#"pub use csv_writer::{
-    CSV_HEADER, CSV_SCHEMA_VERSION, CsvWriterActor, CsvWriterHandle, CsvWriterStart,
-    CsvWriterState, CsvWriterStatus, CsvWriterStop,
-};
-"#,
-        r#"pub use csv_writer::{
-    CSV_HEADER, CSV_SCHEMA_VERSION, CsvWriterActor, CsvWriterHandle, CsvWriterStart,
-    CsvWriterState, CsvWriterStatus, CsvWriterStop,
-};
-pub use diagnostics_bundle::{
-    DIAGNOSTICS_BUNDLE_SCHEMA_VERSION, DiagnosticsBundleError, DiagnosticsBundleManifest,
-    DiagnosticsBundleOptions, collect_diagnostics_bundle,
-};
-"#,
-    );
-    replace_once(
-        "crates/lantern-storage/src/lib.rs",
-        "pub use paths::{AppPaths, PathError};\n",
-        "pub use panic_report::{PanicReportError, write_minimal_panic_report};\npub use paths::{AppPaths, PathError};\n",
-    );
-
-    fs::write(
-        "crates/lantern-storage/src/diagnostics_bundle.rs",
-        r#"use std::{
+use std::{
     fs::{self, DirBuilder, Permissions},
     os::unix::fs::{DirBuilderExt, PermissionsExt},
     path::{Path, PathBuf},
@@ -223,15 +172,10 @@ pub fn collect_diagnostics_bundle(
 
     if options.include_values {
         if let Some(values) = values {
-            write_json(
-                output,
-                "values.json",
-                values,
-                &mut budget,
-                &mut included,
-            )?;
+            write_json(output, "values.json", values, &mut budget, &mut included)?;
         } else {
-            warnings.push("values were requested but no runtime value snapshot was supplied".into());
+            warnings
+                .push("values were requested but no runtime value snapshot was supplied".into());
         }
     }
     if options.include_csv {
@@ -268,7 +212,14 @@ pub fn collect_diagnostics_bundle(
         )?;
     }
     if options.include_profile {
-        copy_profile_sources(paths, settings, output, &mut budget, &mut included, &mut warnings)?;
+        copy_profile_sources(
+            paths,
+            settings,
+            output,
+            &mut budget,
+            &mut included,
+            &mut warnings,
+        )?;
     }
     if options.include_audit {
         copy_directory(
@@ -319,7 +270,10 @@ fn create_private_output_directory(output: &Path) -> Result<(), DiagnosticsBundl
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(DiagnosticsBundleError::io(output, error)),
     }
-    if let Some(parent) = output.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         fs::create_dir_all(parent).map_err(|error| DiagnosticsBundleError::io(parent, error))?;
     }
     DirBuilder::new()
@@ -543,7 +497,8 @@ where
         warnings.push(format!("{label} source is not a directory"));
         return Ok(());
     }
-    let entries = fs::read_dir(source).map_err(|error| DiagnosticsBundleError::io(source, error))?;
+    let entries =
+        fs::read_dir(source).map_err(|error| DiagnosticsBundleError::io(source, error))?;
     for entry in entries {
         let entry = entry.map_err(|error| DiagnosticsBundleError::io(source, error))?;
         let source_path = entry.path();
@@ -556,12 +511,10 @@ where
         if !file_type.is_file() {
             continue;
         }
-        if filter.as_ref().is_some_and(|filter| {
-            entry
-                .file_name()
-                .to_str()
-                .is_none_or(|name| !filter(name))
-        }) {
+        if filter
+            .as_ref()
+            .is_some_and(|filter| entry.file_name().to_str().is_none_or(|name| !filter(name)))
+        {
             continue;
         }
         copy_file(
@@ -582,6 +535,9 @@ fn copy_file(
     budget: &mut BundleBudget,
     included: &mut Vec<String>,
 ) -> Result<(), DiagnosticsBundleError> {
+    if let Some(parent) = destination.parent() {
+        ensure_private_directory(parent)?;
+    }
     let bytes = read_bounded(source, MAX_SOURCE_FILE_BYTES)
         .map_err(|error| DiagnosticsBundleError::Source(error.to_string()))?;
     budget.charge(bytes.len())?;
@@ -595,6 +551,12 @@ fn copy_file(
     Ok(())
 }
 
+fn ensure_private_directory(path: &Path) -> Result<(), DiagnosticsBundleError> {
+    fs::create_dir_all(path).map_err(|error| DiagnosticsBundleError::io(path, error))?;
+    fs::set_permissions(path, Permissions::from_mode(PRIVATE_DIR_MODE))
+        .map_err(|error| DiagnosticsBundleError::io(path, error))
+}
+
 fn system_time_nanos() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -603,7 +565,11 @@ fn system_time_nanos() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, os::unix::fs::{PermissionsExt, symlink}, path::PathBuf};
+    use std::{
+        fs,
+        os::unix::fs::{PermissionsExt, symlink},
+        path::Path,
+    };
 
     use lantern_app::ValidatedSettings;
     use serde_json::json;
@@ -612,7 +578,7 @@ mod tests {
     use super::{DiagnosticsBundleOptions, collect_diagnostics_bundle};
     use crate::AppPaths;
 
-    fn paths(root: &Path) -> AppPaths {
+    fn test_paths(root: &Path) -> AppPaths {
         AppPaths::from_roots(
             root.join("cfg"),
             root.join("data"),
@@ -624,12 +590,36 @@ mod tests {
 
     fn seed(paths: &AppPaths) {
         for (directory, name, content) in [
-            (&paths.log_directory, "vfd-lantern-01.jsonl", b"{\"safe\":true}\n".as_slice()),
-            (&paths.csv_directory, "values.csv", b"sensitive csv".as_slice()),
-            (&paths.backup_directory, "backup.json", b"sensitive backup".as_slice()),
-            (&paths.fault_report_directory, "fault.json", b"sensitive fault".as_slice()),
-            (&paths.audit_directory, "audit_1.jsonl", b"sensitive audit".as_slice()),
-            (&paths.user_profiles, "profile.toml", b"sensitive full profile".as_slice()),
+            (
+                &paths.log_directory,
+                "vfd-lantern-01.jsonl",
+                b"{\"safe\":true}\n".as_slice(),
+            ),
+            (
+                &paths.csv_directory,
+                "values.csv",
+                b"sensitive csv".as_slice(),
+            ),
+            (
+                &paths.backup_directory,
+                "backup.json",
+                b"sensitive backup".as_slice(),
+            ),
+            (
+                &paths.fault_report_directory,
+                "fault.json",
+                b"sensitive fault".as_slice(),
+            ),
+            (
+                &paths.audit_directory,
+                "audit_1.jsonl",
+                b"sensitive audit".as_slice(),
+            ),
+            (
+                &paths.user_profiles,
+                "profile.toml",
+                b"sensitive full profile".as_slice(),
+            ),
         ] {
             fs::create_dir_all(directory).expect("directory");
             fs::write(directory.join(name), content).expect("fixture");
@@ -639,7 +629,7 @@ mod tests {
     #[test]
     fn default_bundle_contains_redacted_categories_and_no_sensitive_payloads() {
         let root = tempdir().expect("tempdir");
-        let paths = paths(root.path());
+        let paths = test_paths(root.path());
         seed(&paths);
         let output = root.path().join("bundle-default");
         let manifest = collect_diagnostics_bundle(
@@ -655,19 +645,43 @@ mod tests {
         assert!(output.join("build.json").exists());
         assert!(output.join("config.json").exists());
         assert!(output.join("logs/vfd-lantern-01.jsonl").exists());
-        for path in ["values.json", "csv", "backups", "fault-reports", "profiles", "audit"] {
-            assert!(!output.join(path).exists(), "unexpected sensitive default: {path}");
+        for path in [
+            "values.json",
+            "csv",
+            "backups",
+            "fault-reports",
+            "profiles",
+            "audit",
+        ] {
+            assert!(
+                !output.join(path).exists(),
+                "unexpected sensitive default: {path}"
+            );
         }
         assert!(manifest.default_redaction);
         assert_eq!(manifest.omitted_sensitive.len(), 6);
-        assert_eq!(fs::metadata(&output).expect("metadata").permissions().mode() & 0o777, 0o700);
-        assert_eq!(fs::metadata(output.join("manifest.json")).expect("metadata").permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(&output)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(output.join("manifest.json"))
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
     }
 
     #[test]
     fn every_sensitive_category_requires_and_honors_explicit_opt_in() {
         let root = tempdir().expect("tempdir");
-        let paths = paths(root.path());
+        let paths = test_paths(root.path());
         seed(&paths);
         let output = root.path().join("bundle-all");
         collect_diagnostics_bundle(
@@ -698,7 +712,7 @@ mod tests {
     #[test]
     fn bundle_refuses_overwrite_and_symlink_sources() {
         let root = tempdir().expect("tempdir");
-        let paths = paths(root.path());
+        let paths = test_paths(root.path());
         seed(&paths);
         let output = root.path().join("bundle");
         collect_diagnostics_bundle(
@@ -710,304 +724,32 @@ mod tests {
             DiagnosticsBundleOptions::default(),
         )
         .expect("first");
-        assert!(collect_diagnostics_bundle(
-            &paths,
-            &ValidatedSettings::default(),
-            &output,
-            None,
-            None,
-            DiagnosticsBundleOptions::default(),
-        ).is_err());
+        assert!(
+            collect_diagnostics_bundle(
+                &paths,
+                &ValidatedSettings::default(),
+                &output,
+                None,
+                None,
+                DiagnosticsBundleOptions::default(),
+            )
+            .is_err()
+        );
 
         let bad_root = tempdir().expect("bad root");
-        let bad_paths = paths(bad_root.path());
+        let bad_paths = test_paths(bad_root.path());
         fs::create_dir_all(bad_root.path().join("real-logs")).expect("real logs");
         symlink(bad_root.path().join("real-logs"), &bad_paths.log_directory).expect("symlink");
-        assert!(collect_diagnostics_bundle(
-            &bad_paths,
-            &ValidatedSettings::default(),
-            &bad_root.path().join("bundle"),
-            None,
-            None,
-            DiagnosticsBundleOptions::default(),
-        ).is_err());
-    }
-}
-"#,
-    )
-    .expect("write diagnostics bundle module");
-
-    fs::write(
-        "crates/lantern-storage/src/panic_report.rs",
-        r#"use std::{path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
-
-use thiserror::Error;
-
-use crate::create_new_synced;
-
-const MAX_PANIC_MESSAGE_CHARS: usize = 4_096;
-
-#[derive(Debug, Error)]
-pub enum PanicReportError {
-    #[error("panic report persistence failed: {0}")]
-    Persistence(String),
-    #[error("too many panic report name collisions")]
-    NameExhausted,
-}
-
-pub fn write_minimal_panic_report(
-    directory: &Path,
-    message: &str,
-) -> Result<PathBuf, PanicReportError> {
-    let sanitized = sanitize(message);
-    let created = system_time_nanos();
-    let body = format!(
-        "vfd-lantern panic report\nversion={}\ntime_unix_nanos={created}\nos={}\narch={}\nmessage={sanitized}\n",
-        env!("CARGO_PKG_VERSION"),
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    );
-    for suffix in 0_u16..=999 {
-        let name = if suffix == 0 {
-            format!("panic-{created}.txt")
-        } else {
-            format!("panic-{created}-{suffix}.txt")
-        };
-        let path = directory.join(name);
-        match create_new_synced(&path, body.as_bytes()) {
-            Ok(()) => return Ok(path),
-            Err(error) if path.exists() => continue,
-            Err(error) => return Err(PanicReportError::Persistence(error.to_string())),
-        }
-    }
-    Err(PanicReportError::NameExhausted)
-}
-
-fn sanitize(message: &str) -> String {
-    message
-        .chars()
-        .filter(|character| {
-            matches!(*character, '\n' | '\t')
-                || (!character.is_control() && *character != '\u{1b}')
-        })
-        .take(MAX_PANIC_MESSAGE_CHARS)
-        .collect()
-}
-
-fn system_time_nanos() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_nanos())
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{fs, os::unix::fs::PermissionsExt};
-
-    use tempfile::tempdir;
-
-    use super::write_minimal_panic_report;
-
-    #[test]
-    fn panic_report_is_private_minimal_and_strips_terminal_controls() {
-        let directory = tempdir().expect("tempdir");
-        let path = write_minimal_panic_report(directory.path(), "boom\u{1b}[31m\u{7}")
-            .expect("panic report");
-        let text = fs::read_to_string(&path).expect("report");
-        assert!(text.contains("message=boom[31m"));
-        assert!(!text.contains('\u{1b}'));
-        assert!(!text.contains('\u{7}'));
-        assert_eq!(fs::metadata(path).expect("metadata").permissions().mode() & 0o777, 0o600);
-    }
-}
-"#,
-    )
-    .expect("write panic report module");
-
-    replace_once(
-        "crates/lantern-app/src/settings.rs",
-        "            log_retention_files: 10,\n",
-        "            log_retention_files: 7,\n",
-    );
-    replace_once(
-        "crates/lantern-app/src/settings.rs",
-        r#"    if let Some(retention) = document.log_retention_files {
-        settings.log_retention_files = bounded("log_retention_files", retention, 1, 1_000)?;
-    }
-"#,
-        r#"    if let Some(retention) = document.log_retention_files {
-        if retention != 7 {
-            return Err(SettingsError::Validation(
-                "log_retention_files must be exactly 7".to_owned(),
-            ));
-        }
-        settings.log_retention_files = 7;
-    }
-"#,
-    );
-    replace_once(
-        "crates/lantern-app/src/settings.rs",
-        "        assert_eq!(settings.log_level, LogLevel::Info);\n",
-        "        assert_eq!(settings.log_level, LogLevel::Info);\n        assert_eq!(settings.log_retention_files, 7);\n",
-    );
-
-    replace_once(
-        "crates/vfd-lantern/src/cli.rs",
-        r#"    Collect {
-        #[arg(long)]
-        output: PathBuf,
-    },
-"#,
-        r#"    Collect {
-        #[arg(long)]
-        output: PathBuf,
-        #[arg(long)]
-        include_values: bool,
-        #[arg(long)]
-        include_csv: bool,
-        #[arg(long)]
-        include_backup: bool,
-        #[arg(long)]
-        include_fault_report: bool,
-        #[arg(long)]
-        include_profile: bool,
-        #[arg(long)]
-        include_audit: bool,
-    },
-"#,
-    );
-
-    replace_once(
-        "crates/vfd-lantern/src/main.rs",
-        r#"use lantern_storage::{
-    AppPaths, FilesystemProfileSource, FilesystemSettingsSource, ProfileLocations,
-    install_diagnostic_logging,
-};
-"#,
-        r#"use lantern_storage::{
-    AppPaths, DiagnosticsBundleOptions, FilesystemProfileSource, FilesystemSettingsSource,
-    ProfileLocations, collect_diagnostics_bundle, install_diagnostic_logging,
-};
-"#,
-    );
-    replace_once(
-        "crates/vfd-lantern/src/main.rs",
-        r#"    let _diagnostic_logging = install_diagnostic_logging(&paths.log_directory, settings.log_level)?;
-"#,
-        r#"    let _diagnostic_logging = match install_diagnostic_logging(&paths.log_directory, settings.log_level) {
-        Ok(logging) => Some(logging),
-        Err(error) => {
-            eprintln!("diagnostic logging unavailable; continuing read-only capable runtime: {error}");
-            None
-        }
-    };
-"#,
-    );
-    replace_once(
-        "crates/vfd-lantern/src/main.rs",
-        r#"        Some(Command::Diagnostics(arguments)) => match arguments.command {
-            DiagnosticsCommand::Collect { output } => bail!(
-                "diagnostics collection into {} is implemented by roadmap issue #22",
-                output.display()
-            ),
-        },
-"#,
-        r#"        Some(Command::Diagnostics(arguments)) => match arguments.command {
-            DiagnosticsCommand::Collect {
-                output,
-                include_values,
-                include_csv,
-                include_backup,
-                include_fault_report,
-                include_profile,
-                include_audit,
-            } => {
-                let manifest = collect_diagnostics_bundle(
-                    &paths,
-                    &settings,
-                    &output,
-                    None,
-                    None,
-                    DiagnosticsBundleOptions {
-                        include_values,
-                        include_csv,
-                        include_backup,
-                        include_fault_report,
-                        include_profile,
-                        include_audit,
-                    },
-                )?;
-                println!(
-                    "diagnostics={} files={} warnings={}",
-                    output.display(),
-                    manifest.included.len(),
-                    manifest.warnings.len()
-                );
-                Ok(())
-            }
-        },
-"#,
-    );
-    replace_once(
-        "crates/vfd-lantern/src/main.rs",
-        "    install_terminal_panic_hook(Arc::clone(&terminal_guard));\n",
-        "    install_terminal_panic_hook(Arc::clone(&terminal_guard), paths.panic_directory.clone());\n",
-    );
-
-    fs::write(
-        "crates/vfd-lantern/src/panic_support.rs",
-        r#"use std::{panic, path::PathBuf, sync::Arc};
-
-use lantern_storage::write_minimal_panic_report;
-use lantern_tui::TerminalGuard;
-
-pub fn install_terminal_panic_hook(guard: Arc<TerminalGuard>, panic_directory: PathBuf) {
-    let previous = panic::take_hook();
-    panic::set_hook(Box::new(move |information| {
-        let message = information.to_string();
-        run_panic_cleanup(
-            || {
-                let _ = guard.restore();
-            },
-            || {
-                let _ = write_minimal_panic_report(&panic_directory, &message);
-            },
-            || previous(information),
+        assert!(
+            collect_diagnostics_bundle(
+                &bad_paths,
+                &ValidatedSettings::default(),
+                &bad_root.path().join("bundle"),
+                None,
+                None,
+                DiagnosticsBundleOptions::default(),
+            )
+            .is_err()
         );
-    }));
-}
-
-fn run_panic_cleanup(
-    restore: impl FnOnce(),
-    report: impl FnOnce(),
-    after_report: impl FnOnce(),
-) {
-    restore();
-    report();
-    after_report();
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{cell::RefCell, rc::Rc};
-
-    use super::run_panic_cleanup;
-
-    #[test]
-    fn panic_cleanup_restores_terminal_before_report_and_follow_up_hook() {
-        let order = Rc::new(RefCell::new(Vec::new()));
-        let restore_order = Rc::clone(&order);
-        let report_order = Rc::clone(&order);
-        let after_order = Rc::clone(&order);
-        run_panic_cleanup(
-            move || restore_order.borrow_mut().push("restore"),
-            move || report_order.borrow_mut().push("report"),
-            move || after_order.borrow_mut().push("after-report"),
-        );
-        assert_eq!(&*order.borrow(), &["restore", "report", "after-report"]);
     }
-}
-"#,
-    )
-    .expect("write panic support");
 }

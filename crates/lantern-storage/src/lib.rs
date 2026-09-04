@@ -7,8 +7,10 @@ mod atomic;
 mod audit;
 mod csv_lifecycle;
 mod csv_writer;
+mod diagnostics_bundle;
 mod fault_report;
 mod observability;
+mod panic_report;
 mod paths;
 mod profile_source;
 mod session_artifacts;
@@ -27,11 +29,16 @@ pub use csv_writer::{
     CSV_HEADER, CSV_SCHEMA_VERSION, CsvWriterActor, CsvWriterHandle, CsvWriterStart,
     CsvWriterState, CsvWriterStatus, CsvWriterStop,
 };
+pub use diagnostics_bundle::{
+    DIAGNOSTICS_BUNDLE_SCHEMA_VERSION, DiagnosticsBundleError, DiagnosticsBundleManifest,
+    DiagnosticsBundleOptions, collect_diagnostics_bundle,
+};
 pub use fault_report::{FAULT_REPORT_SUFFIX, FaultReportError, write_fault_report};
 pub use observability::{
     DIAGNOSTIC_LOG_RETENTION, DIAGNOSTIC_RING_CAPACITY, DiagnosticEvent, DiagnosticLogHandle,
     DiagnosticLogging, ObservabilityError, install_diagnostic_logging,
 };
+pub use panic_report::{PanicReportError, write_minimal_panic_report};
 pub use paths::{AppPaths, PathError};
 pub use profile_source::{
     FilesystemProfileSource, MAX_PROFILE_FILE_BYTES, MAX_PROFILE_FILES, MAX_PROFILE_SCAN_BYTES,

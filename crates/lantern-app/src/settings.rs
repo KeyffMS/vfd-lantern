@@ -158,7 +158,7 @@ impl Default for ValidatedSettings {
             color: ColorMode::Auto,
             history_samples: 3_600,
             memory_limit_mib: 128,
-            log_retention_files: 10,
+            log_retention_files: 7,
             queues: QueueCapacities {
                 safety_one_shot: 16,
                 interactive: 64,
@@ -247,7 +247,12 @@ fn apply_document(
         settings.memory_limit_mib = bounded("memory_limit_mib", memory, 16, 4_096)?;
     }
     if let Some(retention) = document.log_retention_files {
-        settings.log_retention_files = bounded("log_retention_files", retention, 1, 1_000)?;
+        if retention != 7 {
+            return Err(SettingsError::Validation(
+                "log_retention_files must be exactly 7".to_owned(),
+            ));
+        }
+        settings.log_retention_files = 7;
     }
     if let Some(slave) = document.suggested_slave {
         settings.suggested_slave = Some(
@@ -453,5 +458,6 @@ suggested_slave = 17
         assert!(!settings.process_writes_enabled);
         assert_eq!(settings.render_fps, 5);
         assert_eq!(settings.log_level, LogLevel::Info);
+        assert_eq!(settings.log_retention_files, 7);
     }
 }

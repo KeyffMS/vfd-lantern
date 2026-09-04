@@ -102,6 +102,18 @@ pub enum DiagnosticsCommand {
     Collect {
         #[arg(long)]
         output: PathBuf,
+        #[arg(long)]
+        include_values: bool,
+        #[arg(long)]
+        include_csv: bool,
+        #[arg(long)]
+        include_backup: bool,
+        #[arg(long)]
+        include_fault_report: bool,
+        #[arg(long)]
+        include_profile: bool,
+        #[arg(long)]
+        include_audit: bool,
     },
 }
 
