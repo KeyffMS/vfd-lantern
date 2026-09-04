@@ -40,4 +40,7 @@ pub use telemetry::{
     TelemetryQuality, TelemetrySampleCore, UtcTimestamp,
 };
 pub use value::{EngineeringValue, FixedScale, RoundingMode, ScaleError};
-pub use write::{PreparedWritePlan, ReadBackOutcome, WriteIntent, WriteOutcome};
+pub use write::{
+    DecisionAuditRecord, DecisionOutcome, DeviceWriteOutcome, DeviceWritePreparation, PreparedToken,
+    ReadBackEvidence, ReadBackOutcome, WriteIntent, WriteOutcome,
+};
