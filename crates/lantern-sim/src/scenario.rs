@@ -506,7 +506,7 @@ mod tests {
     const VALID: &str = r#"
 schema_version = 1
 profile_path = "profiles/example-vfd.toml"
-profile_hash = "2987e481b3d6c33c2c703338a5e848b979c36c14d84cf4deb5c6f9e6511c53fe"
+profile_hash = "ddddce361a98cc6a21e2bf298c582826f53070595a63f5f6c085d42eff09032b"
 slave_id = 1
 fingerprint = "device.demo"
 seed = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"

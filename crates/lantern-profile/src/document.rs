@@ -27,6 +27,7 @@ pub struct ProfileDocumentV1 {
     pub aliases: BTreeMap<String, String>,
     #[serde(default)]
     pub groups: Vec<ParameterGroupDocumentV1>,
+    pub drive_state_source: Option<DriveStateSourceDocumentV1>,
     pub fault_source: Option<FaultSourceDocumentV1>,
     #[serde(default)]
     pub faults: BTreeMap<String, FaultDefinitionDocumentV1>,
@@ -176,6 +177,18 @@ pub struct ParameterGroupDocumentV1 {
     pub id: String,
     pub name: String,
     pub parameters: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DriveStateSourceDocumentV1 {
+    pub parameter_id: String,
+    #[serde(default)]
+    pub stopped_raw: Vec<Vec<u16>>,
+    #[serde(default)]
+    pub running_raw: Vec<Vec<u16>>,
+    #[serde(default)]
+    pub faulted_raw: Vec<Vec<u16>>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

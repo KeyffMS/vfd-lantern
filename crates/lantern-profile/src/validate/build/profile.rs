@@ -82,6 +82,7 @@ pub(super) fn validate_profile(
     let probes = validate_probes(&mut document, &parameters)?;
     let aliases = validate_aliases(&document, &parameters)?;
     let groups = validate_groups(&document, &parameters)?;
+    let drive_state_source = validate_drive_state_source(&document, &parameters)?;
     let (fault_source, faults) = validate_faults(&document, &parameters)?;
     let presets = validate_presets(&document, &parameters)?;
     let restore_order = validate_restore_order(&document, &parameters)?;
@@ -110,6 +111,7 @@ pub(super) fn validate_profile(
         parameters,
         aliases,
         groups: groups.into_boxed_slice(),
+        drive_state_source,
         fault_source,
         faults,
         presets: presets.into_boxed_slice(),

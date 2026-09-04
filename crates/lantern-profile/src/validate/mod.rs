@@ -5,11 +5,11 @@ use std::{
 };
 
 use lantern_domain::{
-    BaudRate, ByteOrder, DataBits, FaultSeverity, FixedScale, LinkSettings, ModbusFunction,
-    ModbusTable, ParameterAccess, ParameterId, Parity, ProfileId, QuantityId, QuantityKind,
-    RawRegisters, RegisterAddress, RegisterBlock, RegisterCodec, RegisterCount, RegisterEncoding,
-    RequiredDriveState, RestorePolicy, RoundingMode, Rs485Mode, SlaveId, StopBits, UnitId,
-    WordOrder,
+    BaudRate, ByteOrder, DataBits, DriveState, FaultSeverity, FixedScale, LinkSettings,
+    ModbusFunction, ModbusTable, ParameterAccess, ParameterId, Parity, ProfileId, QuantityId,
+    QuantityKind, RawRegisters, RegisterAddress, RegisterBlock, RegisterCodec, RegisterCount,
+    RegisterEncoding, RequiredDriveState, RestorePolicy, RoundingMode, Rs485Mode, SlaveId,
+    StopBits, UnitId, WordOrder,
 };
 use rust_decimal::Decimal;
 use serde::Serialize;
@@ -258,6 +258,30 @@ pub enum FaultSourceKind {
     BitSet,
 }
 
+/// Profile-defined, exact-raw source for the safety-critical drive state guard.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidatedDriveStateSource {
+    pub parameter_id: ParameterId,
+    stopped_raw: Box<[RawRegisters]>,
+    running_raw: Box<[RawRegisters]>,
+    faulted_raw: Box<[RawRegisters]>,
+}
+
+impl ValidatedDriveStateSource {
+    #[must_use]
+    pub fn classify(&self, raw: &RawRegisters) -> DriveState {
+        if self.stopped_raw.iter().any(|value| value == raw) {
+            DriveState::Stopped
+        } else if self.running_raw.iter().any(|value| value == raw) {
+            DriveState::Running
+        } else if self.faulted_raw.iter().any(|value| value == raw) {
+            DriveState::Faulted
+        } else {
+            DriveState::Unknown
+        }
+    }
+}
+
 /// Validated profile fault source.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ValidatedFaultSource {
@@ -300,6 +324,7 @@ pub struct ValidatedDeviceProfile {
     parameters: BTreeMap<ParameterId, ValidatedParameter>,
     aliases: BTreeMap<String, ParameterId>,
     groups: Box<[ValidatedParameterGroup]>,
+    drive_state_source: Option<ValidatedDriveStateSource>,
     fault_source: Option<ValidatedFaultSource>,
     faults: BTreeMap<u64, ValidatedFaultDefinition>,
     presets: Box<[ValidatedTelemetryPreset]>,
@@ -371,6 +396,11 @@ impl ValidatedDeviceProfile {
     #[must_use]
     pub fn groups(&self) -> &[ValidatedParameterGroup] {
         &self.groups
+    }
+
+    #[must_use]
+    pub fn drive_state_source(&self) -> Option<&ValidatedDriveStateSource> {
+        self.drive_state_source.as_ref()
     }
 
     #[must_use]

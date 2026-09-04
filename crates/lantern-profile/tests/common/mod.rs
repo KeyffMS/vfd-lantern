@@ -40,6 +40,23 @@ unit = "hz"
 scale = { multiplier = "1.00", divisor = "100", offset = "-0", decimal_places = 2 }
 
 [[parameters]]
+id = "status.drive_state"
+code = "D1.01"
+name = "Drive state"
+table = "holding_registers"
+address = { notation = "pdu_zero_based", value = 2 }
+encoding = "enum16"
+quantity = "digital_state"
+unit = "bool"
+enum_values = { "0" = "Stopped", "1" = "Running", "2" = "Faulted" }
+
+[drive_state_source]
+parameter_id = "status.drive_state"
+stopped_raw = [[0]]
+running_raw = [[1]]
+faulted_raw = [[2]]
+
+[[parameters]]
 id = "config.acceleration"
 code = "D0.01"
 name = "Acceleration time"
@@ -117,6 +134,29 @@ pub const JSON_PROFILE: &str = r#"{
   },
   "parameters": [
     {
+      "id": "status.drive_state",
+      "code": "D1.01",
+      "name": "Drive state",
+      "description": "",
+      "table": "holding_registers",
+      "address": {"notation": "pdu_zero_based", "value": 2},
+      "encoding": "enum16",
+      "byte_order": "big_endian",
+      "word_order": "most_significant_first",
+      "scale": null,
+      "quantity": "digital_state",
+      "unit": "bool",
+      "access": "read_only",
+      "restore_policy": "normal",
+      "required_drive_state": "any",
+      "write_function": null,
+      "read_back": {"kind": "exact_raw"},
+      "backup": false,
+      "do_not_bridge": false,
+      "maximum_bridge_gap": 0,
+      "enum_values": {"0": "Stopped", "1": "Running", "2": "Faulted"}
+    },
+    {
       "id": "config.acceleration",
       "code": "D0.01",
       "name": "Acceleration time",
@@ -161,6 +201,7 @@ pub const JSON_PROFILE: &str = r#"{
       "maximum_bridge_gap": 0
     }
   ],
+  "drive_state_source": {"parameter_id": "status.drive_state", "stopped_raw": [[0]], "running_raw": [[1]], "faulted_raw": [[2]]},
   "aliases": {"status.output_frequency": "status.output_frequency"},
   "groups": [{"id": "status", "name": "Status", "parameters": ["status.output_frequency", "config.acceleration"]}],
   "fault_source": {"kind": "scalar_code", "parameter_id": "config.acceleration"},

@@ -51,6 +51,24 @@ step = "0.01"
 scale = { multiplier = "1", divisor = "100", offset = "0", decimal_places = 2 }
 
 [[parameters]]
+id = "status.drive_state"
+code = "D1.01"
+name = "Drive state"
+description = "Fictional exact state guard used only by tests"
+table = "holding_registers"
+address = { notation = "pdu_zero_based", value = 2 }
+encoding = "enum16"
+quantity = "digital_state"
+unit = "bool"
+enum_values = { "0" = "Stopped", "1" = "Running", "2" = "Faulted" }
+
+[drive_state_source]
+parameter_id = "status.drive_state"
+stopped_raw = [[0]]
+running_raw = [[1]]
+faulted_raw = [[2]]
+
+[[parameters]]
 id = "config.acceleration"
 code = "D0.01"
 name = "Acceleration time"

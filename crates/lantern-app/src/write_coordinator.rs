@@ -388,7 +388,11 @@ impl WriteCoordinator {
                     .await);
             }
         };
-        if before.drive_state != DriveState::Stopped {
+        if !matches!(
+            self.read_drive_state(&profile, before.session_id, operation_id)
+                .await,
+            Ok(DriveState::Stopped)
+        ) {
             return Err(self
                 .intent_decision(plan_id, &intent, DecisionOutcome::RejectedByPolicy)
                 .await);
@@ -438,7 +442,7 @@ impl WriteCoordinator {
         }
 
         let after = self.session.snapshot();
-        if !same_write_context(&before, &after) || after.drive_state != DriveState::Stopped {
+        if !same_write_context(&before, &after) {
             return Err(self
                 .intent_decision(plan_id, &intent, DecisionOutcome::PreconditionChanged)
                 .await);
@@ -529,10 +533,7 @@ impl WriteCoordinator {
         }
 
         let before = self.session.snapshot();
-        if !plan_matches_session(&plan, &before)
-            || before.guard_revision != stored.guard_revision
-            || before.drive_state != DriveState::Stopped
-        {
+        if !plan_matches_session(&plan, &before) || before.guard_revision != stored.guard_revision {
             return Ok(WriteOutcome::NotExecuted(
                 self.plan_decision(&plan, DecisionOutcome::PreconditionChanged)
                     .await,
@@ -570,6 +571,17 @@ impl WriteCoordinator {
             ));
         }
 
+        if !matches!(
+            self.read_drive_state(&profile, plan.session_id, plan.operation_id)
+                .await,
+            Ok(DriveState::Stopped)
+        ) {
+            return Ok(WriteOutcome::NotExecuted(
+                self.plan_decision(&plan, DecisionOutcome::PreconditionChanged)
+                    .await,
+            ));
+        }
+
         let final_old = match self
             .read_parameter_raw(parameter, plan.session_id, plan.operation_id)
             .await
@@ -588,7 +600,6 @@ impl WriteCoordinator {
             || final_engineering.as_ref() != Some(&plan.previous_engineering)
             || !same_write_context(&before, &after)
             || after.guard_revision != stored.guard_revision
-            || after.drive_state != DriveState::Stopped
         {
             return Ok(WriteOutcome::NotExecuted(
                 self.plan_decision(&plan, DecisionOutcome::PreconditionChanged)
@@ -801,6 +812,28 @@ impl WriteCoordinator {
                 },
             )
         }
+    }
+
+    async fn read_drive_state(
+        &mut self,
+        profile: &ValidatedDeviceProfile,
+        session_id: SessionId,
+        operation_id: OperationId,
+    ) -> Result<DriveState, BusError> {
+        let source = profile
+            .drive_state_source()
+            .ok_or(BusError::InvalidRequest(
+                "profile has no authoritative drive-state source",
+            ))?;
+        let parameter = profile
+            .parameter(&source.parameter_id)
+            .ok_or(BusError::InvalidRequest(
+                "drive-state source parameter disappeared",
+            ))?;
+        let raw = self
+            .read_parameter_raw(parameter, session_id, operation_id)
+            .await?;
+        Ok(source.classify(&raw))
     }
 
     async fn read_parameter_raw(
@@ -1050,7 +1083,6 @@ fn same_write_context(left: &WriteSessionSnapshot, right: &WriteSessionSnapshot)
         && left.armed == right.armed
         && left.audit_healthy == right.audit_healthy
         && left.operation_idle == right.operation_idle
-        && left.drive_state == right.drive_state
         && left.guard_revision == right.guard_revision
         && left.slave_id == right.slave_id
 }
@@ -1808,12 +1840,15 @@ mod write_pipeline_e2e_tests {
         let (mut coordinator, trace, _session) = runtime(
             Arc::clone(&profile),
             snapshot,
-            vec![raw(90), raw(90), raw(99), target.clone()],
+            vec![raw(0), raw(90), raw(0), raw(90), raw(99), target.clone()],
             RuntimeOptions::default(),
         );
 
         let plan = coordinator.prepare_write(intent).await.expect("prepare");
-        assert_eq!(trace.events.lock().expect("events").as_slice(), &["read"]);
+        assert_eq!(
+            trace.events.lock().expect("events").as_slice(),
+            &["read", "read"]
+        );
         assert!(trace.writes.lock().expect("writes").is_empty());
         assert!(trace.preparations.lock().expect("preparations").is_empty());
 
@@ -1833,6 +1868,8 @@ mod write_pipeline_e2e_tests {
         assert_eq!(
             trace.events.lock().expect("events").as_slice(),
             &[
+                "read",
+                "read",
                 "read",
                 "read",
                 "session:begin",
@@ -1899,7 +1936,7 @@ mod write_pipeline_e2e_tests {
     }
 
     #[tokio::test]
-    async fn prepare_safety_gates_fail_closed_before_any_bus_io() {
+    async fn prepare_safety_gates_fail_closed_before_write_io() {
         for gate in [
             PrepareGate::ProcessDisabled,
             PrepareGate::Disconnected,
@@ -1922,7 +1959,7 @@ mod write_pipeline_e2e_tests {
                 PrepareGate::Disarmed => snapshot.armed = false,
                 PrepareGate::AuditUnhealthy => snapshot.audit_healthy = false,
                 PrepareGate::OperationBusy => snapshot.operation_idle = false,
-                PrepareGate::DriveRunning => snapshot.drive_state = DriveState::Running,
+                PrepareGate::DriveRunning => {}
                 PrepareGate::ProfileUntrusted => options.trusted = false,
                 PrepareGate::SessionMismatch
                 | PrepareGate::FingerprintMismatch
@@ -1961,8 +1998,15 @@ mod write_pipeline_e2e_tests {
                 | PrepareGate::PreviewMismatch => DecisionOutcome::PreconditionChanged,
                 PrepareGate::ProfileUntrusted => DecisionOutcome::ProfileNotTrusted,
             };
+            let reads = if matches!(gate, PrepareGate::DriveRunning) {
+                vec![raw(1)]
+            } else if matches!(gate, PrepareGate::PreviewMismatch) {
+                vec![raw(0)]
+            } else {
+                Vec::new()
+            };
             let (mut coordinator, trace, _session) =
-                runtime(Arc::clone(&profile), snapshot, Vec::new(), options);
+                runtime(Arc::clone(&profile), snapshot, reads, options);
 
             let result = coordinator.prepare_write(intent).await;
             assert_eq!(
@@ -1994,7 +2038,7 @@ mod write_pipeline_e2e_tests {
         let (mut coordinator, trace, _session) = runtime(
             Arc::clone(&profile),
             snapshot,
-            vec![raw(90), raw(91)],
+            vec![raw(0), raw(90), raw(0), raw(91)],
             RuntimeOptions::default(),
         );
         let plan = coordinator.prepare_write(intent).await.expect("prepare");
@@ -2014,7 +2058,7 @@ mod write_pipeline_e2e_tests {
         );
         assert_eq!(
             trace.events.lock().expect("events").as_slice(),
-            &["read", "read", "audit:decision"]
+            &["read", "read", "read", "read", "audit:decision"]
         );
         assert!(trace.writes.lock().expect("writes").is_empty());
         assert!(trace.preparations.lock().expect("preparations").is_empty());
@@ -2028,7 +2072,7 @@ mod write_pipeline_e2e_tests {
         let (mut coordinator, trace, session) = runtime(
             Arc::clone(&profile),
             snapshot,
-            vec![raw(90), raw(90)],
+            vec![raw(0), raw(90), raw(0), raw(90)],
             RuntimeOptions {
                 fail_prepare: true,
                 ..RuntimeOptions::default()
@@ -2052,6 +2096,8 @@ mod write_pipeline_e2e_tests {
         assert_eq!(
             trace.events.lock().expect("events").as_slice(),
             &[
+                "read",
+                "read",
                 "read",
                 "read",
                 "session:begin",

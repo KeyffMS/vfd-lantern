@@ -19,9 +19,9 @@ pub use error::{
 pub use hash::{ProfileHash, SourceHash};
 pub use lantern_domain::FaultSeverity;
 pub use validate::{
-    FaultSourceKind, ReadBackPolicy, ValidatedDeviceProfile, ValidatedFaultDefinition,
-    ValidatedFaultSource, ValidatedParameter, ValidatedParameterGroup, ValidatedProbe,
-    ValidatedProtocol, ValidatedTelemetryPreset,
+    FaultSourceKind, ReadBackPolicy, ValidatedDeviceProfile, ValidatedDriveStateSource,
+    ValidatedFaultDefinition, ValidatedFaultSource, ValidatedParameter, ValidatedParameterGroup,
+    ValidatedProbe, ValidatedProtocol, ValidatedTelemetryPreset,
 };
 
 /// Explicit input format. File extensions are interpreted only by storage/CLI adapters.
