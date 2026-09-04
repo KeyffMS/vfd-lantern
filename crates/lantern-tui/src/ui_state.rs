@@ -71,6 +71,8 @@ pub enum ConnectionEdit {
     ProfileSearch,
     ScopeSearch,
     ParameterSearch,
+    WriteArming,
+    WriteConfirmation,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -154,6 +156,8 @@ pub enum UiAction {
     BeginParameterSearch,
     ApplyParameterSearch,
     ClearParameterSearch,
+    BeginWriteArming,
+    BeginWriteConfirmation,
     SetParameterGroup(Option<String>),
     SetParameterAccess(Option<ParameterAccess>),
     SetParameterQuality(Option<TelemetryQuality>),
@@ -325,6 +329,18 @@ impl UiState {
                 self.connection_edit = None;
                 self.selected_index = 0;
                 self.focus = Focus::Navigation;
+            }
+            UiAction::BeginWriteArming => {
+                self.form.clear();
+                self.connection_edit = Some(ConnectionEdit::WriteArming);
+                self.parameters.editor = None;
+                self.focus = Focus::Content;
+            }
+            UiAction::BeginWriteConfirmation => {
+                self.form.clear();
+                self.connection_edit = Some(ConnectionEdit::WriteConfirmation);
+                self.parameters.editor = None;
+                self.focus = Focus::Content;
             }
             UiAction::SetParameterGroup(value) => {
                 self.parameters.filters.group = value;

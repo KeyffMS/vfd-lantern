@@ -11,12 +11,13 @@ use crate::{
     CsvLoggingStartContext, CsvLoggingStateView, FaultAction, FaultEffect, FaultIdentityContext,
     FaultTimelineView, FaultTracker, LoggingId, MAX_PARAMETER_BROWSER_VISIBLE, MonitoringAction,
     MonitoringEffect, MonitoringRuntimeSnapshot, MonitoringView, OperationState, ParameterAction,
-    ParameterBrowserView, ParameterDescriptorView, ParameterIntentContext, PreparedWritePlan,
-    ProfileRegistry, ScopeSelection, SerialConnectError, SessionEffect, SessionFault, SessionInput,
-    SessionState, SessionStateMachine, StagedWriteIntent, WriteConfirmation,
-    WriteConfirmationModel, WriteEffect, WriteSessionSnapshot, default_dashboard_parameters,
-    identification_error_attempt, identification_report_export, parameter_catalog,
-    prepare_parameter_intent, project_monitoring_view, project_parameter_browser_view,
+    ParameterBrowserView, ParameterDescriptorView, ParameterIntentContext,
+    ParameterWritePresentation, PreparedWritePlan, ProfileRegistry, ScopeSelection,
+    SerialConnectError, SessionEffect, SessionFault, SessionInput, SessionState,
+    SessionStateMachine, StagedWriteIntent, WriteConfirmation, WriteConfirmationModel, WriteEffect,
+    WriteSessionSnapshot, default_dashboard_parameters, identification_error_attempt,
+    identification_report_export, parameter_catalog, prepare_parameter_intent,
+    project_monitoring_view, project_parameter_browser_view,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -162,8 +163,12 @@ impl ApplicationState {
                             .snapshot
                             .as_ref()
                             .map(|snapshot| Arc::clone(&snapshot.latest)),
-                        self.parameters.staged_intent.clone(),
-                        self.parameters.error.as_deref(),
+                        ParameterWritePresentation {
+                            staged_intent: self.parameters.staged_intent.clone(),
+                            prepared_write: self.parameters.prepared_write.clone(),
+                            write_status: self.parameters.write_status.clone(),
+                            error: self.parameters.error.clone(),
+                        },
                     )
                 })
                 .unwrap_or_default()
@@ -524,7 +529,7 @@ impl ApplicationState {
                     self.parameters.error = Some("there is no prepared write plan".to_owned());
                     return Vec::new();
                 };
-                if operator_text.trim() != plan.operator_confirmation_text() {
+                if operator_text != plan.operator_confirmation_text() {
                     self.parameters.error = Some(
                         "operator confirmation does not exactly match the prepared plan".to_owned(),
                     );
@@ -1359,6 +1364,9 @@ pub struct SessionView {
     verified_profile_id: Option<String>,
     profile_hash: Option<String>,
     authorization: AuthorizationView,
+    arming_challenge: Option<String>,
+    arming_expires_at: Option<Instant>,
+    armed_idle_expires_at: Option<Instant>,
     audit_health: AuditHealthView,
     operation: OperationView,
 }
@@ -1388,6 +1396,18 @@ impl SessionView {
                     Authorization::Arming { .. } => AuthorizationView::Arming,
                     Authorization::Armed { .. } => AuthorizationView::Armed,
                 },
+                arming_challenge: match &active.authorization {
+                    Authorization::Arming { challenge, .. } => Some(challenge.clone()),
+                    _ => None,
+                },
+                arming_expires_at: match &active.authorization {
+                    Authorization::Arming { expires_at, .. } => Some(*expires_at),
+                    _ => None,
+                },
+                armed_idle_expires_at: match &active.authorization {
+                    Authorization::Armed { idle_expires_at } => Some(*idle_expires_at),
+                    _ => None,
+                },
                 audit_health: match &active.audit_health {
                     AuditHealth::Healthy => AuditHealthView::Healthy,
                     AuditHealth::Degraded { .. } => AuditHealthView::Degraded,
@@ -1410,6 +1430,9 @@ impl SessionView {
             verified_profile_id: None,
             profile_hash: None,
             authorization: AuthorizationView::Unavailable,
+            arming_challenge: None,
+            arming_expires_at: None,
+            armed_idle_expires_at: None,
             audit_health: AuditHealthView::Unavailable,
             operation: OperationView::Unavailable,
         }
@@ -1443,6 +1466,21 @@ impl SessionView {
     #[must_use]
     pub const fn authorization(&self) -> AuthorizationView {
         self.authorization
+    }
+
+    #[must_use]
+    pub fn arming_challenge(&self) -> Option<&str> {
+        self.arming_challenge.as_deref()
+    }
+
+    #[must_use]
+    pub const fn arming_expires_at(&self) -> Option<Instant> {
+        self.arming_expires_at
+    }
+
+    #[must_use]
+    pub const fn armed_idle_expires_at(&self) -> Option<Instant> {
+        self.armed_idle_expires_at
     }
 
     #[must_use]

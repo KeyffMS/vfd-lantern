@@ -1,8 +1,10 @@
+use std::time::{Duration, Instant};
+
 use crossterm::event::{KeyCode, KeyEvent};
 use lantern_app::{
-    ApplicationAction, ApplicationView, AuthorizationView, EngineeringValue, ParameterAccess,
-    ParameterAction, ParameterEditorInput, ParameterEditorKind, ParameterRiskView, QuantityKind,
-    TelemetryQuality,
+    ApplicationAction, ApplicationView, AuditHealthView, AuthorizationView, EngineeringValue,
+    OperationView, ParameterAccess, ParameterAction, ParameterEditorInput, ParameterEditorKind,
+    ParameterRiskView, QuantityKind, SessionInput, SessionPhaseView, TelemetryQuality,
 };
 
 use crate::{
@@ -143,11 +145,89 @@ pub(crate) fn map_parameter_key(
             })
         }
         KeyCode::Char('e') => begin_editor_action(ui, view),
-        KeyCode::Char('c') if browser.staged_intent.is_some() => {
+        KeyCode::Char('A') => arm_action(view),
+        KeyCode::Char('w') => guarded_write_action(view),
+        KeyCode::Char('c')
+            if browser.staged_intent.is_some() || browser.prepared_write.is_some() =>
+        {
             Some(parameter_action(ParameterAction::ClearIntent))
         }
         _ => None,
     }
+}
+
+fn arm_action(view: &ApplicationView) -> Option<MappedAction> {
+    let session = view.session();
+    match session.authorization() {
+        AuthorizationView::ProcessDisabled => Some(MappedAction::Ui(UiAction::ShowMessage {
+            title: "Write arming unavailable".to_owned(),
+            body: "Restart with --enable-writes to make explicit arming available. Read-only remains the default."
+                .to_owned(),
+        })),
+        AuthorizationView::Disarmed => {
+            if session.phase() != SessionPhaseView::Connected
+                || session.audit_health() != AuditHealthView::Healthy
+                || session.operation() != OperationView::Idle
+            {
+                return Some(MappedAction::Ui(UiAction::ShowMessage {
+                    title: "Cannot arm writes".to_owned(),
+                    body: "Arming requires Connected + Verified + audit Healthy + operation Idle."
+                        .to_owned(),
+                }));
+            }
+            let profile_hash = session.profile_hash()?;
+            let prefix_len = profile_hash.len().min(12);
+            let challenge = format!("ARM {}", &profile_hash[..prefix_len]);
+            let now = Instant::now();
+            let expires_at = now.checked_add(Duration::from_secs(30)).unwrap_or(now);
+            Some(MappedAction::Combined {
+                ui: UiAction::BeginWriteArming,
+                application: Box::new(ApplicationAction::Session(SessionInput::ArmWrites {
+                    challenge,
+                    expires_at,
+                })),
+            })
+        }
+        AuthorizationView::Arming => Some(MappedAction::Ui(UiAction::BeginWriteArming)),
+        AuthorizationView::Armed => Some(MappedAction::Application(Box::new(
+            ApplicationAction::Session(SessionInput::DisarmWrites),
+        ))),
+        AuthorizationView::Unavailable => None,
+    }
+}
+
+fn guarded_write_action(view: &ApplicationView) -> Option<MappedAction> {
+    let session = view.session();
+    if session.authorization() != AuthorizationView::Armed {
+        return Some(MappedAction::Ui(UiAction::ShowMessage {
+            title: "Writes are disarmed".to_owned(),
+            body:
+                "Press A and complete the exact arming challenge before preparing a guarded write."
+                    .to_owned(),
+        }));
+    }
+    if session.phase() != SessionPhaseView::Connected
+        || session.audit_health() != AuditHealthView::Healthy
+        || session.operation() != OperationView::Idle
+    {
+        return Some(MappedAction::Ui(UiAction::ShowMessage {
+            title: "Guarded write blocked".to_owned(),
+            body: "Write preparation requires Connected + Verified + Armed + audit Healthy + operation Idle."
+                .to_owned(),
+        }));
+    }
+    let browser = view.parameters();
+    if browser.prepared_write.is_some() {
+        return Some(MappedAction::Ui(UiAction::BeginWriteConfirmation));
+    }
+    if browser.staged_intent.is_some() {
+        return Some(parameter_action(ParameterAction::PrepareWrite));
+    }
+    Some(MappedAction::Ui(UiAction::ShowMessage {
+        title: "No staged WriteIntent".to_owned(),
+        body: "Select a writable parameter, press e, and stage a typed intent from a fresh Good observation first."
+            .to_owned(),
+    }))
 }
 
 fn begin_editor_action(ui: &UiState, view: &ApplicationView) -> Option<MappedAction> {
@@ -155,7 +235,7 @@ fn begin_editor_action(ui: &UiState, view: &ApplicationView) -> Option<MappedAct
     if view.session().authorization() == AuthorizationView::ProcessDisabled {
         return Some(MappedAction::Ui(UiAction::ShowMessage {
             title: "Parameter editor unavailable".to_owned(),
-            body: "Restart with --enable-writes to prepare a WriteIntent. This screen never executes a write."
+            body: "Restart with --enable-writes to stage a WriteIntent. Execution still requires Verified + trust + audit Healthy + explicit arming + prepare/confirm."
                 .to_owned(),
         }));
     }

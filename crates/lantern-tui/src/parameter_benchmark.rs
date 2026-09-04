@@ -138,6 +138,8 @@ fn benchmark_browser() -> ParameterBrowserView {
         catalog,
         latest: None,
         staged_intent: None,
+        prepared_write: None,
+        write_status: None,
         error: None,
     }
 }
@@ -262,6 +264,8 @@ mod tests {
             catalog: Arc::from(vec![descriptor.clone()]),
             latest: None,
             staged_intent: None,
+            prepared_write: None,
+            write_status: None,
             error: None,
         };
         let mut ui = UiState::default();
@@ -277,15 +281,15 @@ mod tests {
             &ui,
         ));
         let semantic_snapshot = format!(
-            "typed_fixed={}\nno_write_request={}\npreview_language={}",
+            "typed_fixed={}\nno_write_sent={}\nguarded_language={}",
             text.contains("Typed editor Fixed: 12_"),
-            text.contains("No write request is created."),
-            text.contains("prepare intent")
+            text.contains("No write request is created yet."),
+            text.contains("stage intent") && text.contains("prepare/confirm")
         );
         insta::assert_snapshot!(semantic_snapshot, @r###"
         typed_fixed=true
-        no_write_request=true
-        preview_language=true
+        no_write_sent=true
+        guarded_language=true
         "###);
     }
 }

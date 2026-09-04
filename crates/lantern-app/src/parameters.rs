@@ -118,6 +118,8 @@ pub struct ParameterBrowserView {
     pub catalog: Arc<[ParameterDescriptorView]>,
     pub latest: Option<Arc<LatestValues>>,
     pub staged_intent: Option<StagedWriteIntent>,
+    pub prepared_write: Option<PreparedWritePlan>,
+    pub write_status: Option<String>,
     pub error: Option<String>,
 }
 
@@ -402,14 +404,21 @@ fn read_back_label(policy: &ReadBackPolicy) -> String {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ParameterWritePresentation {
+    pub staged_intent: Option<StagedWriteIntent>,
+    pub prepared_write: Option<PreparedWritePlan>,
+    pub write_status: Option<String>,
+    pub error: Option<String>,
+}
+
 #[must_use]
 pub fn project_parameter_browser_view(
     profile: &ValidatedDeviceProfile,
     origin: ProfileOrigin,
     catalog: Arc<[ParameterDescriptorView]>,
     latest: Option<Arc<LatestValues>>,
-    staged_intent: Option<StagedWriteIntent>,
-    error: Option<&str>,
+    write: ParameterWritePresentation,
 ) -> ParameterBrowserView {
     ParameterBrowserView {
         profile: Some(ParameterProfileView {
@@ -424,8 +433,10 @@ pub fn project_parameter_browser_view(
         }),
         catalog,
         latest,
-        staged_intent,
-        error: error.map(str::to_owned),
+        staged_intent: write.staged_intent,
+        prepared_write: write.prepared_write,
+        write_status: write.write_status,
+        error: write.error,
     }
 }
 

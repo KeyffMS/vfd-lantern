@@ -16,7 +16,7 @@ use crate::{
         cursor_label, format_monitoring_value, scope_plot, scope_range, scope_window_label,
         visible_scope_points,
     },
-    parameter_render::parameter_lines,
+    parameter_render::parameter_lines_for_session,
     profile_matches_filter,
 };
 
@@ -31,10 +31,10 @@ pub fn render_screen(
         Screen::Connection => connection_lines(view, ui),
         Screen::Dashboard => dashboard_lines(view),
         Screen::Scope => scope_lines(view, ui, area.width),
-        Screen::Parameters => parameter_lines(
+        Screen::Parameters => parameter_lines_for_session(
             view.parameters(),
             view.active_session().is_some(),
-            view.session().authorization(),
+            view.session(),
             ui,
         ),
         Screen::Backup => planned_lines(

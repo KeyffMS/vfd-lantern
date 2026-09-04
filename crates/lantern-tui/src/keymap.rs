@@ -1,9 +1,13 @@
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use lantern_app::{
     ApplicationAction, ApplicationView, ConnectionAction, ConnectionStep, CsvLoggingStateView,
-    MonitoringAction, ScopePanel, SessionInput,
+    MonitoringAction, ParameterAction, ScopePanel, SessionInput,
 };
 
 use crate::{
@@ -30,7 +34,7 @@ pub struct KeyBinding {
     pub description: &'static str,
 }
 
-pub const HELP_BINDINGS: [KeyBinding; 45] = [
+pub const HELP_BINDINGS: [KeyBinding; 47] = [
     KeyBinding {
         key: "1..9",
         description: "select top-level screen",
@@ -145,11 +149,19 @@ pub const HELP_BINDINGS: [KeyBinding; 45] = [
     },
     KeyBinding {
         key: "Parameters e",
-        description: "open typed WriteIntent preview editor; never write",
+        description: "stage a typed WriteIntent from a fresh Good value",
+    },
+    KeyBinding {
+        key: "Parameters A",
+        description: "start/confirm arming challenge or disarm writes",
+    },
+    KeyBinding {
+        key: "Parameters w",
+        description: "prepare guarded plan, then open exact confirmation",
     },
     KeyBinding {
         key: "Parameters c",
-        description: "clear staged WriteIntent preview",
+        description: "cancel staged/prepared guarded write",
     },
     KeyBinding {
         key: "Faults j/k",
@@ -265,6 +277,43 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
             ConnectionEdit::ParameterSearch => match key.code {
                 KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
                 KeyCode::Enter => Some(MappedAction::Ui(UiAction::ApplyParameterSearch)),
+                KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
+                KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
+                _ => None,
+            },
+            ConnectionEdit::WriteArming => match key.code {
+                KeyCode::Esc => Some(MappedAction::Combined {
+                    ui: UiAction::CancelEdit,
+                    application: Box::new(ApplicationAction::Session(SessionInput::CancelArming)),
+                }),
+                KeyCode::Enter => {
+                    let now = Instant::now();
+                    let idle_expires_at = now.checked_add(Duration::from_secs(60)).unwrap_or(now);
+                    Some(MappedAction::Combined {
+                        ui: UiAction::CancelEdit,
+                        application: Box::new(ApplicationAction::Session(
+                            SessionInput::ConfirmArming {
+                                challenge: ui.form.value().to_owned(),
+                                now,
+                                idle_expires_at,
+                            },
+                        )),
+                    })
+                }
+                KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
+                KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
+                _ => None,
+            },
+            ConnectionEdit::WriteConfirmation => match key.code {
+                KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
+                KeyCode::Enter => Some(MappedAction::Combined {
+                    ui: UiAction::CancelEdit,
+                    application: Box::new(ApplicationAction::Parameters(
+                        ParameterAction::ConfirmPrepared {
+                            operator_text: ui.form.value().to_owned(),
+                        },
+                    )),
+                }),
                 KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
                 KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
                 _ => None,

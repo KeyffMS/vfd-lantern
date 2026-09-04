@@ -198,6 +198,8 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
     let mut dirty = false;
     let mut sigint = signal(SignalKind::interrupt())?;
     let mut sigterm = signal(SignalKind::terminate())?;
+    let mut write_safety_tick = tokio::time::interval(Duration::from_millis(250));
+    write_safety_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
         let redraw_at = last_draw
@@ -228,6 +230,20 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
             event = next_port_event(&mut port_events) => {
                 if let Some(event) = event {
                     application.dispatch(ApplicationAction::Connection(ConnectionAction::PortEvent(event)))?;
+                    dirty = true;
+                }
+            }
+            _ = write_safety_tick.tick() => {
+                let session = application.state().view().session().clone();
+                let now = Instant::now();
+                if session.arming_expires_at().is_some_and(|deadline| now >= deadline) {
+                    application.dispatch(ApplicationAction::Session(SessionInput::ArmingExpired))?;
+                    dirty = true;
+                } else if session
+                    .armed_idle_expires_at()
+                    .is_some_and(|deadline| now >= deadline)
+                {
+                    application.dispatch(ApplicationAction::Session(SessionInput::IdleDisarmElapsed))?;
                     dirty = true;
                 }
             }

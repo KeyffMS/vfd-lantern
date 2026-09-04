@@ -2,18 +2,44 @@ use std::time::Duration;
 
 use lantern_app::{
     AuthorizationView, EngineeringValue, LatestValue, ParameterBrowserView,
-    ParameterDescriptorView, ParameterEditorKind, RawRegisters, TelemetryQuality,
+    ParameterDescriptorView, ParameterEditorKind, RawRegisters, SessionView, TelemetryQuality,
 };
 use ratatui::text::Line;
 
 use crate::{
-    ParameterEditorUiState, UiState, filtered_parameters, selected_parameter, visible_parameter_ids,
+    ConnectionEdit, ParameterEditorUiState, UiState, filtered_parameters, selected_parameter,
+    visible_parameter_ids,
 };
 
 pub(crate) fn parameter_lines(
     browser: &ParameterBrowserView,
     connected: bool,
     authorization: AuthorizationView,
+    ui: &UiState,
+) -> Vec<Line<'static>> {
+    parameter_lines_inner(browser, connected, authorization, None, ui)
+}
+
+pub(crate) fn parameter_lines_for_session(
+    browser: &ParameterBrowserView,
+    connected: bool,
+    session: &SessionView,
+    ui: &UiState,
+) -> Vec<Line<'static>> {
+    parameter_lines_inner(
+        browser,
+        connected,
+        session.authorization(),
+        session.arming_challenge(),
+        ui,
+    )
+}
+
+fn parameter_lines_inner(
+    browser: &ParameterBrowserView,
+    connected: bool,
+    authorization: AuthorizationView,
+    arming_challenge: Option<&str>,
     ui: &UiState,
 ) -> Vec<Line<'static>> {
     if !connected {
@@ -61,10 +87,37 @@ pub(crate) fn parameter_lines(
             .map_or_else(|| "all".to_owned(), |value| format!("{value:?}")),
     )));
     lines.push(Line::from(
-        "/ search | x clear search | g group | a access | y quality | u unreadable | r risk | t quantity | R refresh | e prepare intent | c clear preview",
+        "/ search | filters g/a/y/u/r/t | R refresh | e stage intent | A arm/disarm | w prepare/confirm | c cancel",
     ));
     if let Some(error) = &browser.error {
         lines.push(Line::from(format!("PARAMETER ERROR: {error}")));
+    }
+    if let Some(status) = &browser.write_status {
+        lines.push(Line::from(format!("WRITE STATUS: {status}")));
+    }
+    match authorization {
+        AuthorizationView::Arming => {
+            lines.push(Line::from(format!(
+                "ARMING CHALLENGE: {}",
+                arming_challenge.unwrap_or("unavailable")
+            )));
+            lines.push(Line::from(
+                "Type the challenge exactly and press Enter; Esc cancels arming. Challenge expires after 30 seconds.",
+            ));
+            if ui.connection_edit == Some(ConnectionEdit::WriteArming) {
+                lines.push(Line::from(format!("Arming confirmation: {}_", ui.form.value())));
+            }
+        }
+        AuthorizationView::Armed => lines.push(Line::from(
+            "WRITES ARMED — only guarded prepare/confirm may reach the single-write capability; A disarms.",
+        )),
+        AuthorizationView::Disarmed => lines.push(Line::from(
+            "WRITES DISARMED — press A to start an explicit short-lived arming challenge.",
+        )),
+        AuthorizationView::ProcessDisabled => lines.push(Line::from(
+            "READ-ONLY PROCESS — restart with --enable-writes before arming can exist.",
+        )),
+        AuthorizationView::Unavailable => {}
     }
     lines.push(Line::from(""));
 
@@ -107,7 +160,7 @@ pub(crate) fn parameter_lines(
     }
     if let Some(staged) = &browser.staged_intent {
         lines.push(Line::from(""));
-        lines.push(Line::from("WRITE INTENT PREVIEW — NO WRITE SENT"));
+        lines.push(Line::from("STAGED WRITE INTENT — NO WRITE SENT"));
         lines.push(Line::from(format!(
             "parameter={} requested={} encoded={} rounded={} preview_raw={}",
             staged.intent.parameter_id,
@@ -129,8 +182,33 @@ pub(crate) fn parameter_lines(
             engineering_label(&staged.intent.previous_engineering),
         )));
         lines.push(Line::from(
-            "Policy, target raw, write function and read-back remain authoritative in the active profile/#16; this preview cannot execute Modbus write I/O.",
+            "This is only an intent. Press w while Armed to ask WriteCoordinator for a fresh guarded plan; no Modbus write has been sent.",
         ));
+    }
+    if let Some(plan) = &browser.prepared_write {
+        lines.push(Line::from(""));
+        lines.push(Line::from("PREPARED GUARDED WRITE — NO WRITE SENT YET"));
+        lines.push(Line::from(format!(
+            "parameter={} previous_raw={} requested={} target_raw={}",
+            plan.parameter_id(),
+            raw_label(plan.previous_raw()),
+            engineering_label(plan.requested_engineering()),
+            raw_label(plan.target_raw()),
+        )));
+        lines.push(Line::from(format!(
+            "challenge={} exact-confirmation={:?}",
+            plan.challenge(),
+            plan.operator_confirmation_text(),
+        )));
+        lines.push(Line::from(
+            "Press w to open phase-2 confirmation. Only an exact match can call confirm_write; Esc leaves the plan prepared, c cancels it.",
+        ));
+        if ui.connection_edit == Some(ConnectionEdit::WriteConfirmation) {
+            lines.push(Line::from(format!(
+                "Write confirmation: {}_",
+                ui.form.value()
+            )));
+        }
     }
     lines
 }
@@ -270,7 +348,7 @@ fn editor_lines(
                 "Editor unavailable by validated profile/access policy.".to_owned()
             }
             _ if authorization == AuthorizationView::ProcessDisabled => {
-                "Editor gated: process writes are disabled. Use --enable-writes only to prepare an intent; no write is executed here."
+                "Editor gated: process writes are disabled. --enable-writes only makes explicit arming and the guarded pipeline available."
                     .to_owned()
             }
             _ => "Press e to open the typed intent editor after a fresh Good observation.".to_owned(),
@@ -283,7 +361,7 @@ fn editor_lines(
         ParameterEditorUiState::Text { kind, .. } => vec![
             Line::from(format!("Typed editor {kind:?}: {}_", ui.form.value())),
             Line::from(
-                "Enter validates engineering→raw preview; Esc cancels. No write request is created.",
+                "Enter validates engineering→raw and stages an intent; Esc cancels. No write request is created yet.",
             ),
         ],
         ParameterEditorUiState::Enum { option_index, .. } => {
@@ -294,7 +372,7 @@ fn editor_lines(
             vec![
                 Line::from(format!("Enum editor: {choice}")),
                 Line::from(
-                    "j/k selects only a profile-declared enum value; Enter prepares preview; Esc cancels.",
+                    "j/k selects only a profile-declared enum value; Enter stages intent; Esc cancels.",
                 ),
             ]
         }
@@ -308,7 +386,7 @@ fn editor_lines(
             vec![
                 Line::from(format!("Bitfield editor: mask=0x{value:x} selected={flag}")),
                 Line::from(
-                    "j/k selects a declared flag; Space toggles it; Enter prepares preview; Esc cancels.",
+                    "j/k selects a declared flag; Space toggles it; Enter stages intent; Esc cancels.",
                 ),
             ]
         }

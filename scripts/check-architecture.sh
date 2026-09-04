@@ -94,4 +94,16 @@ if grep -R -n -E '\b(TcpStream|TcpListener|UdpSocket|reqwest|hyper|ureq)\b' \
 fi
 
 cargo metadata --locked --no-deps --format-version 1 >/dev/null
-printf 'architecture checks passed for internal graph: %s\n' "$internal"
+if ! grep -q 'SessionInput::ArmWrites' crates/lantern-tui/src/parameter_keymap.rs \
+    || ! grep -q 'ParameterAction::PrepareWrite' crates/lantern-tui/src/parameter_keymap.rs \
+    || ! grep -q 'ParameterAction::ConfirmPrepared' crates/lantern-tui/src/keymap.rs; then
+    printf 'issue #23 requires explicit arming, prepare and phase-2 confirmation in the TUI boundary\n' >&2
+    exit 1
+fi
+
+if [ ! -f docs/development/threat-model.md ]; then
+    printf 'issue #23 requires an explicit industrial threat model\n' >&2
+    exit 1
+fi
+
+printf 'architecture checks passed\n'
