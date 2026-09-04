@@ -449,7 +449,13 @@ pub trait ReadBusPort: Send + Sync {
 }
 
 pub trait WriteBusPort: Send + Sync {
-    fn write(&self, request: PreparedBusWrite) -> BusFuture<'static, ()>;
+    /// Executes the single capability minted by the private write kernel.
+    fn execute(&self, request: PreparedBusWrite) -> BusFuture<'static, ()>;
+
+    /// Compatibility alias for lower-level tests. Production write orchestration calls `execute`.
+    fn write(&self, request: PreparedBusWrite) -> BusFuture<'static, ()> {
+        self.execute(request)
+    }
 }
 
 pub trait BusControlPort: Send + Sync {

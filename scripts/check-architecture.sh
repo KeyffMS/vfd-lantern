@@ -71,5 +71,10 @@ for manifest in crates/*/Cargo.toml; do
     esac
 done
 
+if grep -R -n -E '\b(WriteCoordinator|PreparedBusWrite)\b' crates/vfd-lantern/src; then
+    printf 'production composition root exposes guarded writes before #22/#23\n' >&2
+    exit 1
+fi
+
 cargo metadata --locked --no-deps --format-version 1 >/dev/null
 printf 'architecture checks passed for internal graph: %s\n' "$internal"

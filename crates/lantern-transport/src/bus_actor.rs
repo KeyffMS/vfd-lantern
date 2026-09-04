@@ -126,7 +126,7 @@ impl ReadBusPort for BusActorHandle {
 }
 
 impl WriteBusPort for BusActorHandle {
-    fn write(&self, request: PreparedBusWrite) -> BusFuture<'static, ()> {
+    fn execute(&self, request: PreparedBusWrite) -> BusFuture<'static, ()> {
         let sender = self.senders.for_class(request.context().class()).clone();
         let stats = Arc::clone(&self.statistics);
         let clock = Arc::clone(&self.clock);

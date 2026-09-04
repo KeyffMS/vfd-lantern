@@ -1,10 +1,4 @@
-use std::{
-    future::Future,
-    path::PathBuf,
-    pin::Pin,
-    sync::Arc,
-    time::Duration,
-};
+use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
 
 use lantern_domain::{
     DecisionAuditRecord, DeviceFingerprint, DeviceWriteOutcome, DeviceWritePreparation, DriveState,

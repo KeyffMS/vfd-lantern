@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
 use lantern_domain::{
-    IdentificationMatch, IdentificationReport, OperationId, PlanId, SessionId,
-    VerifiedDeviceIdentity, WriteOutcome,
+    DecisionOutcome, DeviceWriteOutcome, IdentificationMatch, IdentificationReport, OperationId,
+    PlanId, SessionId, VerifiedDeviceIdentity, WriteOutcome,
 };
 use lantern_profile::ProfileHash;
 
@@ -485,13 +485,16 @@ impl SessionStateMachine {
             {
                 active.operation = OperationState::Idle;
                 match outcome {
-                    WriteOutcome::OutcomeUnknown => {
+                    WriteOutcome::Executed(
+                        DeviceWriteOutcome::OutcomeUnknown | DeviceWriteOutcome::TransportLost,
+                    ) => {
                         active.authorization = disarmed_for_process(
                             process_writes_enabled,
                             DisarmReason::OutcomeUnknown,
                         );
                     }
-                    WriteOutcome::AuditDegraded => {
+                    WriteOutcome::Executed(DeviceWriteOutcome::AuditDegraded)
+                    | WriteOutcome::NotExecuted(DecisionOutcome::AuditUnavailable) => {
                         active.authorization = disarmed_for_process(
                             process_writes_enabled,
                             DisarmReason::AuditDegraded,
