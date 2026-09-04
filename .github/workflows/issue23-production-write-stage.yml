@@ -6,6 +6,7 @@ on:
       - agent/issue-23
     paths:
       - '.github/scripts/issue23_production_write_stage.rs'
+      - '.github/scripts/issue23_production_write_fix.rs'
       - '.github/workflows/issue23-production-write-stage.yml'
       - 'crates/lantern-app/**'
       - 'crates/vfd-lantern/**'
@@ -28,6 +29,8 @@ jobs:
           set -euo pipefail
           rustc --edition=2024 .github/scripts/issue23_production_write_stage.rs -o /tmp/issue23-production-write-stage
           /tmp/issue23-production-write-stage
+          rustc --edition=2024 .github/scripts/issue23_production_write_fix.rs -o /tmp/issue23-production-write-fix
+          /tmp/issue23-production-write-fix
           cargo fmt --all
           cargo check --workspace --all-features --locked
           cargo test --workspace --all-features --locked
@@ -36,6 +39,7 @@ jobs:
           sh scripts/check-architecture.sh
           git rm .github/workflows/issue23-production-write-stage.yml
           git rm .github/scripts/issue23_production_write_stage.rs
+          git rm .github/scripts/issue23_production_write_fix.rs
           git add -A
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
