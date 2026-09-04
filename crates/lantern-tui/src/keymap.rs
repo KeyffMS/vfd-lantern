@@ -2,8 +2,8 @@ use std::{collections::BTreeSet, path::PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use lantern_app::{
-    ApplicationAction, ApplicationView, ConnectionAction, ConnectionStep, MonitoringAction,
-    ScopePanel, SessionInput,
+    ApplicationAction, ApplicationView, ConnectionAction, ConnectionStep, CsvLoggingStateView,
+    MonitoringAction, ScopePanel, SessionInput,
 };
 
 use crate::{
@@ -30,7 +30,7 @@ pub struct KeyBinding {
     pub description: &'static str,
 }
 
-pub const HELP_BINDINGS: [KeyBinding; 42] = [
+pub const HELP_BINDINGS: [KeyBinding; 45] = [
     KeyBinding {
         key: "1..9",
         description: "select top-level screen",
@@ -176,6 +176,18 @@ pub const HELP_BINDINGS: [KeyBinding; 42] = [
         description: "not available; diagnostics are read-only",
     },
     KeyBinding {
+        key: "Logs j/k",
+        description: "select CSV channel",
+    },
+    KeyBinding {
+        key: "Logs Enter",
+        description: "add/remove CSV channel before logging",
+    },
+    KeyBinding {
+        key: "Logs s",
+        description: "explicitly start/stop CSV logging",
+    },
+    KeyBinding {
         key: "Tab",
         description: "next focus",
     },
@@ -272,6 +284,12 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
         return Some(action);
     }
 
+    if ui.screen == Screen::Logs
+        && let Some(action) = map_logs_key(ui, view, key)
+    {
+        return Some(action);
+    }
+
     if ui.screen == Screen::Faults
         && let Some(action) = map_fault_key(ui, view, key)
     {
@@ -333,6 +351,26 @@ fn map_scope_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<
         KeyCode::Char('p') => Some(MappedAction::Ui(UiAction::ScopeCursorPrevious)),
         KeyCode::Char('n') => Some(MappedAction::Ui(UiAction::ScopeCursorNext)),
         KeyCode::Char('0') => Some(MappedAction::Ui(UiAction::ScopeResetView)),
+        _ => None,
+    }
+}
+
+fn map_logs_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<MappedAction> {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => Some(MappedAction::Ui(UiAction::SelectionPrevious)),
+        KeyCode::Down | KeyCode::Char('j') => Some(MappedAction::Ui(UiAction::SelectionNext)),
+        KeyCode::Enter => selected_logging_toggle_action(ui, view),
+        KeyCode::Char('s') => match view.monitoring().csv.status.state {
+            CsvLoggingStateView::Starting | CsvLoggingStateView::Running => {
+                Some(monitoring_action(MonitoringAction::StopCsvLogging))
+            }
+            CsvLoggingStateView::Finalizing => None,
+            CsvLoggingStateView::Idle
+            | CsvLoggingStateView::Completed
+            | CsvLoggingStateView::Failed => {
+                Some(monitoring_action(MonitoringAction::StartCsvLogging))
+            }
+        },
         _ => None,
     }
 }
@@ -426,6 +464,16 @@ fn selected_profile_action(ui: &UiState, view: &ApplicationView) -> Option<Mappe
     let index = ui.selected_index.min(profiles.len().saturating_sub(1));
     profiles.get(index).map(|profile| {
         connection_action(ConnectionAction::SelectProfile(profile.profile_id.clone()))
+    })
+}
+
+fn selected_logging_toggle_action(ui: &UiState, view: &ApplicationView) -> Option<MappedAction> {
+    let parameters = &view.monitoring().catalog;
+    let index = ui.selected_index.min(parameters.len().saturating_sub(1));
+    parameters.get(index).map(|parameter| {
+        monitoring_action(MonitoringAction::ToggleCsvParameter(
+            parameter.parameter_id.clone(),
+        ))
     })
 }
 
@@ -612,5 +660,29 @@ mod tests {
             map_key(&ui, &view, quit),
             Some(MappedAction::Application(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod csv_logging_keymap_tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use lantern_app::ApplicationView;
+
+    use crate::{Screen, UiState};
+
+    use super::{MappedAction, map_key};
+
+    #[test]
+    fn logs_start_stop_key_crosses_the_application_boundary() {
+        let ui = UiState {
+            screen: Screen::Logs,
+            ..UiState::default()
+        };
+        let action = map_key(
+            &ui,
+            &ApplicationView::default(),
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+        );
+        assert!(matches!(action, Some(MappedAction::Application(_))));
     }
 }

@@ -308,6 +308,7 @@ async fn history_and_consumer_backlogs_are_bounded_and_reported() {
         pipeline_config(),
     )
     .expect("pipeline");
+    handle.start_csv_logging([parameter("p0"), parameter("p1")]);
     for request in 0..8_u64 {
         clock.advance(Duration::from_millis(10));
         let word = request as u16;

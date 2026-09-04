@@ -36,7 +36,7 @@ use tokio::{
 
 use crate::{
     cli::{BackupCommand, Cli, Command, DiagnosticsCommand},
-    connection_runtime::TuiEffectRunner,
+    connection_runtime::{TuiEffectRunner, TuiRuntimePaths},
     panic_support::install_terminal_panic_hook,
 };
 
@@ -111,8 +111,12 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
         Arc::clone(&terminal_guard),
         action_tx,
         Arc::clone(&discovery),
-        paths.diagnostics_directory.clone(),
-        paths.fault_report_directory.clone(),
+        TuiRuntimePaths::new(
+            paths.diagnostics_directory.clone(),
+            paths.fault_report_directory.clone(),
+            paths.csv_directory.clone(),
+            paths.session_runtime_directory.clone(),
+        ),
         settings.clone(),
     );
     let mut application = ApplicationRuntime::new(state, runner);

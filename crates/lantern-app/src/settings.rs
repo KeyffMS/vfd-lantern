@@ -65,6 +65,7 @@ pub struct QueueCapacityDocument {
     pub interactive: Option<usize>,
     pub telemetry_critical: Option<usize>,
     pub telemetry: Option<usize>,
+    pub csv_logging: Option<usize>,
     pub background: Option<usize>,
 }
 
@@ -115,6 +116,7 @@ pub struct QueueCapacities {
     pub interactive: usize,
     pub telemetry_critical: usize,
     pub telemetry: usize,
+    pub csv_logging: usize,
     pub background: usize,
 }
 
@@ -162,6 +164,7 @@ impl Default for ValidatedSettings {
                 interactive: 64,
                 telemetry_critical: 64,
                 telemetry: 256,
+                csv_logging: 8_192,
                 background: 32,
             },
             polling: PollingIntervals {
@@ -285,6 +288,9 @@ fn apply_queue(
     set!(interactive, 1_024);
     set!(telemetry_critical, 1_024);
     set!(telemetry, 4_096);
+    if let Some(value) = document.csv_logging {
+        settings.queues.csv_logging = bounded("csv_logging", value, 1_024, 65_536)?;
+    }
     set!(background, 1_024);
     Ok(())
 }

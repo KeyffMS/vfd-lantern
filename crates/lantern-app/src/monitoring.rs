@@ -5,8 +5,8 @@ use lantern_profile::{ValidatedDeviceProfile, ValidatedParameter};
 use thiserror::Error;
 
 use crate::{
-    FrequencyClass, MonitoringRuntimeSnapshot, PollPlanError, ReadSubscription, SubscriberId,
-    SubscriptionReason,
+    CsvLoggingFaultSummary, CsvLoggingRuntimeStatus, CsvLoggingStartContext, FrequencyClass,
+    MonitoringRuntimeSnapshot, PollPlanError, ReadSubscription, SubscriberId, SubscriptionReason,
 };
 
 pub const MAX_SCOPE_CHANNELS: usize = 8;
@@ -270,6 +270,13 @@ pub enum MonitoringAction {
         session_id: SessionId,
         message: String,
     },
+    ToggleCsvParameter(ParameterId),
+    StartCsvLogging,
+    StopCsvLogging,
+    CsvLoggingRuntimeStatus {
+        session_id: SessionId,
+        status: CsvLoggingRuntimeStatus,
+    },
     ToggleScopeParameter(ParameterId),
     MoveScopeParameter {
         parameter_id: ParameterId,
@@ -302,6 +309,13 @@ pub enum MonitoringEffect {
     },
     ClearHistory {
         parameter_ids: Vec<ParameterId>,
+    },
+    StartCsvLogging {
+        context: Box<CsvLoggingStartContext>,
+    },
+    StopCsvLogging {
+        session_id: SessionId,
+        faults: CsvLoggingFaultSummary,
     },
     Stop,
 }

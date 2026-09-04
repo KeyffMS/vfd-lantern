@@ -1,4 +1,6 @@
-use lantern_app::{ApplicationView, ConnectionStep, IdentificationMatch, MonitoringView};
+use lantern_app::{
+    ApplicationView, ConnectionStep, CsvLoggingStateView, IdentificationMatch, MonitoringView,
+};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -46,11 +48,7 @@ pub fn render_screen(
             "later diagnostics integration",
             "Transport and polling statistics remain application-owned immutable snapshots.",
         ),
-        Screen::Logs => planned_lines(
-            "Logs",
-            "#22",
-            "Durable audit/panic diagnostics are not implemented by the presentation skeleton.",
-        ),
+        Screen::Logs => csv_logging_lines(view, ui),
         Screen::Help => help_lines(),
     };
 
@@ -61,6 +59,83 @@ pub fn render_screen(
         .scroll((scroll, 0))
         .style(theme.muted());
     frame.render_widget(paragraph, area);
+}
+
+fn csv_logging_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> {
+    if view.active_session().is_none() {
+        return vec![
+            Line::from("Verified session required."),
+            Line::from("CSV logging never starts before successful identification."),
+        ];
+    }
+    let monitoring = view.monitoring();
+    let csv = &monitoring.csv;
+    let status = &csv.status;
+    let mut lines = vec![Line::from(
+        "j/k select | Enter add/remove channel | s start/stop logging",
+    )];
+    lines.push(Line::from(format!(
+        "state={:?} logging_id={} selected={} queue={}/{} samples={} gaps={} dropped={} flushes={} syncs={}",
+        status.state,
+        status
+            .logging_id
+            .map_or_else(|| "—".to_owned(), |id| id.get().to_string()),
+        csv.selected_parameters.len(),
+        status.queue_depth,
+        status.queue_capacity,
+        status.samples_written,
+        status.gaps_written,
+        status.dropped_count,
+        status.flushes,
+        status.syncs,
+    )));
+    lines.push(Line::from(format!(
+        "path={}",
+        status.csv_path.as_ref().map_or_else(
+            || "—".to_owned(),
+            |path| path.to_string_lossy().into_owned()
+        )
+    )));
+    if matches!(
+        status.state,
+        CsvLoggingStateView::Starting
+            | CsvLoggingStateView::Running
+            | CsvLoggingStateView::Finalizing
+    ) {
+        lines.push(Line::from(
+            "Channel selection is frozen until the current logging lifecycle finishes.",
+        ));
+    }
+    if let Some(error) = &status.last_error {
+        lines.push(Line::from(format!("CSV ERROR: {error}")));
+    }
+    if let Some(error) = &monitoring.error {
+        lines.push(Line::from(format!("MONITORING ERROR: {error}")));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from("Validated CSV channel catalog:"));
+    for (index, parameter) in monitoring.catalog.iter().enumerate() {
+        let marker = selection_marker(index, ui.selected_index);
+        let selected = if csv.selected_parameters.contains(&parameter.parameter_id) {
+            "selected"
+        } else {
+            "available"
+        };
+        lines.push(Line::from(format!(
+            "{marker} [{}] {} — {} quantity={:?} unit={} {selected}",
+            parameter.code,
+            parameter.parameter_id,
+            parameter.name,
+            parameter.quantity,
+            parameter.unit,
+        )));
+    }
+    if monitoring.catalog.is_empty() {
+        lines.push(Line::from(
+            "Active profile has no validated monitoring channels.",
+        ));
+    }
+    lines
 }
 
 fn dashboard_lines(view: &ApplicationView) -> Vec<Line<'static>> {

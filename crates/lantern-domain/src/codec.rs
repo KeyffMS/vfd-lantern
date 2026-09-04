@@ -97,6 +97,12 @@ impl RegisterCodec {
         self.word_order
     }
 
+    /// Returns the validated fixed-point scale when this encoding uses one.
+    #[must_use]
+    pub const fn fixed_scale(&self) -> Option<&FixedScale> {
+        self.fixed_scale.as_ref()
+    }
+
     /// Returns the exact normalized raw bit-pattern after validated byte/word ordering.
     /// Fault decoding uses this instead of scaled engineering values.
     pub fn raw_bits(&self, registers: &[u16]) -> Result<u64, CodecError> {

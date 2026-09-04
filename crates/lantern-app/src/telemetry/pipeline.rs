@@ -7,7 +7,8 @@ use std::{
 };
 
 use lantern_domain::{
-    ParameterId, RawRegisters, RequestId, SessionId, TelemetryQuality, TelemetrySampleCore,
+    CsvTelemetryItem, ParameterId, RawRegisters, RequestId, SessionId, TelemetryGapCore,
+    TelemetryQuality, TelemetrySampleCore,
 };
 use lantern_profile::ValidatedDeviceProfile;
 use tokio::{
@@ -25,11 +26,13 @@ use super::{
 
 mod state;
 
+use super::csv_delivery::CsvDeliveryState;
+
 use state::{PipelineState, lock_state, quality_for_bus_error};
 
 pub struct TelemetryConsumers {
     pub tui: watch::Receiver<Arc<LatestValues>>,
-    pub csv: mpsc::Receiver<TelemetryEvent>,
+    pub csv: mpsc::Receiver<CsvTelemetryItem>,
     pub fault: mpsc::Receiver<TelemetryEvent>,
     pub diagnostics: mpsc::Receiver<TelemetryEvent>,
 }
@@ -65,6 +68,7 @@ impl TelemetryPipeline {
             csv: csv_tx,
             fault: fault_tx,
             diagnostics: diagnostics_tx,
+            csv_delivery: Mutex::new(CsvDeliveryState::default()),
             changed: Notify::new(),
             shutdown: AtomicBool::new(false),
         });
@@ -167,6 +171,31 @@ impl TelemetryPipelineHandle {
     }
 
     /// Clears only the requested bounded history channels. Latest values and polling remain intact.
+    pub fn start_csv_logging(&self, parameter_ids: impl IntoIterator<Item = ParameterId>) {
+        self.shared
+            .csv_delivery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .start(parameter_ids);
+    }
+
+    pub fn stop_csv_logging(&self) -> Option<TelemetryGapCore> {
+        self.shared
+            .csv_delivery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stop()
+    }
+
+    #[must_use]
+    pub fn csv_logging_active(&self) -> bool {
+        self.shared
+            .csv_delivery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_enabled()
+    }
+
     pub fn clear_histories(&self, parameter_ids: &[ParameterId]) {
         {
             let mut state = lock_state(&self.shared.state);
@@ -206,9 +235,10 @@ struct PipelineShared {
     utc_clock: Arc<dyn UtcClock>,
     state: Mutex<PipelineState>,
     tui: watch::Sender<Arc<LatestValues>>,
-    csv: mpsc::Sender<TelemetryEvent>,
+    csv: mpsc::Sender<CsvTelemetryItem>,
     fault: mpsc::Sender<TelemetryEvent>,
     diagnostics: mpsc::Sender<TelemetryEvent>,
+    csv_delivery: Mutex<CsvDeliveryState>,
     changed: Notify,
     shutdown: AtomicBool,
 }
@@ -378,9 +408,13 @@ impl PipelineShared {
         let mut csv_drops = 0_u64;
         let mut fault_drops = 0_u64;
         let mut diagnostics_drops = 0_u64;
+        let mut csv_delivery = self
+            .csv_delivery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for event in events {
-            if self.csv.try_send(event.clone()).is_err() {
-                csv_drops = csv_drops.saturating_add(1);
+            if let Some(sample) = event.sample.as_ref() {
+                csv_drops = csv_drops.saturating_add(csv_delivery.publish(sample, &self.csv));
             }
             if self.fault.try_send(event.clone()).is_err() {
                 fault_drops = fault_drops.saturating_add(1);
@@ -389,6 +423,7 @@ impl PipelineShared {
                 diagnostics_drops = diagnostics_drops.saturating_add(1);
             }
         }
+        drop(csv_delivery);
         if csv_drops != 0 || fault_drops != 0 || diagnostics_drops != 0 {
             let mut state = lock_state(&self.state);
             state.stats.csv_drops = state.stats.csv_drops.saturating_add(csv_drops);

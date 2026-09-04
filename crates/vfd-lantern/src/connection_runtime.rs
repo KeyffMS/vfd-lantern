@@ -33,6 +33,30 @@ struct RuntimeState {
     bus: Option<ActiveBus>,
 }
 
+pub struct TuiRuntimePaths {
+    diagnostics_directory: PathBuf,
+    fault_report_directory: PathBuf,
+    csv_directory: PathBuf,
+    session_runtime_directory: PathBuf,
+}
+
+impl TuiRuntimePaths {
+    #[must_use]
+    pub fn new(
+        diagnostics_directory: PathBuf,
+        fault_report_directory: PathBuf,
+        csv_directory: PathBuf,
+        session_runtime_directory: PathBuf,
+    ) -> Self {
+        Self {
+            diagnostics_directory,
+            fault_report_directory,
+            csv_directory,
+            session_runtime_directory,
+        }
+    }
+}
+
 pub struct TuiEffectRunner {
     terminal_guard: Arc<TerminalGuard>,
     action_tx: mpsc::UnboundedSender<ApplicationAction>,
@@ -49,19 +73,23 @@ impl TuiEffectRunner {
         terminal_guard: Arc<TerminalGuard>,
         action_tx: mpsc::UnboundedSender<ApplicationAction>,
         discovery: Arc<UdevDiscovery>,
-        diagnostics_directory: PathBuf,
-        fault_report_directory: PathBuf,
+        paths: TuiRuntimePaths,
         settings: ValidatedSettings,
     ) -> Self {
-        let monitoring = MonitoringRuntime::new(settings, action_tx.clone());
+        let monitoring = MonitoringRuntime::new(
+            settings,
+            action_tx.clone(),
+            paths.csv_directory.clone(),
+            paths.session_runtime_directory.clone(),
+        );
         Self {
             terminal_guard,
             action_tx,
             discovery,
             runtime: Arc::new(Mutex::new(RuntimeState::default())),
             monitoring,
-            diagnostics_directory,
-            fault_report_directory,
+            diagnostics_directory: paths.diagnostics_directory,
+            fault_report_directory: paths.fault_report_directory,
         }
     }
 
