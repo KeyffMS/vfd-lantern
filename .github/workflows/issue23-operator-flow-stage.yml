@@ -8,6 +8,7 @@ on:
       - '.github/scripts/issue23_operator_flow_stage.rs'
       - '.github/scripts/issue23_operator_flow_anchor_fix.rs'
       - '.github/scripts/issue23_operator_flow_fix.rs'
+      - '.github/scripts/issue23_operator_flow_clippy_fix.rs'
       - '.github/workflows/issue23-operator-flow-stage.yml'
       - 'crates/lantern-app/**'
       - 'crates/lantern-tui/**'
@@ -36,6 +37,8 @@ jobs:
           /tmp/issue23-operator-flow-stage
           rustc --edition=2024 .github/scripts/issue23_operator_flow_fix.rs -o /tmp/issue23-operator-flow-fix
           /tmp/issue23-operator-flow-fix
+          rustc --edition=2024 .github/scripts/issue23_operator_flow_clippy_fix.rs -o /tmp/issue23-operator-flow-clippy-fix
+          /tmp/issue23-operator-flow-clippy-fix
           cargo fmt --all
           cargo check --workspace --all-features --locked
           cargo test --workspace --all-features --locked
@@ -46,6 +49,7 @@ jobs:
           git rm .github/scripts/issue23_operator_flow_stage.rs
           git rm .github/scripts/issue23_operator_flow_anchor_fix.rs
           git rm .github/scripts/issue23_operator_flow_fix.rs
+          git rm .github/scripts/issue23_operator_flow_clippy_fix.rs
           git add -A
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
