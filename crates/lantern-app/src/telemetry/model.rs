@@ -5,7 +5,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{BusError, BusStatisticsSnapshot, PollExecutorStatistics, PollPlan, ValidatedSettings};
+use crate::{
+    BusError, BusStatisticsSnapshot, PollExecutorStatistics, PollPlan, QueueHealthSnapshot,
+    ValidatedSettings, WriteSessionSnapshot,
+};
 use lantern_domain::{
     CodecError, MonotonicInstant, ParameterId, SessionId, TelemetryQuality, TelemetrySampleCore,
     UtcTimestamp,
@@ -208,25 +211,35 @@ pub struct TelemetryPipelineStatistics {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiagnosticsSnapshot {
+    pub session: Option<WriteSessionSnapshot>,
     pub bus: BusStatisticsSnapshot,
     pub poll_executor: PollExecutorStatistics,
     pub poll_plan: Arc<PollPlan>,
     pub pipeline: TelemetryPipelineStatistics,
+    pub pipeline_queue: QueueHealthSnapshot,
+    pub storage_queue: QueueHealthSnapshot,
 }
 
 impl DiagnosticsSnapshot {
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
+        session: Option<WriteSessionSnapshot>,
         bus: BusStatisticsSnapshot,
         poll_executor: PollExecutorStatistics,
         poll_plan: Arc<PollPlan>,
         pipeline: TelemetryPipelineStatistics,
+        pipeline_queue: QueueHealthSnapshot,
+        storage_queue: QueueHealthSnapshot,
     ) -> Self {
         Self {
+            session,
             bus,
             poll_executor,
             poll_plan,
             pipeline,
+            pipeline_queue,
+            storage_queue,
         }
     }
 }

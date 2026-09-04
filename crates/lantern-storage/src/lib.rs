@@ -8,6 +8,7 @@ mod audit;
 mod csv_lifecycle;
 mod csv_writer;
 mod fault_report;
+mod observability;
 mod paths;
 mod profile_source;
 mod session_artifacts;
@@ -27,6 +28,10 @@ pub use csv_writer::{
     CsvWriterState, CsvWriterStatus, CsvWriterStop,
 };
 pub use fault_report::{FAULT_REPORT_SUFFIX, FaultReportError, write_fault_report};
+pub use observability::{
+    DIAGNOSTIC_LOG_RETENTION, DIAGNOSTIC_RING_CAPACITY, DiagnosticEvent, DiagnosticLogHandle,
+    DiagnosticLogging, ObservabilityError, install_diagnostic_logging,
+};
 pub use paths::{AppPaths, PathError};
 pub use profile_source::{
     FilesystemProfileSource, MAX_PROFILE_FILE_BYTES, MAX_PROFILE_FILES, MAX_PROFILE_SCAN_BYTES,

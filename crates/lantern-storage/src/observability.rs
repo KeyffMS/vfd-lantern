@@ -1,152 +1,4 @@
-use std::{fs, path::Path};
-
-fn replace_once(path: &str, old: &str, new: &str) {
-    let path = Path::new(path);
-    let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let Some(index) = text.find(old) else {
-        panic!("anchor not found in {}: {:?}", path.display(), &old[..old.len().min(180)]);
-    };
-    let mut out = String::with_capacity(text.len() + new.len().saturating_sub(old.len()));
-    out.push_str(&text[..index]);
-    out.push_str(new);
-    out.push_str(&text[index + old.len()..]);
-    fs::write(path, out).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
-}
-
-fn main() {
-    replace_once(
-        "crates/lantern-storage/Cargo.toml",
-        "tokio.workspace = true\n",
-        "tokio.workspace = true\ntracing.workspace = true\ntracing-subscriber.workspace = true\ntracing-appender.workspace = true\n",
-    );
-
-    replace_once(
-        "crates/lantern-app/src/lib.rs",
-        "mod csv_logging;\n",
-        "mod csv_logging;\nmod diagnostics;\n",
-    );
-    replace_once(
-        "crates/lantern-app/src/lib.rs",
-        "pub use csv_logging::*;\n",
-        "pub use csv_logging::*;\npub use diagnostics::*;\n",
-    );
-
-    fs::write(
-        "crates/lantern-app/src/diagnostics.rs",
-        r#"use crate::{BusStatisticsSnapshot, PollPlan, WriteSessionSnapshot};
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct QueueHealthSnapshot {
-    pub capacity: usize,
-    pub depth: usize,
-    pub dropped: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PollPlanDiagnostics {
-    pub version: u64,
-    pub blocks: usize,
-    pub degradations: usize,
-    pub rejections: usize,
-    pub utilization_ppm: u32,
-    pub budget_ppm: u32,
-}
-
-impl PollPlanDiagnostics {
-    #[must_use]
-    pub fn from_plan(plan: &PollPlan) -> Self {
-        Self {
-            version: plan.version(),
-            blocks: plan.blocks().len(),
-            degradations: plan.degradations().len(),
-            rejections: plan.rejections().len(),
-            utilization_ppm: plan.utilization_ppm(),
-            budget_ppm: plan.budget_ppm(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DiagnosticsSnapshot {
-    pub session: Option<WriteSessionSnapshot>,
-    pub bus: BusStatisticsSnapshot,
-    pub poll_plan: Option<PollPlanDiagnostics>,
-    pub pipeline_queue: QueueHealthSnapshot,
-    pub storage_queue: QueueHealthSnapshot,
-    pub csv_drops: u64,
-}
-
-impl DiagnosticsSnapshot {
-    #[must_use]
-    pub fn compose(
-        session: Option<WriteSessionSnapshot>,
-        bus: BusStatisticsSnapshot,
-        poll_plan: Option<&PollPlan>,
-        pipeline_queue: QueueHealthSnapshot,
-        storage_queue: QueueHealthSnapshot,
-        csv_drops: u64,
-    ) -> Self {
-        Self {
-            session,
-            bus,
-            poll_plan: poll_plan.map(PollPlanDiagnostics::from_plan),
-            pipeline_queue,
-            storage_queue,
-            csv_drops,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{DiagnosticsSnapshot, QueueHealthSnapshot};
-    use crate::BusStatisticsSnapshot;
-
-    #[test]
-    fn snapshot_keeps_queue_pressure_and_csv_drops_explicit() {
-        let snapshot = DiagnosticsSnapshot::compose(
-            None,
-            BusStatisticsSnapshot {
-                queue_full: 3,
-                ..BusStatisticsSnapshot::default()
-            },
-            None,
-            QueueHealthSnapshot {
-                capacity: 64,
-                depth: 17,
-                dropped: 2,
-            },
-            QueueHealthSnapshot {
-                capacity: 32,
-                depth: 4,
-                dropped: 1,
-            },
-            9,
-        );
-        assert_eq!(snapshot.bus.queue_full, 3);
-        assert_eq!(snapshot.pipeline_queue.depth, 17);
-        assert_eq!(snapshot.storage_queue.dropped, 1);
-        assert_eq!(snapshot.csv_drops, 9);
-    }
-}
-"#,
-    )
-    .expect("write diagnostics app module");
-
-    replace_once(
-        "crates/lantern-storage/src/lib.rs",
-        "mod fault_report;\n",
-        "mod fault_report;\nmod observability;\n",
-    );
-    replace_once(
-        "crates/lantern-storage/src/lib.rs",
-        "pub use fault_report::{FAULT_REPORT_SUFFIX, FaultReportError, write_fault_report};\n",
-        "pub use fault_report::{FAULT_REPORT_SUFFIX, FaultReportError, write_fault_report};\npub use observability::{\n    DIAGNOSTIC_LOG_RETENTION, DIAGNOSTIC_RING_CAPACITY, DiagnosticEvent, DiagnosticLogHandle,\n    DiagnosticLogging, ObservabilityError, install_diagnostic_logging,\n};\n",
-    );
-
-    fs::write(
-        "crates/lantern-storage/src/observability.rs",
-        r#"use std::{
+use std::{
     collections::{BTreeMap, VecDeque},
     fmt,
     fs::{self, OpenOptions, Permissions},
@@ -163,13 +15,12 @@ mod tests {
 use lantern_app::LogLevel;
 use serde::Serialize;
 use thiserror::Error;
-use tracing::{Event, Subscriber, field::{Field, Visit}};
-use tracing_appender::non_blocking::{ErrorCounter, NonBlocking, NonBlockingBuilder, WorkerGuard};
-use tracing_subscriber::{
-    EnvFilter, Layer,
-    layer::SubscriberExt,
-    util::SubscriberInitExt,
+use tracing::{
+    Event, Subscriber,
+    field::{Field, Visit},
 };
+use tracing_appender::non_blocking::{ErrorCounter, NonBlocking, NonBlockingBuilder, WorkerGuard};
+use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 pub const DIAGNOSTIC_RING_CAPACITY: usize = 2_000;
 pub const DIAGNOSTIC_LOG_RETENTION: usize = 7;
@@ -294,7 +145,9 @@ fn build_layer(
         .lossy(true)
         .finish(file);
     let error_counter = writer.error_counter();
-    let ring = Arc::new(Mutex::new(VecDeque::with_capacity(DIAGNOSTIC_RING_CAPACITY)));
+    let ring = Arc::new(Mutex::new(VecDeque::with_capacity(
+        DIAGNOSTIC_RING_CAPACITY,
+    )));
     let ring_evictions = Arc::new(AtomicU64::new(0));
     let layer = DiagnosticLayer {
         writer,
@@ -324,7 +177,8 @@ fn prune_logs(log_directory: &Path) -> Result<(), ObservabilityError> {
     logs.sort_by_key(|entry| entry.file_name());
     while logs.len() >= DIAGNOSTIC_LOG_RETENTION {
         let entry = logs.remove(0);
-        fs::remove_file(entry.path()).map_err(|error| ObservabilityError::io(&entry.path(), error))?;
+        fs::remove_file(entry.path())
+            .map_err(|error| ObservabilityError::io(&entry.path(), error))?;
     }
     Ok(())
 }
@@ -390,7 +244,10 @@ fn sanitize_field(name: &str, value: String) -> String {
     if lower.contains("raw")
         || lower.contains("frame")
         || lower.contains("telemetry")
-        || matches!(lower.as_str(), "value" | "old_value" | "new_value" | "payload")
+        || matches!(
+            lower.as_str(),
+            "value" | "old_value" | "new_value" | "payload"
+        )
     {
         "[redacted]".to_owned()
     } else {
@@ -405,9 +262,7 @@ mod tests {
     use tempfile::tempdir;
     use tracing_subscriber::layer::SubscriberExt;
 
-    use super::{
-        DIAGNOSTIC_LOG_RETENTION, DIAGNOSTIC_RING_CAPACITY, DiagnosticLayer, build_layer,
-    };
+    use super::{DIAGNOSTIC_LOG_RETENTION, DIAGNOSTIC_RING_CAPACITY, build_layer};
 
     #[test]
     fn layer_redacts_write_values_and_full_frames_but_keeps_context() {
@@ -426,9 +281,18 @@ mod tests {
         drop(guard);
         let events = handle.snapshot();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].fields.get("old_raw").map(String::as_str), Some("[redacted]"));
-        assert_eq!(events[0].fields.get("frame").map(String::as_str), Some("[redacted]"));
-        assert_ne!(events[0].fields.get("session").map(String::as_str), Some("[redacted]"));
+        assert_eq!(
+            events[0].fields.get("old_raw").map(String::as_str),
+            Some("[redacted]")
+        );
+        assert_eq!(
+            events[0].fields.get("frame").map(String::as_str),
+            Some("[redacted]")
+        );
+        assert_ne!(
+            events[0].fields.get("session").map(String::as_str),
+            Some("[redacted]")
+        );
         let mut text = String::new();
         fs::File::open(handle.log_path())
             .expect("log")
@@ -459,7 +323,9 @@ mod tests {
         fs::write(directory.path().join("audit_1.jsonl"), b"audit").expect("audit");
         for index in 0..10 {
             fs::write(
-                directory.path().join(format!("vfd-lantern-{index:02}.jsonl")),
+                directory
+                    .path()
+                    .join(format!("vfd-lantern-{index:02}.jsonl")),
                 b"log",
             )
             .expect("log");
@@ -478,35 +344,4 @@ mod tests {
         assert_eq!(diagnostic_count, DIAGNOSTIC_LOG_RETENTION);
         assert!(directory.path().join("audit_1.jsonl").exists());
     }
-}
-"#,
-    )
-    .expect("write observability module");
-
-    replace_once(
-        "crates/vfd-lantern/src/main.rs",
-        r#"use lantern_storage::{
-    AppPaths, FilesystemProfileSource, FilesystemSettingsSource, ProfileLocations,
-};
-"#,
-        r#"use lantern_storage::{
-    AppPaths, FilesystemProfileSource, FilesystemSettingsSource, ProfileLocations,
-    install_diagnostic_logging,
-};
-"#,
-    );
-    replace_once(
-        "crates/vfd-lantern/src/main.rs",
-        r#"    let paths = AppPaths::resolve(&settings.paths)?;
-
-    match cli.command {
-"#,
-        r#"    let paths = AppPaths::resolve(&settings.paths)?;
-    // Diagnostic logging is independent from the durable audit path; changing VFD_LANTERN_LOG
-    // can only change this subscriber filter and can never disable AuditPort persistence.
-    let _diagnostic_logging = install_diagnostic_logging(&paths.log_directory, settings.log_level)?;
-
-    match cli.command {
-"#,
-    );
 }

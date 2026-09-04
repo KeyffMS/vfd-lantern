@@ -26,6 +26,7 @@ use lantern_app::{
 };
 use lantern_storage::{
     AppPaths, FilesystemProfileSource, FilesystemSettingsSource, ProfileLocations,
+    install_diagnostic_logging,
 };
 use lantern_transport::UdevDiscovery;
 use lantern_tui::{MappedAction, Screen, TerminalSession, UiState, visible_parameter_ids};
@@ -65,6 +66,9 @@ async fn main() -> Result<()> {
         application_log.as_deref(),
     )?;
     let paths = AppPaths::resolve(&settings.paths)?;
+    // Diagnostic logging is independent from the durable audit path; changing VFD_LANTERN_LOG
+    // can only change this subscriber filter and can never disable AuditPort persistence.
+    let _diagnostic_logging = install_diagnostic_logging(&paths.log_directory, settings.log_level)?;
 
     match cli.command {
         Some(Command::Profile(arguments)) => profile_commands::run(arguments.command),
