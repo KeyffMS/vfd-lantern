@@ -1,0 +1,38 @@
+name: Stage issue 23 profile trust
+
+on:
+  push:
+    branches:
+      - agent/issue-23
+
+permissions:
+  contents: write
+
+jobs:
+  trust:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-23
+          fetch-depth: 0
+      - name: Integrate and validate profile trust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --edition=2024 .github/scripts/issue23_trust_stage.rs -o /tmp/issue23-trust-stage
+          /tmp/issue23-trust-stage
+          cargo fmt --all
+          cargo check --workspace --all-features --locked
+          cargo test --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          git rm .github/workflows/issue23-trust-stage.yml
+          git rm .github/scripts/issue23_trust_stage.rs
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(#23): add embedded profile trust and local approval store'
+          git push origin HEAD:agent/issue-23
