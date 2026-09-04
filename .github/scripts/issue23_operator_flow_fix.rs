@@ -87,7 +87,7 @@ fn parameter_lines_inner(
 
     replace_once(
         "crates/lantern-tui/src/parameter_benchmark.rs",
-        r#"        let semantic_snapshot = format!(
+        r####"        let semantic_snapshot = format!(
             "typed_fixed={}\nno_write_request={}\npreview_language={}",
             text.contains("Typed editor Fixed: 12_"),
             text.contains("No write request is created."),
@@ -98,8 +98,8 @@ fn parameter_lines_inner(
         no_write_request=true
         preview_language=true
         "###);
-"#,
-        r#"        let semantic_snapshot = format!(
+"####,
+        r####"        let semantic_snapshot = format!(
             "typed_fixed={}\nno_write_sent={}\nguarded_language={}",
             text.contains("Typed editor Fixed: 12_"),
             text.contains("No write request is created yet."),
@@ -110,6 +110,6 @@ fn parameter_lines_inner(
         no_write_sent=true
         guarded_language=true
         "###);
-"#,
+"####,
     );
 }
