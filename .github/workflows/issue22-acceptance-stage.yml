@@ -28,6 +28,7 @@ jobs:
           cargo test --workspace --all-features --locked
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
           RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
+          cargo build --locked -p vfd-lantern
           cargo run --locked -p lantern-sim --example connection_process_acceptance
           sh scripts/check-architecture.sh
           git rm .github/workflows/issue22-acceptance-stage.yml
