@@ -23,6 +23,8 @@ jobs:
           set -euo pipefail
           rustc --edition=2024 .github/scripts/issue23_drive_state_stage.rs -o /tmp/issue23-drive-state-stage
           /tmp/issue23-drive-state-stage
+          rustc --edition=2024 .github/scripts/issue23_drive_state_test_fix.rs -o /tmp/issue23-drive-state-test-fix
+          /tmp/issue23-drive-state-test-fix
           cargo fmt --all
           cargo check --workspace --all-features --locked
           cargo test --workspace --all-features --locked
@@ -31,6 +33,7 @@ jobs:
           sh scripts/check-architecture.sh
           git rm .github/workflows/issue23-drive-state-stage.yml
           git rm .github/scripts/issue23_drive_state_stage.rs
+          git rm .github/scripts/issue23_drive_state_test_fix.rs
           git add -A
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
