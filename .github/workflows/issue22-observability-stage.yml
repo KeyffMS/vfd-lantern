@@ -24,6 +24,7 @@ jobs:
           rustc --edition=2024 .github/scripts/issue22_observability_stage.rs -o /tmp/issue22-observability-stage
           /tmp/issue22-observability-stage
           cargo fmt --all
+          cargo check --workspace --all-features
           cargo check --workspace --all-features --locked
           cargo test --workspace --all-features --locked
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
