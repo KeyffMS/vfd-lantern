@@ -14,11 +14,14 @@ fn replace_once(path: &str, old: &str, new: &str) {
 }
 
 fn main() {
-    replace_once(
-        "crates/lantern-tui/src/parameter_benchmark.rs",
-        "            origin: ProfileOrigin::Explicit,\n",
-        "            origin: ProfileOrigin::LocalUntrusted,\n",
-    );
+    let benchmark = "crates/lantern-tui/src/parameter_benchmark.rs";
+    let text = fs::read_to_string(benchmark).expect("read parameter benchmark");
+    let rewritten = text
+        .replace("ProfileOrigin::Explicit", "ProfileOrigin::LocalUntrusted")
+        .replace("ProfileOrigin::User", "ProfileOrigin::LocalUntrusted");
+    assert_ne!(rewritten, text, "legacy benchmark origins not found");
+    fs::write(benchmark, rewritten).expect("write parameter benchmark");
+
     replace_once(
         "crates/lantern-storage/src/profile_trust.rs",
         "    collections::BTreeMap,\n",
