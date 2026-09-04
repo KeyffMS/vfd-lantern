@@ -21,6 +21,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          rustc --edition=2024 .github/scripts/issue22_anchor_fix.rs -o /tmp/issue22-anchor-fix
+          /tmp/issue22-anchor-fix
           rustc --edition=2024 .github/scripts/issue22_audit_stage.rs -o /tmp/issue22-audit-stage
           /tmp/issue22-audit-stage
           rustc --edition=2024 .github/scripts/issue22_audit_fix.rs -o /tmp/issue22-audit-fix
@@ -32,6 +34,7 @@ jobs:
           RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
           sh scripts/check-architecture.sh
           git rm .github/workflows/issue22-audit-stage.yml
+          git rm .github/scripts/issue22_anchor_fix.rs
           git rm .github/scripts/issue22_audit_stage.rs
           git rm .github/scripts/issue22_audit_fix.rs
           git add -A
