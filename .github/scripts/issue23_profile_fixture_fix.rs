@@ -75,4 +75,10 @@ id = "config.acceleration"
         "  \"aliases\": {\"status.output_frequency\": \"status.output_frequency\"},\n",
         "  \"drive_state_source\": {\"parameter_id\": \"status.drive_state\", \"stopped_raw\": [[0]], \"running_raw\": [[1]], \"faulted_raw\": [[2]]},\n  \"aliases\": {\"status.output_frequency\": \"status.output_frequency\"},\n",
     );
+
+    replace_once(
+        "crates/lantern-sim/src/scenario.rs",
+        "profile_hash = \"2987e481b3d6c33c2c703338a5e848b979c36c14d84cf4deb5c6f9e6511c53fe\"",
+        "profile_hash = \"ddddce361a98cc6a21e2bf298c582826f53070595a63f5f6c085d42eff09032b\"",
+    );
 }
