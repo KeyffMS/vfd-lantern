@@ -257,9 +257,15 @@ fn sanitize_field(name: &str, value: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, io::Read};
+    use std::{
+        fs,
+        io::{Read, Write},
+        sync::mpsc,
+        time::Duration,
+    };
 
     use tempfile::tempdir;
+    use tracing_appender::non_blocking::NonBlockingBuilder;
     use tracing_subscriber::layer::SubscriberExt;
 
     use super::{DIAGNOSTIC_LOG_RETENTION, DIAGNOSTIC_RING_CAPACITY, build_layer};
@@ -315,6 +321,59 @@ mod tests {
         drop(guard);
         assert_eq!(handle.snapshot().len(), DIAGNOSTIC_RING_CAPACITY);
         assert_eq!(handle.ring_evictions(), 1);
+    }
+
+    struct FirstWriteBlocker {
+        blocked_once: bool,
+        started: mpsc::SyncSender<()>,
+        release: mpsc::Receiver<()>,
+    }
+
+    impl Write for FirstWriteBlocker {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if !self.blocked_once {
+                self.blocked_once = true;
+                let _ = self.started.send(());
+                let _ = self.release.recv();
+            }
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn non_blocking_log_queue_pressure_is_lossy_and_counted() {
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(0);
+        let sink = FirstWriteBlocker {
+            blocked_once: false,
+            started: started_tx,
+            release: release_rx,
+        };
+        let (mut writer, guard) = NonBlockingBuilder::default()
+            .buffered_lines_limit(1)
+            .lossy(true)
+            .finish(sink);
+        let counter = writer.error_counter();
+
+        writer.write_all(b"first\n").expect("first line");
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker reached blocked first write");
+        writer.write_all(b"queued\n").expect("queued line");
+        for _ in 0..64 {
+            let _ = writer.write_all(b"drop-candidate\n");
+        }
+        assert!(
+            counter.dropped_lines() > 0,
+            "queue pressure must be counted"
+        );
+        release_tx.send(()).expect("release worker");
+        drop(writer);
+        drop(guard);
     }
 
     #[test]

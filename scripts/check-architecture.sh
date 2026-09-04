@@ -76,5 +76,11 @@ if grep -R -n -E '\b(WriteCoordinator|PreparedBusWrite)\b' crates/vfd-lantern/sr
     exit 1
 fi
 
+if grep -R -n -E '\b(TcpStream|TcpListener|UdpSocket|reqwest|hyper|ureq)\b' \
+    crates/lantern-app/src crates/lantern-storage/src crates/vfd-lantern/src; then
+    printf 'network endpoint/client path found in application, storage, or composition root\n' >&2
+    exit 1
+fi
+
 cargo metadata --locked --no-deps --format-version 1 >/dev/null
 printf 'architecture checks passed for internal graph: %s\n' "$internal"
