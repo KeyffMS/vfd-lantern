@@ -76,8 +76,15 @@ if ! grep -R -n -E '\bWriteCoordinator\b' crates/vfd-lantern/src/write_runtime.r
     exit 1
 fi
 
-if grep -R -n -E '\bPreparedBusWrite\b' crates/vfd-lantern/src; then
-    printf 'composition root must never mint or expose PreparedBusWrite directly\n' >&2
+if awk '/#\[cfg\(test\)\]/{exit} {print}' crates/vfd-lantern/src/write_runtime.rs \
+        | grep -n -E '\bPreparedBusWrite\b'; then
+    printf 'production write composition must never mint or expose PreparedBusWrite directly\n' >&2
+    exit 1
+fi
+
+if find crates/vfd-lantern/src -type f -name '*.rs' ! -name 'write_runtime.rs' -print0 \
+        | xargs -0 grep -n -E '\bPreparedBusWrite\b'; then
+    printf 'PreparedBusWrite escaped the guarded write runtime boundary\n' >&2
     exit 1
 fi
 
@@ -103,6 +110,17 @@ fi
 
 if [ ! -f docs/development/threat-model.md ]; then
     printf 'issue #23 requires an explicit industrial threat model\n' >&2
+    exit 1
+fi
+
+if ! grep -q 'missing_audit_adapter_never_mints_write_capability_or_touches_bus' crates/vfd-lantern/src/write_runtime.rs \
+    || ! grep -q 'missing_profile_trust_adapter_never_mints_write_capability_or_touches_bus' crates/vfd-lantern/src/write_runtime.rs; then
+    printf 'issue #23 requires fail-closed composition tests for missing audit/trust adapters\n' >&2
+    exit 1
+fi
+
+if grep -q 'operator_text\.trim()' crates/lantern-app/src/application.rs; then
+    printf 'phase-2 operator confirmation must be exact; whitespace normalization is forbidden\n' >&2
     exit 1
 fi
 

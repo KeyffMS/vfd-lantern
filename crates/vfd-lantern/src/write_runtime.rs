@@ -19,8 +19,8 @@ use tokio::sync::{Mutex as AsyncMutex, mpsc};
 pub struct ProductionWriteRuntime {
     coordinator: Arc<AsyncMutex<Option<WriteCoordinator>>>,
     session: Arc<RuntimeSessionControl>,
-    audit: Option<Arc<FilesystemAuditPort>>,
-    trust: Option<Arc<RuntimeProfileTrust>>,
+    audit: Option<Arc<dyn AuditPort>>,
+    trust: Option<Arc<dyn ProfileTrustPort>>,
     clock: Arc<RuntimeWriteClock>,
     config: WriteCoordinatorConfig,
     action_tx: mpsc::UnboundedSender<ApplicationAction>,
@@ -35,7 +35,7 @@ impl ProductionWriteRuntime {
         trust_store_path: PathBuf,
         process_writes_enabled: bool,
     ) -> Self {
-        let audit = match FilesystemAuditPort::new(audit_directory) {
+        let audit: Option<Arc<dyn AuditPort>> = match FilesystemAuditPort::new(audit_directory) {
             Ok(port) => Some(Arc::new(port)),
             Err(error) => {
                 eprintln!(
@@ -44,10 +44,19 @@ impl ProductionWriteRuntime {
                 None
             }
         };
-        let trust = Some(Arc::new(RuntimeProfileTrust::new(
+        let trust: Option<Arc<dyn ProfileTrustPort>> = Some(Arc::new(RuntimeProfileTrust::new(
             registry,
             trust_store_path,
         )));
+        Self::from_adapters(action_tx, audit, trust, process_writes_enabled)
+    }
+
+    fn from_adapters(
+        action_tx: mpsc::UnboundedSender<ApplicationAction>,
+        audit: Option<Arc<dyn AuditPort>>,
+        trust: Option<Arc<dyn ProfileTrustPort>>,
+        process_writes_enabled: bool,
+    ) -> Self {
         let session = Arc::new(RuntimeSessionControl::new(action_tx.clone()));
         Self {
             coordinator: Arc::new(AsyncMutex::new(None)),
@@ -64,6 +73,12 @@ impl ProductionWriteRuntime {
     }
 
     pub async fn attach_bus(&self, handle: BusActorHandle) {
+        let read_bus: Arc<dyn ReadBusPort> = Arc::new(handle.clone());
+        let write_bus: Arc<dyn WriteBusPort> = Arc::new(handle);
+        self.attach_ports(read_bus, write_bus).await;
+    }
+
+    async fn attach_ports(&self, read_bus: Arc<dyn ReadBusPort>, write_bus: Arc<dyn WriteBusPort>) {
         let Some(audit) = self.audit.clone() else {
             *self.coordinator.lock().await = None;
             return;
@@ -72,10 +87,6 @@ impl ProductionWriteRuntime {
             *self.coordinator.lock().await = None;
             return;
         };
-        let read_bus: Arc<dyn ReadBusPort> = Arc::new(handle.clone());
-        let write_bus: Arc<dyn WriteBusPort> = Arc::new(handle);
-        let audit: Arc<dyn AuditPort> = audit;
-        let trust: Arc<dyn ProfileTrustPort> = trust;
         let clock: Arc<dyn ClockPort> = self.clock.clone();
         let session: Arc<dyn SessionControlPort> = self.session.clone();
         match WriteCoordinator::new(
@@ -325,5 +336,93 @@ fn unavailable_snapshot() -> WriteSessionSnapshot {
         drive_state: DriveState::Unknown,
         guard_revision: 0,
         slave_id: SlaveId::new(1).expect("slave 1 is valid"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use lantern_app::{
+        AuditPort, BusError, BusFuture, PreparedBusWrite, ProfileRegistry, ProfileTrustPort,
+        RawRegisters, ReadBusPort, ReadBusRequest, WriteBusPort,
+    };
+    use lantern_storage::RuntimeProfileTrust;
+    use tokio::sync::mpsc;
+
+    use super::ProductionWriteRuntime;
+
+    #[derive(Default)]
+    struct CountingBus {
+        writes: AtomicUsize,
+    }
+
+    impl ReadBusPort for CountingBus {
+        fn read(&self, _request: ReadBusRequest) -> BusFuture<'static, RawRegisters> {
+            Box::pin(async { Err(BusError::Shutdown) })
+        }
+    }
+
+    impl WriteBusPort for CountingBus {
+        fn execute(&self, _request: PreparedBusWrite) -> BusFuture<'static, ()> {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    struct AvailableAudit;
+
+    impl AuditPort for AvailableAudit {
+        fn is_available(&self) -> bool {
+            true
+        }
+    }
+
+    fn trust_adapter() -> Arc<dyn ProfileTrustPort> {
+        Arc::new(RuntimeProfileTrust::new(
+            Arc::new(ProfileRegistry::default()),
+            "unused-test-trust.json".into(),
+        ))
+    }
+
+    async fn attach_counting_bus(runtime: &ProductionWriteRuntime) -> Arc<CountingBus> {
+        let bus = Arc::new(CountingBus::default());
+        let read: Arc<dyn ReadBusPort> = bus.clone();
+        let write: Arc<dyn WriteBusPort> = bus.clone();
+        runtime.attach_ports(read, write).await;
+        bus
+    }
+
+    #[tokio::test]
+    async fn missing_audit_adapter_never_mints_write_capability_or_touches_bus() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let runtime = ProductionWriteRuntime::from_adapters(tx, None, Some(trust_adapter()), true);
+        let bus = attach_counting_bus(&runtime).await;
+        assert!(runtime.coordinator.lock().await.is_none());
+        assert_eq!(bus.writes.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn missing_profile_trust_adapter_never_mints_write_capability_or_touches_bus() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let audit: Arc<dyn AuditPort> = Arc::new(AvailableAudit);
+        let runtime = ProductionWriteRuntime::from_adapters(tx, Some(audit), None, true);
+        let bus = attach_counting_bus(&runtime).await;
+        assert!(runtime.coordinator.lock().await.is_none());
+        assert_eq!(bus.writes.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn both_required_adapters_mint_coordinator_without_implicit_write() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let audit: Arc<dyn AuditPort> = Arc::new(AvailableAudit);
+        let runtime =
+            ProductionWriteRuntime::from_adapters(tx, Some(audit), Some(trust_adapter()), true);
+        let bus = attach_counting_bus(&runtime).await;
+        assert!(runtime.coordinator.lock().await.is_some());
+        assert_eq!(bus.writes.load(Ordering::SeqCst), 0);
     }
 }
