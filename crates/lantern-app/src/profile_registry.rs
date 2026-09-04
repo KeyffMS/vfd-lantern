@@ -15,8 +15,6 @@ use crate::{
 /// Runtime provenance assigned after validation and manifest comparison.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ProfileOrigin {
-    Explicit,
-    User,
     Packaged,
     LocalUntrusted,
 }
@@ -74,12 +72,31 @@ pub struct PackagedProfileEntryV1 {
 }
 
 /// Qualification reports existing before a package build.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QualificationEvidenceKind {
+    PhysicalHardware,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QualificationReportV1 {
+    pub report_id: String,
+    pub profile_hash: String,
+    pub evidence_kind: QualificationEvidenceKind,
+    pub hardware_model: String,
+    pub firmware: String,
+    pub manual_revision: String,
+    pub safe_write_scope: String,
+}
+
+/// Reports must exist as structured pre-build evidence and be bound to the exact profile hash.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct QualificationIndexV1 {
     pub schema_version: u32,
     #[serde(default)]
-    pub reports_by_profile_hash: BTreeMap<String, String>,
+    pub reports_by_profile_hash: BTreeMap<String, QualificationReportV1>,
 }
 
 /// Single immutable application-owned registry snapshot.
@@ -156,6 +173,13 @@ impl ProfileRegistry {
     }
 
     #[must_use]
+    pub fn find_by_hash(&self, profile_hash: &str) -> Option<&ProfileRegistryEntry> {
+        self.entries
+            .values()
+            .find(|entry| entry.profile().profile_hash().to_hex() == profile_hash)
+    }
+
+    #[must_use]
     pub fn snapshot(&self) -> Arc<Self> {
         Arc::new(self.clone())
     }
@@ -195,10 +219,14 @@ impl ProfileToolService {
                 .values()
                 .any(|parameter| parameter.access() != ParameterAccess::ReadOnly);
             let hash = profile.profile_hash().to_hex();
-            let qualification_report_id = qualification_index
-                .reports_by_profile_hash
-                .get(&hash)
-                .cloned();
+            let qualification_report_id =
+                match qualification_index.reports_by_profile_hash.get(&hash) {
+                    Some(report) => {
+                        validate_qualification_report(&hash, report)?;
+                        Some(report.report_id.clone())
+                    }
+                    None => None,
+                };
             if write_capable && qualification_report_id.as_deref().is_none_or(str::is_empty) {
                 return Err(ProfileRegistryError::MissingQualification {
                     profile_id: profile.profile_id().clone(),
@@ -258,22 +286,53 @@ fn determine_origin(
     tier: ProfileSourceTier,
     manifest: &PackagedProfilesManifestV1,
 ) -> ProfileOrigin {
-    match tier {
-        ProfileSourceTier::Explicit => ProfileOrigin::Explicit,
-        ProfileSourceTier::User => ProfileOrigin::User,
-        ProfileSourceTier::System => {
-            let matches = manifest.profiles.iter().any(|entry| {
-                entry.profile_id == profile.profile_id().as_str()
-                    && entry.revision == profile.revision()
-                    && entry.profile_hash == profile.profile_hash().to_hex()
-            });
-            if matches {
-                ProfileOrigin::Packaged
-            } else {
-                ProfileOrigin::LocalUntrusted
-            }
-        }
+    if tier != ProfileSourceTier::System {
+        return ProfileOrigin::LocalUntrusted;
     }
+    let profile_write_capable = profile
+        .parameters()
+        .values()
+        .any(|parameter| parameter.access() != ParameterAccess::ReadOnly);
+    let matches = manifest.profiles.iter().any(|entry| {
+        entry.profile_id == profile.profile_id().as_str()
+            && entry.revision == profile.revision()
+            && entry.profile_hash == profile.profile_hash().to_hex()
+            && entry.write_capable == profile_write_capable
+            && (!profile_write_capable
+                || entry
+                    .qualification_report_id
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty()))
+    });
+    if matches {
+        ProfileOrigin::Packaged
+    } else {
+        ProfileOrigin::LocalUntrusted
+    }
+}
+
+fn validate_qualification_report(
+    expected_hash: &str,
+    report: &QualificationReportV1,
+) -> Result<(), ProfileRegistryError> {
+    if report.profile_hash != expected_hash || !is_sha256_hex(&report.profile_hash) {
+        return Err(ProfileRegistryError::InvalidManifest(
+            "qualification report profile_hash does not match the exact validated profile"
+                .to_owned(),
+        ));
+    }
+    if report.report_id.is_empty()
+        || report.hardware_model.is_empty()
+        || report.firmware.is_empty()
+        || report.manual_revision.is_empty()
+        || report.safe_write_scope.is_empty()
+    {
+        return Err(ProfileRegistryError::InvalidManifest(
+            "qualification report must contain report ID, physical hardware, firmware, manual revision, and safe write scope"
+                .to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_manifest(manifest: &PackagedProfilesManifestV1) -> Result<(), ProfileRegistryError> {
@@ -364,7 +423,7 @@ mod tests {
         )
         .expect("registry");
         let entry = registry.entries().values().next().expect("entry");
-        assert_eq!(entry.origin(), ProfileOrigin::Explicit);
+        assert_eq!(entry.origin(), ProfileOrigin::LocalUntrusted);
         assert_eq!(entry.path(), &PathBuf::from("explicit.toml"));
     }
 
@@ -402,6 +461,103 @@ mod tests {
         assert_eq!(
             registry.entries().values().next().expect("entry").origin(),
             ProfileOrigin::Packaged
+        );
+    }
+
+    #[test]
+    fn system_write_capable_profile_is_not_packaged_when_manifest_claims_read_only() {
+        let source = reference_source("system.toml", ProfileSourceTier::System);
+        let profile = ProfileToolService::validate(&source).expect("profile");
+        let manifest = PackagedProfilesManifestV1 {
+            schema_version: 1,
+            build_id: "test".to_owned(),
+            profiles: vec![PackagedProfileEntryV1 {
+                profile_id: profile.profile_id().as_str().to_owned(),
+                revision: profile.revision(),
+                profile_hash: profile.profile_hash().to_hex(),
+                write_capable: false,
+                qualification_report_id: None,
+            }],
+        };
+        let registry = ProfileRegistry::from_sources(vec![source], &manifest).expect("registry");
+        assert_eq!(
+            registry.entries().values().next().expect("entry").origin(),
+            ProfileOrigin::LocalUntrusted
+        );
+    }
+
+    #[test]
+    fn manifest_builder_rejects_non_physical_or_mismatched_qualification_evidence() {
+        let profile = Arc::new(
+            ProfileToolService::validate(&reference_source(
+                "profile.toml",
+                ProfileSourceTier::Explicit,
+            ))
+            .expect("profile"),
+        );
+        let hash = profile.profile_hash().to_hex();
+        let mut reports = BTreeMap::new();
+        reports.insert(
+            hash.clone(),
+            QualificationReportV1 {
+                report_id: "HIL-001".to_owned(),
+                profile_hash: "00".repeat(32),
+                evidence_kind: QualificationEvidenceKind::PhysicalHardware,
+                hardware_model: "VFD fixture".to_owned(),
+                firmware: "1.0".to_owned(),
+                manual_revision: "A".to_owned(),
+                safe_write_scope: "stopped normal parameters".to_owned(),
+            },
+        );
+        let result = ProfileToolService::build_manifest(
+            "test",
+            [profile],
+            &QualificationIndexV1 {
+                schema_version: 1,
+                reports_by_profile_hash: reports,
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(ProfileRegistryError::InvalidManifest(_))
+        ));
+    }
+
+    #[test]
+    fn manifest_builder_accepts_exact_physical_qualification_evidence() {
+        let profile = Arc::new(
+            ProfileToolService::validate(&reference_source(
+                "profile.toml",
+                ProfileSourceTier::Explicit,
+            ))
+            .expect("profile"),
+        );
+        let hash = profile.profile_hash().to_hex();
+        let mut reports = BTreeMap::new();
+        reports.insert(
+            hash.clone(),
+            QualificationReportV1 {
+                report_id: "HIL-001".to_owned(),
+                profile_hash: hash,
+                evidence_kind: QualificationEvidenceKind::PhysicalHardware,
+                hardware_model: "VFD fixture".to_owned(),
+                firmware: "1.0".to_owned(),
+                manual_revision: "A".to_owned(),
+                safe_write_scope: "stopped normal parameters".to_owned(),
+            },
+        );
+        let manifest = ProfileToolService::build_manifest(
+            "test",
+            [profile],
+            &QualificationIndexV1 {
+                schema_version: 1,
+                reports_by_profile_hash: reports,
+            },
+        )
+        .expect("manifest");
+        assert_eq!(
+            manifest.profiles[0].qualification_report_id.as_deref(),
+            Some("HIL-001")
         );
     }
 

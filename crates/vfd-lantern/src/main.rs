@@ -26,7 +26,8 @@ use lantern_app::{
 };
 use lantern_storage::{
     AppPaths, DiagnosticsBundleOptions, FilesystemProfileSource, FilesystemSettingsSource,
-    ProfileLocations, collect_diagnostics_bundle, install_diagnostic_logging,
+    ManifestCopyStatus, ProfileLocations, collect_diagnostics_bundle, install_diagnostic_logging,
+    verify_packaged_manifest_copy,
 };
 use lantern_transport::UdevDiscovery;
 use lantern_tui::{MappedAction, Screen, TerminalSession, UiState, visible_parameter_ids};
@@ -42,6 +43,7 @@ use crate::{
 };
 
 const SYSTEM_PROFILE_DIRECTORY: &str = "/usr/share/vfd-lantern/profiles";
+const SYSTEM_PROFILE_MANIFEST: &str = "/usr/share/vfd-lantern/manifest/profiles-v1.json";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -79,8 +81,24 @@ async fn main() -> Result<()> {
             }
         };
 
+    let disk_manifest_status = verify_packaged_manifest_copy(
+        std::path::Path::new(SYSTEM_PROFILE_MANIFEST),
+        profile_commands::embedded_manifest_bytes(),
+    );
+    match disk_manifest_status {
+        Ok(ManifestCopyStatus::Match) => {}
+        Ok(status) => eprintln!(
+            "packaged profile manifest copy warning: {status:?}; embedded manifest remains authoritative"
+        ),
+        Err(error) => eprintln!(
+            "packaged profile manifest copy warning: {error}; embedded manifest remains authoritative"
+        ),
+    }
+
     match cli.command {
-        Some(Command::Profile(arguments)) => profile_commands::run(arguments.command),
+        Some(Command::Profile(arguments)) => {
+            profile_commands::run(arguments.command, &paths.profile_trust_store)
+        }
         Some(Command::Backup(arguments)) => match arguments.command {
             BackupCommand::Inspect { file } => {
                 bail!(

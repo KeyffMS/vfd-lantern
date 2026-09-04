@@ -6,7 +6,8 @@ use lantern_app::{
     QualificationIndexV1,
 };
 use lantern_storage::{
-    FileStorage, FilesystemProfileSource, ProfileLocations, read_bounded, write_new,
+    FileStorage, FilesystemProfileSource, ProfileLocations, approve_local_profile, read_bounded,
+    write_new,
 };
 
 use crate::cli::{ManifestArgs, ProfileCommand};
@@ -18,7 +19,11 @@ pub(crate) fn embedded_manifest() -> Result<PackagedProfilesManifestV1> {
     serde_json::from_str(EMBEDDED_MANIFEST_JSON).context("embedded profile manifest is invalid")
 }
 
-pub fn run(command: ProfileCommand) -> Result<()> {
+pub(crate) fn embedded_manifest_bytes() -> &'static [u8] {
+    EMBEDDED_MANIFEST_JSON.as_bytes()
+}
+
+pub fn run(command: ProfileCommand, trust_store_path: &Path) -> Result<()> {
     match command {
         ProfileCommand::List {
             explicit,
@@ -33,6 +38,18 @@ pub fn run(command: ProfileCommand) -> Result<()> {
         }
         ProfileCommand::Inspect { path } => inspect(&path),
         ProfileCommand::Hashes { path } => hashes(&path),
+        ProfileCommand::ApproveWrite {
+            path,
+            expected_hash,
+            manual_source,
+            summary,
+        } => approve_write(
+            &path,
+            trust_store_path,
+            &expected_hash,
+            &manual_source,
+            &summary,
+        ),
         ProfileCommand::Manifest(arguments) => build_manifest(arguments),
     }
 }
@@ -105,6 +122,29 @@ fn hashes(path: &Path) -> Result<()> {
     let profile = ProfileToolService::validate(&source)?;
     println!("source_hash={}", profile.source_hash());
     println!("profile_hash={}", profile.profile_hash());
+    Ok(())
+}
+
+fn approve_write(
+    profile_path: &Path,
+    trust_store_path: &Path,
+    expected_hash: &str,
+    manual_source: &str,
+    summary: &str,
+) -> Result<()> {
+    let source = FileStorage::load_profile(profile_path.to_path_buf())?;
+    let profile = ProfileToolService::validate(&source)?;
+    let approval = approve_local_profile(
+        trust_store_path,
+        &profile,
+        expected_hash,
+        manual_source,
+        summary,
+    )?;
+    println!(
+        "approved-local-write\t{}\trevision={}\tprofile_hash={}\tapp_version={}",
+        approval.profile_id, approval.revision, approval.profile_hash, approval.app_version
+    );
     Ok(())
 }
 

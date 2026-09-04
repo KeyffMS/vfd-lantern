@@ -1199,8 +1199,6 @@ const fn rounding_text(value: RoundingMode) -> &'static str {
 
 const fn profile_origin_text(value: ProfileOrigin) -> &'static str {
     match value {
-        ProfileOrigin::Explicit => "explicit",
-        ProfileOrigin::User => "user",
         ProfileOrigin::Packaged => "packaged",
         ProfileOrigin::LocalUntrusted => "local_untrusted",
     }

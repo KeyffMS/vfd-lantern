@@ -13,6 +13,7 @@ mod observability;
 mod panic_report;
 mod paths;
 mod profile_source;
+mod profile_trust;
 mod session_artifacts;
 mod settings_source;
 
@@ -43,6 +44,11 @@ pub use paths::{AppPaths, PathError};
 pub use profile_source::{
     FilesystemProfileSource, MAX_PROFILE_FILE_BYTES, MAX_PROFILE_FILES, MAX_PROFILE_SCAN_BYTES,
     ProfileLocations, ProfileScanLimits,
+};
+pub use profile_trust::{
+    LOCAL_PROFILE_TRUST_SCHEMA_VERSION, LocalProfileApprovalV1, ManifestCopyStatus,
+    ProfileTrustStorageError, RuntimeProfileTrust, approve_local_profile,
+    verify_packaged_manifest_copy,
 };
 pub use session_artifacts::{
     CSV_RUNTIME_CHECKPOINT_SCHEMA_VERSION, CSV_SESSION_SIDECAR_SCHEMA_VERSION, CsvBusStatisticsV1,

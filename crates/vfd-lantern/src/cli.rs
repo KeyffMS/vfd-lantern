@@ -64,6 +64,15 @@ pub enum ProfileCommand {
     Hashes {
         path: PathBuf,
     },
+    ApproveWrite {
+        path: PathBuf,
+        #[arg(long)]
+        expected_hash: String,
+        #[arg(long)]
+        manual_source: String,
+        #[arg(long)]
+        summary: String,
+    },
     Manifest(ManifestArgs),
 }
 
