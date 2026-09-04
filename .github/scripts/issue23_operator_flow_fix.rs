@@ -13,15 +13,6 @@ fn replace_once(path: &str, old: &str, new: &str) {
     fs::write(path, out).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
 }
 
-fn replace_all(path: &str, old: &str, new: &str, expected: usize) {
-    let path = Path::new(path);
-    let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let actual = text.matches(old).count();
-    assert_eq!(actual, expected, "unexpected anchor count in {}", path.display());
-    fs::write(path, text.replace(old, new))
-        .unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
-}
-
 fn main() {
     replace_once(
         "crates/lantern-tui/src/parameter_render.rs",
@@ -81,10 +72,18 @@ fn parameter_lines_inner(
         "        Screen::Parameters => parameter_lines(\n",
         "        Screen::Parameters => parameter_lines_for_session(\n",
     );
-    replace_all(
+
+    // Main benchmark browser fixture.
+    replace_once(
         "crates/lantern-tui/src/parameter_benchmark.rs",
-        "        staged_intent: None,\n        error: None,\n",
-        "        staged_intent: None,\n        prepared_write: None,\n        write_status: None,\n        error: None,\n",
-        2,
+        "        latest: None,\n        staged_intent: None,\n        error: None,\n    }\n}\n\nfn benchmark_descriptor",
+        "        latest: None,\n        staged_intent: None,\n        prepared_write: None,\n        write_status: None,\n        error: None,\n    }\n}\n\nfn benchmark_descriptor",
+    );
+
+    // Snapshot/form test fixture later in the same module.
+    replace_once(
+        "crates/lantern-tui/src/parameter_benchmark.rs",
+        "            catalog: Arc::from(vec![descriptor.clone()]),\n            latest: None,\n            staged_intent: None,\n            error: None,\n        };",
+        "            catalog: Arc::from(vec![descriptor.clone()]),\n            latest: None,\n            staged_intent: None,\n            prepared_write: None,\n            write_status: None,\n            error: None,\n        };",
     );
 }
