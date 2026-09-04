@@ -15,8 +15,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::{
-    FrequencyClass, LatestValue, LatestValues, PollPlanError, ProfileOrigin, ReadSubscription,
-    SubscriberId, SubscriptionReason,
+    FrequencyClass, LatestValue, LatestValues, PollPlanError, PreparedWritePlan, ProfileOrigin,
+    ReadSubscription, SubscriberId, SubscriptionReason,
 };
 
 pub const MAX_PARAMETER_BROWSER_VISIBLE: usize = 64;
@@ -137,6 +137,12 @@ pub enum ParameterAction {
         parameter_id: ParameterId,
         input: ParameterEditorInput,
     },
+    PrepareWrite,
+    WritePrepared(Box<Result<PreparedWritePlan, String>>),
+    ConfirmPrepared {
+        operator_text: String,
+    },
+    WriteCompleted(Result<String, String>),
     ClearIntent,
 }
 

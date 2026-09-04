@@ -71,8 +71,19 @@ for manifest in crates/*/Cargo.toml; do
     esac
 done
 
-if grep -R -n -E '\b(WriteCoordinator|PreparedBusWrite)\b' crates/vfd-lantern/src; then
-    printf 'production composition root exposes guarded writes before #22/#23\n' >&2
+if ! grep -R -n -E '\bWriteCoordinator\b' crates/vfd-lantern/src/write_runtime.rs >/dev/null; then
+    printf 'issue #23 requires the production composition root to instantiate WriteCoordinator\n' >&2
+    exit 1
+fi
+
+if grep -R -n -E '\bPreparedBusWrite\b' crates/vfd-lantern/src; then
+    printf 'composition root must never mint or expose PreparedBusWrite directly\n' >&2
+    exit 1
+fi
+
+if ! grep -n -E '\bFilesystemAuditPort\b' crates/vfd-lantern/src/write_runtime.rs >/dev/null \
+    || ! grep -n -E '\bRuntimeProfileTrust\b' crates/vfd-lantern/src/write_runtime.rs >/dev/null; then
+    printf 'production guarded writes require both durable audit and runtime profile trust adapters\n' >&2
     exit 1
 fi
 

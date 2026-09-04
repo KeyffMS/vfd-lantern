@@ -8,6 +8,7 @@ mod fault_runtime;
 mod monitoring_runtime;
 mod panic_support;
 mod profile_commands;
+mod write_runtime;
 
 use std::{
     future::pending,
@@ -161,7 +162,7 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
 
     let (action_tx, mut action_rx) = mpsc::unbounded_channel();
     let state = ApplicationState::with_registry_and_suggestions(
-        registry,
+        Arc::clone(&registry),
         settings.process_writes_enabled,
         settings.suggested_device.clone(),
         settings.suggested_slave,
@@ -170,11 +171,14 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
         Arc::clone(&terminal_guard),
         action_tx,
         Arc::clone(&discovery),
+        Arc::clone(&registry),
         TuiRuntimePaths::new(
             paths.diagnostics_directory.clone(),
             paths.fault_report_directory.clone(),
             paths.csv_directory.clone(),
             paths.session_runtime_directory.clone(),
+            paths.audit_directory.clone(),
+            paths.profile_trust_store.clone(),
         ),
         settings.clone(),
     );

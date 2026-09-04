@@ -7,8 +7,8 @@ use std::{
 use lantern_app::{
     ApplicationAction, ApplicationEffect, ApplicationEffectError, BusControlPort, ConnectionAction,
     ConnectionEffect, EffectRunner, FaultAction, FaultEffect, IdentificationReportExportV1,
-    IdentificationRequest, PortDiscoveryPort, PortSelection, SessionEffect, SessionFault,
-    SessionInput, SlaveId, ValidatedSettings, identification_error_attempt,
+    IdentificationRequest, PortDiscoveryPort, PortSelection, ProfileRegistry, SessionEffect,
+    SessionFault, SessionInput, SlaveId, ValidatedSettings, identification_error_attempt,
     identify_profile_via_bus,
 };
 use lantern_storage::{create_new_synced, write_fault_report};
@@ -16,7 +16,10 @@ use lantern_transport::{BusActorHandle, UdevDiscovery, open_serial_bus_with_iden
 use lantern_tui::TerminalGuard;
 use tokio::{sync::mpsc, task::JoinHandle};
 
-use crate::{fault_runtime::spawn_freeze_frame_capture, monitoring_runtime::MonitoringRuntime};
+use crate::{
+    fault_runtime::spawn_freeze_frame_capture, monitoring_runtime::MonitoringRuntime,
+    write_runtime::ProductionWriteRuntime,
+};
 
 const MANUAL_PATH_WATCH_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -38,6 +41,8 @@ pub struct TuiRuntimePaths {
     fault_report_directory: PathBuf,
     csv_directory: PathBuf,
     session_runtime_directory: PathBuf,
+    audit_directory: PathBuf,
+    profile_trust_store: PathBuf,
 }
 
 impl TuiRuntimePaths {
@@ -47,12 +52,16 @@ impl TuiRuntimePaths {
         fault_report_directory: PathBuf,
         csv_directory: PathBuf,
         session_runtime_directory: PathBuf,
+        audit_directory: PathBuf,
+        profile_trust_store: PathBuf,
     ) -> Self {
         Self {
             diagnostics_directory,
             fault_report_directory,
             csv_directory,
             session_runtime_directory,
+            audit_directory,
+            profile_trust_store,
         }
     }
 }
@@ -63,6 +72,7 @@ pub struct TuiEffectRunner {
     discovery: Arc<UdevDiscovery>,
     runtime: Arc<Mutex<RuntimeState>>,
     monitoring: MonitoringRuntime,
+    write: ProductionWriteRuntime,
     diagnostics_directory: PathBuf,
     fault_report_directory: PathBuf,
 }
@@ -73,9 +83,17 @@ impl TuiEffectRunner {
         terminal_guard: Arc<TerminalGuard>,
         action_tx: mpsc::UnboundedSender<ApplicationAction>,
         discovery: Arc<UdevDiscovery>,
+        registry: Arc<ProfileRegistry>,
         paths: TuiRuntimePaths,
         settings: ValidatedSettings,
     ) -> Self {
+        let write = ProductionWriteRuntime::new(
+            action_tx.clone(),
+            registry,
+            paths.audit_directory.clone(),
+            paths.profile_trust_store.clone(),
+            settings.process_writes_enabled,
+        );
         let monitoring = MonitoringRuntime::new(
             settings,
             action_tx.clone(),
@@ -88,6 +106,7 @@ impl TuiEffectRunner {
             discovery,
             runtime: Arc::new(Mutex::new(RuntimeState::default())),
             monitoring,
+            write,
             diagnostics_directory: paths.diagnostics_directory,
             fault_report_directory: paths.fault_report_directory,
         }
@@ -126,6 +145,7 @@ impl TuiEffectRunner {
                 };
                 let runtime = Arc::clone(&self.runtime);
                 let monitoring = self.monitoring.clone();
+                let write = self.write.clone();
                 let tx = self.action_tx.clone();
                 tokio::spawn(async move {
                     match open_serial_bus_with_identity(request, minimum_inter_frame_delay).await {
@@ -148,6 +168,7 @@ impl TuiEffectRunner {
                                 }
                             };
                             if accepted {
+                                write.attach_bus(handle.clone()).await;
                                 monitoring.bus_opened(handle.clone());
                                 let _ = tx.send(ApplicationAction::Connection(
                                     ConnectionAction::PortOpened { identity, kind },
@@ -359,6 +380,7 @@ impl EffectRunner for TuiEffectRunner {
             ApplicationEffect::Connection(effect) => self.execute_connection(effect),
             ApplicationEffect::Monitoring(effect) => self.monitoring.execute(effect),
             ApplicationEffect::Faults(effect) => self.execute_fault(effect),
+            ApplicationEffect::Write(effect) => self.write.execute(effect),
             ApplicationEffect::Session(effect) => self.execute_session(effect),
         }
     }

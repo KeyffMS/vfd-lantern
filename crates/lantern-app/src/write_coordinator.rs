@@ -156,6 +156,22 @@ impl PreparedWritePlan {
         &self.challenge
     }
 
+    /// Exact text the operator must type before phase 2 can execute. Commissioning writes bind
+    /// the challenge to both the parameter code and requested engineering value.
+    #[must_use]
+    pub fn operator_confirmation_text(&self) -> String {
+        match &self.confirmation {
+            WriteConfirmationModel::Standard => self.challenge.clone(),
+            WriteConfirmationModel::Commissioning {
+                parameter_code,
+                requested_engineering,
+            } => format!(
+                "{} {} {:?}",
+                self.challenge, parameter_code, requested_engineering
+            ),
+        }
+    }
+
     #[must_use]
     pub const fn expires_at(&self) -> MonotonicInstant {
         self.expires_at
@@ -280,8 +296,8 @@ pub enum WriteCoordinatorError {
     UnknownOrConsumedPlan,
 }
 
-/// Two-phase guarded write core. It is intentionally not instantiated by the production
-/// composition root until #22/#23 supply durable audit and profile-trust adapters.
+/// Two-phase guarded write core. The production composition root may instantiate it only with
+/// the durable audit and profile-trust adapters supplied by #22/#23.
 pub struct WriteCoordinator {
     authority: WriteAuthorityToken,
     read_bus: Arc<dyn ReadBusPort>,

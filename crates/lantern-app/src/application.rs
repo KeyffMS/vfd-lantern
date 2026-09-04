@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
-use lantern_domain::{IdentificationMatch, ParameterId, ProfileId, SessionId, SlaveId};
+use lantern_domain::{DriveState, IdentificationMatch, ParameterId, ProfileId, SessionId, SlaveId};
 use lantern_profile::ValidatedDeviceProfile;
 use thiserror::Error;
 
@@ -11,9 +11,10 @@ use crate::{
     CsvLoggingStartContext, CsvLoggingStateView, FaultAction, FaultEffect, FaultIdentityContext,
     FaultTimelineView, FaultTracker, LoggingId, MAX_PARAMETER_BROWSER_VISIBLE, MonitoringAction,
     MonitoringEffect, MonitoringRuntimeSnapshot, MonitoringView, OperationState, ParameterAction,
-    ParameterBrowserView, ParameterDescriptorView, ParameterIntentContext, ProfileRegistry,
-    ScopeSelection, SerialConnectError, SessionEffect, SessionFault, SessionInput, SessionState,
-    SessionStateMachine, StagedWriteIntent, default_dashboard_parameters,
+    ParameterBrowserView, ParameterDescriptorView, ParameterIntentContext, PreparedWritePlan,
+    ProfileRegistry, ScopeSelection, SerialConnectError, SessionEffect, SessionFault, SessionInput,
+    SessionState, SessionStateMachine, StagedWriteIntent, WriteConfirmation,
+    WriteConfirmationModel, WriteEffect, WriteSessionSnapshot, default_dashboard_parameters,
     identification_error_attempt, identification_report_export, parameter_catalog,
     prepare_parameter_intent, project_monitoring_view, project_parameter_browser_view,
 };
@@ -48,6 +49,8 @@ struct ApplicationParameterState {
     catalog: Arc<[ParameterDescriptorView]>,
     visible: Vec<ParameterId>,
     staged_intent: Option<StagedWriteIntent>,
+    prepared_write: Option<PreparedWritePlan>,
+    write_status: Option<String>,
     error: Option<String>,
 }
 
@@ -57,6 +60,8 @@ impl Default for ApplicationParameterState {
             catalog: Vec::<ParameterDescriptorView>::new().into(),
             visible: Vec::new(),
             staged_intent: None,
+            prepared_write: None,
+            write_status: None,
             error: None,
         }
     }
@@ -80,6 +85,7 @@ pub struct ApplicationState {
     monitoring: ApplicationMonitoringState,
     parameters: ApplicationParameterState,
     faults: FaultTracker,
+    write_guard_revision: u64,
 }
 
 impl Default for ApplicationState {
@@ -92,6 +98,7 @@ impl Default for ApplicationState {
             monitoring: ApplicationMonitoringState::default(),
             parameters: ApplicationParameterState::default(),
             faults: FaultTracker::default(),
+            write_guard_revision: 0,
         }
     }
 }
@@ -117,6 +124,7 @@ impl ApplicationState {
             monitoring: ApplicationMonitoringState::default(),
             parameters: ApplicationParameterState::default(),
             faults: FaultTracker::default(),
+            write_guard_revision: 0,
         }
     }
 
@@ -190,6 +198,31 @@ impl ApplicationState {
         &self.session
     }
 
+    fn write_session_snapshot(&self) -> Option<WriteSessionSnapshot> {
+        let SessionState::Active(active) = self.session.state() else {
+            return None;
+        };
+        let link = self.connection.link?;
+        Some(WriteSessionSnapshot {
+            session_id: active.session_id,
+            fingerprint: active.identity.device.fingerprint.clone(),
+            profile_hash: active.identity.profile_hash.to_hex(),
+            connected: matches!(&active.connectivity, Connectivity::Connected),
+            armed: matches!(&active.authorization, Authorization::Armed { .. }),
+            audit_healthy: matches!(&active.audit_health, AuditHealth::Healthy),
+            operation_idle: matches!(&active.operation, OperationState::Idle),
+            drive_state: DriveState::Unknown,
+            guard_revision: self.write_guard_revision,
+            slave_id: link.slave_id,
+        })
+    }
+
+    fn push_write_session_sync(&self, effects: &mut Vec<ApplicationEffect>) {
+        if let Some(snapshot) = self.write_session_snapshot() {
+            effects.push(ApplicationEffect::Write(WriteEffect::SyncSession(snapshot)));
+        }
+    }
+
     pub fn reduce(&mut self, action: ApplicationAction) -> Vec<ApplicationEffect> {
         match action {
             ApplicationAction::ReplaceRegistry(registry) => {
@@ -212,11 +245,17 @@ impl ApplicationState {
                 self.active_profile = Some(profile_id);
                 Vec::new()
             }
-            ApplicationAction::Connection(action) => self.reduce_connection(action),
+            ApplicationAction::Connection(action) => {
+                self.write_guard_revision = self.write_guard_revision.saturating_add(1);
+                let mut effects = self.reduce_connection(action);
+                self.push_write_session_sync(&mut effects);
+                effects
+            }
             ApplicationAction::Monitoring(action) => self.reduce_monitoring(action),
             ApplicationAction::Parameters(action) => self.reduce_parameters(action),
             ApplicationAction::Faults(action) => self.reduce_faults(action),
             ApplicationAction::Session(input) => {
+                self.write_guard_revision = self.write_guard_revision.saturating_add(1);
                 let previous_session_id = self.session.session_id();
                 let effects = self.session.transition(input);
                 let csv_finalize = effects
@@ -235,6 +274,7 @@ impl ApplicationState {
                     self.parameters = ApplicationParameterState::default();
                     self.faults = FaultTracker::default();
                 }
+                self.push_write_session_sync(&mut translated);
                 translated
             }
         }
@@ -429,19 +469,121 @@ impl ApplicationState {
                 ) {
                     Ok(staged) => {
                         self.parameters.staged_intent = Some(staged);
+                        self.parameters.prepared_write = None;
+                        self.parameters.write_status = None;
                         self.parameters.error = None;
                     }
                     Err(error) => {
                         self.parameters.staged_intent = None;
+                        self.parameters.prepared_write = None;
+                        self.parameters.write_status = None;
                         self.parameters.error = Some(error.to_string());
                     }
                 }
                 Vec::new()
             }
-            ParameterAction::ClearIntent => {
-                self.parameters.staged_intent = None;
+            ParameterAction::PrepareWrite => {
+                let Some(staged) = self.parameters.staged_intent.clone() else {
+                    self.parameters.error =
+                        Some("prepare requires a staged WriteIntent".to_owned());
+                    return Vec::new();
+                };
+                let Some(snapshot) = self.write_session_snapshot() else {
+                    self.parameters.error = Some(
+                        "prepare requires an active Verified session and validated link".to_owned(),
+                    );
+                    return Vec::new();
+                };
+                self.parameters.write_status = Some("preparing guarded write plan".to_owned());
                 self.parameters.error = None;
+                vec![ApplicationEffect::Write(WriteEffect::Prepare {
+                    intent: staged.intent,
+                    snapshot,
+                })]
+            }
+            ParameterAction::WritePrepared(result) => {
+                match *result {
+                    Ok(plan) => {
+                        self.parameters.prepared_write = Some(plan);
+                        self.parameters.write_status = Some(
+                            "guarded plan prepared; exact operator confirmation required"
+                                .to_owned(),
+                        );
+                        self.parameters.error = None;
+                    }
+                    Err(error) => {
+                        self.parameters.prepared_write = None;
+                        self.parameters.write_status = None;
+                        self.parameters.error = Some(error);
+                    }
+                }
                 Vec::new()
+            }
+            ParameterAction::ConfirmPrepared { operator_text } => {
+                let Some(plan) = self.parameters.prepared_write.clone() else {
+                    self.parameters.error = Some("there is no prepared write plan".to_owned());
+                    return Vec::new();
+                };
+                if operator_text.trim() != plan.operator_confirmation_text() {
+                    self.parameters.error = Some(
+                        "operator confirmation does not exactly match the prepared plan".to_owned(),
+                    );
+                    return Vec::new();
+                }
+                let Some(snapshot) = self.write_session_snapshot() else {
+                    self.parameters.error = Some(
+                        "confirmation requires an active Verified session and validated link"
+                            .to_owned(),
+                    );
+                    return Vec::new();
+                };
+                let confirmation = match plan.confirmation() {
+                    WriteConfirmationModel::Standard => WriteConfirmation::Confirm {
+                        challenge: plan.challenge().to_owned(),
+                    },
+                    WriteConfirmationModel::Commissioning {
+                        parameter_code,
+                        requested_engineering,
+                    } => WriteConfirmation::Commissioning {
+                        challenge: plan.challenge().to_owned(),
+                        parameter_code: parameter_code.clone(),
+                        requested_engineering: requested_engineering.clone(),
+                    },
+                };
+                self.parameters.prepared_write = None;
+                self.parameters.write_status = Some("write confirmation submitted".to_owned());
+                self.parameters.error = None;
+                vec![ApplicationEffect::Write(WriteEffect::Confirm {
+                    plan_id: plan.plan_id(),
+                    confirmation,
+                    snapshot,
+                })]
+            }
+            ParameterAction::WriteCompleted(result) => {
+                self.parameters.prepared_write = None;
+                self.parameters.staged_intent = None;
+                match result {
+                    Ok(outcome) => {
+                        self.parameters.write_status = Some(outcome);
+                        self.parameters.error = None;
+                    }
+                    Err(error) => {
+                        self.parameters.write_status = None;
+                        self.parameters.error = Some(error);
+                    }
+                }
+                Vec::new()
+            }
+            ParameterAction::ClearIntent => {
+                let cancel = self.parameters.prepared_write.take().map(|plan| {
+                    ApplicationEffect::Write(WriteEffect::Cancel {
+                        plan_id: plan.plan_id(),
+                    })
+                });
+                self.parameters.staged_intent = None;
+                self.parameters.write_status = None;
+                self.parameters.error = None;
+                cancel.into_iter().collect()
             }
         }
     }
@@ -1406,6 +1548,7 @@ pub enum ApplicationEffect {
     Connection(ConnectionEffect),
     Monitoring(MonitoringEffect),
     Faults(FaultEffect),
+    Write(WriteEffect),
     Session(SessionEffect),
 }
 
