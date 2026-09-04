@@ -59,6 +59,14 @@ fn system_time_nanos() -> u128 {
         r#"    use std::{fs, os::unix::fs::{PermissionsExt, symlink}, path::Path};
 "#,
     );
+    replace_once(bundle, "    fn paths(root: &Path) -> AppPaths {\n", "    fn test_paths(root: &Path) -> AppPaths {\n");
+    let text = fs::read_to_string(bundle).expect("read staged diagnostics bundle");
+    fs::write(
+        bundle,
+        text.replace("let paths = paths(root.path());", "let paths = test_paths(root.path());")
+            .replace("let bad_paths = paths(bad_root.path());", "let bad_paths = test_paths(bad_root.path());"),
+    )
+    .expect("rewrite test helper calls");
 
     let panic_report = "crates/lantern-storage/src/panic_report.rs";
     replace_once(
