@@ -1,0 +1,164 @@
+name: Release candidate build
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full candidate commit SHA
+        required: true
+        type: string
+      version:
+        description: Final candidate version (no RC rewrite)
+        required: true
+        type: string
+      qualification_index:
+        description: Repository path to frozen qualification index
+        required: true
+        default: release/fixtures/qualification-index-v1.json
+        type: string
+      dry_run:
+        description: Build and validate without creating a GitHub Release
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-candidate-build-${{ inputs.commit }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Native Trixie package / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: '["self-hosted","linux","x64","podman","vfd-lantern"]'
+          - arch: arm64
+            runner: '["self-hosted","linux","arm64","vfd-lantern-release-arm64"]'
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    steps:
+      - name: Validate immutable inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.commit }}" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]]
+          test -n "${{ inputs.version }}"
+          case "${{ inputs.version }}" in *-rc*|*RC*) echo 'candidate version must already be final' >&2; exit 1;; esac
+
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify frozen qualification input predates build
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${{ inputs.qualification_index }}"
+          test "$(git rev-parse HEAD)" = "${{ inputs.commit }}"
+          test "$(git log -1 --format=%H -- "${{ inputs.qualification_index }}")" != ""
+
+      - name: Install pinned Rust and release tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          export CARGO_INSTALL_ROOT="$HOME/.cache/vfd-lantern-cargo-tools"
+          export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
+          sh scripts/install-cargo-tools.sh release
+
+      - name: Build deterministic product assets
+        shell: bash
+        env:
+          VFD_LANTERN_VERSION: ${{ inputs.version }}
+          VFD_LANTERN_QUALIFICATION_INDEX: ${{ inputs.qualification_index }}
+          VFD_LANTERN_RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          sh scripts/release/build-product.sh "target/release-candidate/${{ matrix.arch }}"
+          sh scripts/release/finalize-product-assets.sh "target/release-candidate/${{ matrix.arch }}"
+
+      - name: Verify two clean builds are reproducible
+        shell: bash
+        env:
+          VFD_LANTERN_VERSION: ${{ inputs.version }}
+          VFD_LANTERN_QUALIFICATION_INDEX: ${{ inputs.qualification_index }}
+          VFD_LANTERN_RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          rm -rf target/repro-a target/repro-b
+          sh scripts/release/build-product.sh target/repro-a
+          sh scripts/release/finalize-product-assets.sh target/repro-a
+          cargo clean
+          sh scripts/release/build-product.sh target/repro-b
+          sh scripts/release/finalize-product-assets.sh target/repro-b
+          diff -u <(cd target/repro-a && sha256sum * | sort -k2) <(cd target/repro-b && sha256sum * | sort -k2)
+
+      - name: Upload architecture assets for assembly
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-${{ matrix.arch }}
+          path: target/release-candidate/${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 14
+
+  assemble:
+    name: Assemble immutable draft input set
+    needs: build
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download native build assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: candidate-*
+          path: target/candidate-input
+          merge-multiple: true
+
+      - name: Assemble candidate product snapshot
+        shell: bash
+        env:
+          VFD_LANTERN_VERSION: ${{ inputs.version }}
+          VFD_LANTERN_QUALIFICATION_INDEX: ${{ inputs.qualification_index }}
+        run: |
+          set -euo pipefail
+          sh scripts/release/assemble-matrix.sh target/candidate-input target/candidate-assets
+          test -f target/candidate-assets/SHA256SUMS
+          sha256sum -c target/candidate-assets/SHA256SUMS
+
+      - name: Upload candidate build output
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-product-assets
+          path: target/candidate-assets
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Draft creation policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            echo 'dry-run: product snapshot validated; no GitHub Release created'
+          else
+            echo 'non-dry-run draft creation is reserved for the protected #25 invocation' >&2
+            exit 1
+          fi
