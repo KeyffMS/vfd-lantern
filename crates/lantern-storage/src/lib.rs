@@ -5,6 +5,7 @@
 mod artifacts;
 mod atomic;
 mod audit;
+mod backup;
 mod csv_lifecycle;
 mod csv_writer;
 mod diagnostics_bundle;
@@ -20,10 +21,14 @@ mod settings_source;
 use lantern_app::{ArtifactStoragePort, ProfileSource, ProfileSourceError};
 
 pub use artifacts::{StorageError, read_bounded, write_new};
-pub use atomic::{AtomicWriteError, atomic_write, create_new_synced};
+pub use atomic::{AtomicWriteError, atomic_create_new, atomic_write, create_new_synced};
 pub use audit::{
     AUDIT_SCHEMA_VERSION, AuditStorageError, AuditVerification, FilesystemAuditPort,
     verify_audit_session,
+};
+pub use backup::{
+    BACKUP_SCHEMA_VERSION, BACKUP_SUFFIX, BackupEnvelopeV1, BackupPayloadV1, BackupStorageError,
+    MAX_BACKUP_FILE_BYTES, MAX_BACKUP_VALUES, read_backup, write_backup,
 };
 pub use csv_lifecycle::{CsvLoggingCoordinator, CsvLoggingLifecycleState};
 pub use csv_writer::{
