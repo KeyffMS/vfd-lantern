@@ -196,3 +196,5 @@ jobs:
           path: target/candidate-product
           if-no-files-found: error
           retention-days: 14
+
+# native-package acceptance retrigger 2026-09-05
