@@ -1,0 +1,160 @@
+name: Issue 24 final acceptance
+
+on:
+  push:
+    branches:
+      - agent/issue-24
+    paths:
+      - '.github/workflows/issue24-final-acceptance.yml'
+      - '.github/workflows/release-candidate-build.yml'
+      - '.github/workflows/release-candidate-finalize.yml'
+      - '.github/workflows/release-publish.yml'
+      - '.github/workflows/package-test.yml'
+      - '.github/workflows/docs-pages.yml'
+      - 'crates/lantern-release/**'
+      - 'crates/vfd-lantern/Cargo.toml'
+      - 'crates/vfd-lantern/build.rs'
+      - 'crates/vfd-lantern/examples/generate_package_assets.rs'
+      - 'scripts/release/**'
+      - 'dist-workspace.toml'
+      - 'book.toml'
+      - 'docs/**'
+      - 'about.toml'
+      - 'about.hbs'
+      - 'tools.lock.toml'
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - name: Verify runner platform
+        run: |
+          set -eu
+          test "$RUNNER_NAME" = "vfd-lantern-podman-01"
+          test "$RUNNER_OS" = "Linux"
+          test "$RUNNER_ARCH" = "X64"
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
+      - name: Verify runner prerequisites
+        run: |
+          set -eu
+          command -v git
+          command -v cc
+          command -v make
+          command -v pkg-config
+          command -v rustup
+          command -v jq
+          pkg-config --exists openssl
+          pkg-config --exists libudev
+
+      - name: Check out exact triggering commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy --component llvm-tools-preview
+          rustup default 1.97.1
+
+      - name: Validate lockfile and metadata
+        run: cargo metadata --locked --format-version 1 --no-deps >/dev/null
+
+      - name: Build workspace
+        run: cargo build --workspace --all-features --locked
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Run full tests
+        run: cargo test --workspace --all-features --locked
+
+      - name: Run connection process E2E
+        run: cargo run --locked -p lantern-sim --example connection_process_acceptance
+
+      - name: Run telemetry benchmark
+        run: cargo run --locked --release -p lantern-app --example telemetry_pipeline_benchmark
+
+      - name: Run Scope render benchmark
+        run: cargo run --locked --release -p lantern-tui --example scope_render_benchmark
+
+      - name: Run Parameter browser benchmark
+        run: cargo run --locked --release -p lantern-tui --example parameter_browser_benchmark
+
+      - name: Build rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --no-deps --locked
+
+      - name: Check architecture boundaries
+        run: sh scripts/check-architecture.sh
+
+      - name: Build mdBook
+        run: |
+          export CARGO_INSTALL_ROOT="$HOME/.cache/vfd-lantern-cargo-tools"
+          export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
+          sh scripts/install-cargo-tools.sh release
+          export PATH="$CARGO_INSTALL_ROOT/bin:$PATH"
+          mdbook build
+          test -f target/book/index.html
+
+      - name: Run release contract tests and dry-run
+        run: |
+          cargo test --locked -p lantern-release
+          sh scripts/release/dry-run-candidate.sh
+
+      - name: Validate production release workflow safety
+        run: |
+          set -eu
+          test -f .github/workflows/release-candidate-build.yml
+          test -f .github/workflows/release-candidate-finalize.yml
+          test -f .github/workflows/release-publish.yml
+          test -f .github/workflows/package-test.yml
+          test -f .github/workflows/docs-pages.yml
+          grep -Fq 'publish = false' crates/vfd-lantern/Cargo.toml
+          grep -Fq 'dist = true' crates/vfd-lantern/Cargo.toml
+          grep -Fq 'SOURCE_DATE_EPOCH' scripts/release/build-product.sh
+          grep -Fq 'github-draft-assets.sh' .github/workflows/release-candidate-build.yml
+          grep -Fq 'github-draft-assets.sh' .github/workflows/release-candidate-finalize.yml
+          grep -Fq 'draft_release_id' .github/workflows/release-publish.yml
+          grep -Fq 'expected_manifest_sha256' .github/workflows/release-publish.yml
+          grep -Fq 'target_commitish' .github/workflows/release-publish.yml
+          grep -Fq 'actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6' .github/workflows/release-candidate-build.yml
+          grep -Fq 'actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6' .github/workflows/release-candidate-finalize.yml
+          grep -Fq 'actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d' .github/workflows/docs-pages.yml
+          grep -Fq 'actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9' .github/workflows/docs-pages.yml
+          grep -Fq 'actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346' .github/workflows/docs-pages.yml
+          ! grep -R -E '^ *on:.*(tag|release)' .github/workflows/release-candidate-build.yml .github/workflows/release-candidate-finalize.yml .github/workflows/release-publish.yml
+          ! grep -Fq 'draft=false' .github/workflows/release-candidate-build.yml
+          ! grep -Fq 'draft=false' .github/workflows/release-candidate-finalize.yml
+
+      - name: Install pinned supply-chain tools
+        run: |
+          export CARGO_INSTALL_ROOT="$HOME/.cache/vfd-lantern-cargo-tools"
+          export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
+          sh scripts/install-cargo-tools.sh supply-chain
+
+      - name: Check supply chain
+        env:
+          CARGO_VET_REPORT: target/supply-chain/cargo-vet-summary-issue24.json
+        run: sh scripts/check-supply-chain.sh
+
+      - name: Upload supply-chain report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue24-final-supply-chain-amd64
+          path: target/supply-chain
+          if-no-files-found: warn
+          retention-days: 14
