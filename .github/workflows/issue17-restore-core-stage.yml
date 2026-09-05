@@ -1,0 +1,38 @@
+name: Stage issue 17 restore core
+
+on:
+  push:
+    branches:
+      - agent/issue-17-stage-restore
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-17-stage-restore
+          fetch-depth: 0
+      - name: Validate and persist restore coordinator core
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/issue17_restore_core_stage.py
+          cargo fmt --all
+          cargo check --workspace --all-features --locked
+          cargo test --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          git add crates/lantern-app/src/backup.rs crates/lantern-app/src/restore.rs \
+            crates/lantern-app/src/restore_permit.rs crates/lantern-app/src/ports.rs \
+            crates/lantern-app/src/write_coordinator.rs crates/lantern-app/src/lib.rs
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'feat(#17): enforce durable sequential restore capability'
+            git push origin HEAD:agent/issue-17-stage-restore
+          fi
