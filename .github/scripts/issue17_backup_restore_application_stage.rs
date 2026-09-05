@@ -30,16 +30,15 @@ fn main() {
         "    parameters: ApplicationParameterState,\n    faults: FaultTracker,\n",
         "    parameters: ApplicationParameterState,\n    backup_restore: ApplicationBackupRestoreState,\n    faults: FaultTracker,\n",
     );
-    replace_once(
-        path,
-        "            parameters: ApplicationParameterState::default(),\n            faults: FaultTracker::default(),\n",
-        "            parameters: ApplicationParameterState::default(),\n            backup_restore: ApplicationBackupRestoreState::default(),\n            faults: FaultTracker::default(),\n",
-    );
-    replace_once(
-        path,
-        "            parameters: ApplicationParameterState::default(),\n            faults: FaultTracker::default(),\n            write_guard_revision: 0,\n",
-        "            parameters: ApplicationParameterState::default(),\n            backup_restore: ApplicationBackupRestoreState::default(),\n            faults: FaultTracker::default(),\n            write_guard_revision: 0,\n",
-    );
+    {
+        let file = Path::new(path);
+        let text = fs::read_to_string(file).expect("read application state initializers");
+        let text = text.replace(
+            "            parameters: ApplicationParameterState::default(),\n            faults: FaultTracker::default(),\n",
+            "            parameters: ApplicationParameterState::default(),\n            backup_restore: ApplicationBackupRestoreState::default(),\n            faults: FaultTracker::default(),\n",
+        );
+        fs::write(file, text).expect("write application state initializers");
+    }
 
     replace_once(
         path,
