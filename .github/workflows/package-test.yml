@@ -6,6 +6,11 @@ on:
       artifact_name:
         required: true
         type: string
+      artifact_run_id:
+        description: Source workflow run ID; empty means current run
+        required: false
+        default: ''
+        type: string
       commit:
         required: true
         type: string
@@ -16,6 +21,10 @@ on:
     inputs:
       artifact_name:
         description: Existing Actions artifact containing arch/ and common/
+        required: true
+        type: string
+      artifact_run_id:
+        description: Workflow run ID that owns the artifact
         required: true
         type: string
       commit:
@@ -35,17 +44,38 @@ jobs:
   package-test:
     runs-on: ${{ inputs.runner }}
     steps:
+      - name: Validate immutable inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.commit }}" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]]
+          test -n "${{ inputs.artifact_name }}"
+          if [[ -n "${{ inputs.artifact_run_id }}" ]]; then
+            [[ "${{ inputs.artifact_run_id }}" =~ ^[1-9][0-9]*$ ]]
+          fi
+
       - name: Check out exact source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ inputs.commit }}
           persist-credentials: false
 
-      - name: Download exact package artifact
+      - name: Download package artifact from current run
+        if: ${{ inputs.artifact_run_id == '' }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ${{ inputs.artifact_name }}
           path: target/package-stage
+
+      - name: Download package artifact from explicit source run
+        if: ${{ inputs.artifact_run_id != '' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: target/package-stage
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.artifact_run_id }}
 
       - name: Resolve pinned Trixie image
         id: image
@@ -66,11 +96,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ inputs.commit }}"
           deb=$(find target/package-stage/arch -maxdepth 1 -type f -name '*.deb' -print -quit)
           test -n "$deb"
           test -f target/package-stage/common/profiles-v1.json
           docker run --rm \
-            -v "$GITHUB_WORKSPACE:/work" \
+            -v "$GITHUB_WORKSPACE:/work:ro" \
             -w /work \
             -e VFD_PACKAGE_DEB="$deb" \
             -e VFD_EXPECTED_PACKAGED_MANIFEST=target/package-stage/common/profiles-v1.json \
