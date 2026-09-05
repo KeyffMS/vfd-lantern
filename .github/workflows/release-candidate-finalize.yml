@@ -20,6 +20,11 @@ on:
         required: true
         default: candidate-gate-reports
         type: string
+      product_attestation_ids:
+        description: Comma-separated GitHub attestation IDs emitted by release-candidate-build; required for non-dry-run
+        required: false
+        default: ''
+        type: string
       required_profile_hashes:
         description: Optional comma-separated cross-check of write-capable profile hashes; authoritative scope is profiles-v1.json
         required: false
@@ -51,6 +56,9 @@ jobs:
           [[ "${{ inputs.commit }}" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]]
           [[ "${{ inputs.draft_release_id }}" =~ ^[1-9][0-9]*$ ]]
           test -n "${{ inputs.version }}"
+          if [[ "${{ inputs.dry_run }}" != "true" ]]; then
+            test -n "${{ inputs.product_attestation_ids }}"
+          fi
 
       - name: Check out exact candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -148,6 +156,17 @@ jobs:
         run: |
           set -euo pipefail
           test ! -e target/finalize/assets/candidate-manifest-v1.json
+          attestation_args=()
+          if [[ -n "${{ inputs.product_attestation_ids }}" ]]; then
+            IFS=',' read -ra ids <<< "${{ inputs.product_attestation_ids }}"
+            for id in "${ids[@]}"; do
+              test -n "$id"
+              [[ "$id" != *$'\n'* ]]
+              attestation_args+=(--attestation-id "$id")
+            done
+          else
+            attestation_args+=(--attestation-id "workflow-run:${{ github.run_id }}")
+          fi
           hash=$(cargo run --locked -q -p lantern-release --example candidate_manifest -- \
             snapshot \
             --asset-dir target/finalize/assets \
@@ -157,7 +176,7 @@ jobs:
             --toolchain 'rustc 1.97.1' \
             --image-digest 'sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132' \
             --workflow-revision release-candidate-finalize-v1 \
-            --attestation-id "workflow-run:${{ github.run_id }}" \
+            "${attestation_args[@]}" \
             --gate candidate-evidence=passed \
             --output target/finalize/assets/candidate-manifest-v1.json)
           echo "sha256=$hash" >> "$GITHUB_OUTPUT"
