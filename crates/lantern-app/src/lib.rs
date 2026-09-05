@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod application;
+mod backup;
 mod bus;
 mod clock;
 mod connection;
@@ -25,6 +26,7 @@ mod write_coordinator;
 mod write_flow;
 
 pub use application::*;
+pub use backup::*;
 pub use bus::*;
 pub use clock::*;
 pub use connection::*;
@@ -34,14 +36,15 @@ pub use fault_plan::*;
 pub use faults::*;
 pub use identification::*;
 pub use lantern_domain::{
-    ByteOrder, CsvTelemetryItem, DataBits, DecisionOutcome, DeviceFingerprint, DeviceWriteOutcome,
-    DriveState, EngineeringValue, FaultEvent, FaultEventId, FaultMeaning, FaultSeverity,
-    FaultTransition, FixedScale, FreezeFrame, FreezeFrameCompleteness, FreezeFrameValue,
-    IdentificationMatch, LinkSettings, LoggingId, ModbusFunction, ModbusTable, MonotonicInstant,
-    OperationId, ParameterAccess, ParameterId, Parity, PlanId, QuantityKind, RawRegisters,
-    RegisterEncoding, RequestId, RequiredDriveState, RestorePolicy, RoundingMode, Rs485Mode,
-    SessionId, SlaveId, StopBits, TelemetryGapCore, TelemetryQuality, UnitId, UtcTimestamp,
-    WordOrder, WriteIntent, WriteOutcome,
+    BackupCompleteness, BackupDiffStatus, BackupDifference, BackupId, BackupParameterValue,
+    BackupReadError, BackupSnapshot, ByteOrder, CsvTelemetryItem, DataBits, DecisionOutcome,
+    DeviceFingerprint, DeviceWriteOutcome, DriveState, EngineeringValue, FaultEvent, FaultEventId,
+    FaultMeaning, FaultSeverity, FaultTransition, FixedScale, FreezeFrame,
+    FreezeFrameCompleteness, FreezeFrameValue, IdentificationMatch, LinkSettings, LoggingId,
+    ModbusFunction, ModbusTable, MonotonicInstant, OperationId, ParameterAccess, ParameterId,
+    Parity, PlanId, QuantityKind, RawRegisters, RegisterEncoding, RequestId, RequiredDriveState,
+    RestoreEligibility, RestorePolicy, RoundingMode, Rs485Mode, SessionId, SlaveId, StopBits,
+    TelemetryGapCore, TelemetryQuality, UnitId, UtcTimestamp, WordOrder, WriteIntent, WriteOutcome,
 };
 pub use lantern_profile::{AddressNotation, ValidatedDeviceProfile};
 pub use monitoring::*;
