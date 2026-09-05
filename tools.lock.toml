@@ -18,5 +18,8 @@ cargo-dist = "0.30.3"
 cargo-deb = "3.6.2"
 mdbook = "0.4.52"
 
+[images]
+debian-trixie-slim = "docker.io/library/debian@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132"
+
 [commands]
 cargo-vet = "cargo vet check"
