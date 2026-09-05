@@ -21,7 +21,31 @@ lantern-transport.workspace = true
 lantern-tui.workspace = true
 
 [dev-dependencies]
+clap_complete.workspace = true
+clap_mangen.workspace = true
 tempfile.workspace = true
+
+[package.metadata.deb]
+section = "utils"
+priority = "optional"
+depends = "$auto"
+profile = "release"
+separate-debug-symbols = true
+assets = [
+    ["target/release/vfd-lantern", "usr/bin/", "755"],
+    ["../../profiles/example-vfd.toml", "usr/share/vfd-lantern/profiles/example-vfd.toml", "644"],
+    ["target/release/package-assets/profile-schema.json", "usr/share/vfd-lantern/schema/profile-v1.json", "644"],
+    ["target/release/package-assets/profiles-v1.json", "usr/share/vfd-lantern/manifest/profiles-v1.json", "644"],
+    ["target/release/package-assets/vfd-lantern.1", "usr/share/man/man1/vfd-lantern.1", "644"],
+    ["target/release/package-assets/vfd-lantern.bash", "usr/share/bash-completion/completions/vfd-lantern", "644"],
+    ["target/release/package-assets/vfd-lantern.fish", "usr/share/fish/vendor_completions.d/vfd-lantern.fish", "644"],
+    ["target/release/package-assets/_vfd-lantern", "usr/share/zsh/vendor-completions/_vfd-lantern", "644"],
+    ["../../README.md", "usr/share/doc/vfd-lantern/README.md", "644"],
+    ["../../CHANGELOG.md", "usr/share/doc/vfd-lantern/CHANGELOG.md", "644"],
+    ["../../LICENSE", "usr/share/doc/vfd-lantern/LICENSE", "644"],
+    ["../../SECURITY.md", "usr/share/doc/vfd-lantern/SECURITY.md", "644"],
+    ["target/release/package-assets/THIRD-PARTY-NOTICES.txt", "usr/share/doc/vfd-lantern/THIRD-PARTY-NOTICES.txt", "644"],
+]
 
 [lints]
 workspace = true
