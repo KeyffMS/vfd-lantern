@@ -14,23 +14,6 @@ fn append_once(path: &str, marker: &str, addition: &str) {
     fs::write(path, text).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
 }
 
-fn replace_once(path: &str, old: &str, new: &str) {
-    let path = Path::new(path);
-    let text = fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    if text.contains(new) {
-        return;
-    }
-    let Some(index) = text.find(old) else {
-        panic!("anchor not found in {}:\n{}", path.display(), old);
-    };
-    let mut out = String::with_capacity(text.len() + new.len().saturating_sub(old.len()));
-    out.push_str(&text[..index]);
-    out.push_str(new);
-    out.push_str(&text[index + old.len()..]);
-    fs::write(path, out).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
-}
-
 fn main() {
     const EXEMPTIONS: &str = r#"
 # Issue #23 production observability/trust activation. These entries are exact-version
@@ -124,11 +107,5 @@ receive fresh audit/import/exemption coverage, and `cargo-deny`, `cargo-audit`, 
         "supply-chain/README.md",
         "## Issue #23 production observability and trust activation",
         README_SECTION,
-    );
-
-    replace_once(
-        ".github/workflows/issue23-acceptance.yml",
-        "    paths:\n      - '.github/workflows/issue23-acceptance.yml'\n",
-        "    paths:\n      - '.github/workflows/issue23-acceptance.yml'\n      - 'supply-chain/**'\n      - 'scripts/check-supply-chain.sh'\n",
     );
 }
