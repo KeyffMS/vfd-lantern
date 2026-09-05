@@ -4,6 +4,10 @@ set -eu
 : "${VFD_PACKAGE_DEB:?set VFD_PACKAGE_DEB}"
 : "${VFD_EXPECTED_PACKAGED_MANIFEST:?set VFD_EXPECTED_PACKAGED_MANIFEST}"
 
+VFD_PACKAGE_DEB=$(realpath "$VFD_PACKAGE_DEB")
+VFD_EXPECTED_PACKAGED_MANIFEST=$(realpath "$VFD_EXPECTED_PACKAGED_MANIFEST")
+export VFD_PACKAGE_DEB VFD_EXPECTED_PACKAGED_MANIFEST
+
 test -f "$VFD_PACKAGE_DEB"
 test -f "$VFD_EXPECTED_PACKAGED_MANIFEST"
 
@@ -37,7 +41,7 @@ done
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends ca-certificates libcap2-bin
-apt-get install -y "./$VFD_PACKAGE_DEB"
+apt-get install -y "$VFD_PACKAGE_DEB"
 
 cmp "$VFD_EXPECTED_PACKAGED_MANIFEST" \
     /usr/share/vfd-lantern/manifest/profiles-v1.json
@@ -59,7 +63,8 @@ vfd-lantern profile list --system-dir /usr/share/vfd-lantern/profiles \
 cp /usr/share/vfd-lantern/manifest/profiles-v1.json /tmp/profiles-v1.original.json
 printf '\n' >> /usr/share/vfd-lantern/manifest/profiles-v1.json
 if cmp "$VFD_EXPECTED_PACKAGED_MANIFEST" \
-    /usr/share/vfd-lantern/manifest/profiles-v1.json >/dev/null 2>&1	hen
+    /usr/share/vfd-lantern/manifest/profiles-v1.json >/dev/null 2>&1
+then
     printf 'mutated disk manifest unexpectedly passed integrity comparison\n' >&2
     exit 1
 fi
