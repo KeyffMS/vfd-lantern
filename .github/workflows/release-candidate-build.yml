@@ -42,11 +42,23 @@ jobs:
       matrix:
         include:
           - arch: amd64
+            native_uname: x86_64
             runner: '["self-hosted","linux","x64","podman","vfd-lantern"]'
           - arch: arm64
+            native_uname: aarch64
             runner: '["self-hosted","linux","arm64","vfd-lantern-release-arm64"]'
     runs-on: ${{ fromJSON(matrix.runner) }}
     steps:
+      - name: Verify native Debian Trixie runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_OS" = Linux
+          test "$(uname -m)" = "${{ matrix.native_uname }}"
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
       - name: Validate immutable inputs
         shell: bash
         run: |
@@ -129,6 +141,15 @@ jobs:
     needs: build
     runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
     steps:
+      - name: Verify assembler runner
+        run: |
+          set -eu
+          test "$RUNNER_OS" = Linux
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
       - name: Check out exact candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
