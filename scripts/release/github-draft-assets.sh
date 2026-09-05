@@ -41,15 +41,28 @@ download_all() {
     rm -rf "$output"
     mkdir -p "$output"
     listing=$(mktemp)
+    trap 'rm -f "$listing"' EXIT HUP INT TERM
     gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
         | jq -s 'add // []' > "$listing"
-    jq -r '.[] | [.id,.name] | @tsv' "$listing" | while IFS="	" read -r id name
+    count=$(jq 'length' "$listing")
+    index=0
+    while [ "$index" -lt "$count" ]
     do
+        id=$(jq -r ".[$index].id" "$listing")
+        name=$(jq -r ".[$index].name" "$listing")
+        case "$id" in
+            ''|*[!0-9]*)
+                printf 'invalid release asset id: %s\n' "$id" >&2
+                exit 1
+                ;;
+        esac
         validate_name "$name"
         gh api -H 'Accept: application/octet-stream' \
             "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "$output/$name"
+        index=$((index + 1))
     done
     rm -f "$listing"
+    trap - EXIT HUP INT TERM
 }
 
 asset_count() {
