@@ -62,7 +62,7 @@ cargo about generate about.hbs > "$PACKAGE_ASSETS/THIRD-PARTY-NOTICES.txt"
 mdbook build
 
 export VFD_LANTERN_PACKAGED_PROFILES_MANIFEST="$PACKAGE_ASSETS/profiles-v1.json"
-dist build --artifacts=local --target "$TARGET" --output-format=json \
+dist --output-format=json build --artifacts=local --target "$TARGET" \
     > "$STAGE/dist-manifest.json"
 
 cargo deb -p vfd-lantern --target "$TARGET" --no-build
