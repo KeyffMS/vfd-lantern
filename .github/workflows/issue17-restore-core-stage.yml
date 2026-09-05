@@ -20,7 +20,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 .github/scripts/issue17_restore_core_stage.py
+          rustc --edition=2024 .github/scripts/issue17_restore_core_stage.rs -o /tmp/issue17-restore-core-stage
+          /tmp/issue17-restore-core-stage
           cargo fmt --all
           cargo check --workspace --all-features --locked
           cargo test --workspace --all-features --locked
