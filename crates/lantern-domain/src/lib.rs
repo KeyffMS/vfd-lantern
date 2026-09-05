@@ -15,7 +15,10 @@ mod value;
 mod write;
 
 pub use access::{DriveState, ParameterAccess, RequiredDriveState, RestorePolicy};
-pub use backup::{BackupDifference, BackupParameterValue, BackupSnapshot, RestoreEligibility};
+pub use backup::{
+    BackupCompleteness, BackupDiffStatus, BackupDifference, BackupParameterValue, BackupReadError,
+    BackupSnapshot, RestoreEligibility,
+};
 pub use codec::{CodecError, RegisterCodec, RegisterEncoding};
 pub use fault::{
     FaultEvent, FaultMeaning, FaultSeverity, FaultTransition, FreezeFrame, FreezeFrameCompleteness,
