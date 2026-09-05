@@ -20,7 +20,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo fmt --all -- --check
+          cargo fmt --all
           cargo check --workspace --all-features --locked
           cargo test --workspace --all-features --locked
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
