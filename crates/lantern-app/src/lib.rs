@@ -4,6 +4,7 @@
 
 mod application;
 mod backup;
+mod backup_restore_flow;
 mod bus;
 mod clock;
 mod connection;
@@ -29,6 +30,7 @@ mod write_flow;
 
 pub use application::*;
 pub use backup::*;
+pub use backup_restore_flow::*;
 pub use bus::*;
 pub use clock::*;
 pub use connection::*;
