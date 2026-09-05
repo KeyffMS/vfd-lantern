@@ -37,7 +37,7 @@ cargo +1.97.1 run --locked -p lantern-release --example release_evidence -- \
 
 (
     cd "$OUT"
-    LC_ALL=C sha256sum ./* | sed 's# \./#  #' | LC_ALL=C sort -k2 > SHA256SUMS
+    LC_ALL=C sha256sum * | LC_ALL=C sort -k2 > SHA256SUMS
 )
 
 test -s "$BUILD_MANIFEST"
