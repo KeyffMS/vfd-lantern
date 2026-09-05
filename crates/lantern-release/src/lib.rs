@@ -403,8 +403,6 @@ mod tests {
             .expect("exact draft");
 
         fs::write(directory.path().join("unexpected.txt"), b"mutation").expect("mutation");
-        assert!(
-            verify_published_draft_directory(&manifest_path, directory.path(), &hash).is_err()
-        );
+        assert!(verify_published_draft_directory(&manifest_path, directory.path(), &hash).is_err());
     }
 }

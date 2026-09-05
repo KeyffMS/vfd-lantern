@@ -1,7 +1,10 @@
 use std::{fs, path::PathBuf};
 
 use clap::CommandFactory;
-use clap_complete::{generate_to, shells::{Bash, Fish, Zsh}};
+use clap_complete::{
+    generate_to,
+    shells::{Bash, Fish, Zsh},
+};
 use lantern_app::ProfileToolService;
 
 #[path = "../src/cli.rs"]

@@ -3,12 +3,14 @@ use std::{collections::BTreeMap, fs, path::PathBuf};
 use clap::{Parser, Subcommand};
 use lantern_release::{
     CANDIDATE_MANIFEST_FILENAME, CandidateGateStatus, CandidateManifestMetadataV1,
-    CandidateManifestV1, sha256_file, snapshot_asset_directory,
-    verify_published_draft_directory,
+    CandidateManifestV1, sha256_file, snapshot_asset_directory, verify_published_draft_directory,
 };
 
 #[derive(Debug, Parser)]
-#[command(name = "candidate-manifest", about = "VFD Lantern candidate manifest finalizer/validator")]
+#[command(
+    name = "candidate-manifest",
+    about = "VFD Lantern candidate manifest finalizer/validator"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -66,7 +68,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             gates,
             output,
         } => {
-            if output.file_name().and_then(|name| name.to_str()) != Some(CANDIDATE_MANIFEST_FILENAME)
+            if output.file_name().and_then(|name| name.to_str())
+                != Some(CANDIDATE_MANIFEST_FILENAME)
             {
                 return Err(format!("output must be named {CANDIDATE_MANIFEST_FILENAME}").into());
             }
@@ -97,11 +100,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             manifest,
             expected_manifest_sha256,
         } => {
-            let verified = verify_published_draft_directory(
-                &manifest,
-                &asset_dir,
-                &expected_manifest_sha256,
-            )?;
+            let verified =
+                verify_published_draft_directory(&manifest, &asset_dir, &expected_manifest_sha256)?;
             println!(
                 "verified release_id={} commit={} version={} assets={}",
                 verified.draft_release_id,

@@ -12,8 +12,7 @@ use lantern_storage::{
 
 use crate::cli::{ManifestArgs, ProfileCommand};
 
-const EMBEDDED_MANIFEST_JSON: &str =
-    include_str!(concat!(env!("OUT_DIR"), "/profiles-v1.json"));
+const EMBEDDED_MANIFEST_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/profiles-v1.json"));
 const MAX_QUALIFICATION_INDEX_BYTES: usize = 4 * 1024 * 1024;
 
 pub(crate) fn embedded_manifest() -> Result<PackagedProfilesManifestV1> {
