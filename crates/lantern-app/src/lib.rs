@@ -39,12 +39,12 @@ pub use lantern_domain::{
     BackupCompleteness, BackupDiffStatus, BackupDifference, BackupId, BackupParameterValue,
     BackupReadError, BackupSnapshot, ByteOrder, CsvTelemetryItem, DataBits, DecisionOutcome,
     DeviceFingerprint, DeviceWriteOutcome, DriveState, EngineeringValue, FaultEvent, FaultEventId,
-    FaultMeaning, FaultSeverity, FaultTransition, FixedScale, FreezeFrame,
-    FreezeFrameCompleteness, FreezeFrameValue, IdentificationMatch, LinkSettings, LoggingId,
-    ModbusFunction, ModbusTable, MonotonicInstant, OperationId, ParameterAccess, ParameterId,
-    Parity, PlanId, QuantityKind, RawRegisters, RegisterEncoding, RequestId, RequiredDriveState,
-    RestoreEligibility, RestorePolicy, RoundingMode, Rs485Mode, SessionId, SlaveId, StopBits,
-    TelemetryGapCore, TelemetryQuality, UnitId, UtcTimestamp, WordOrder, WriteIntent, WriteOutcome,
+    FaultMeaning, FaultSeverity, FaultTransition, FixedScale, FreezeFrame, FreezeFrameCompleteness,
+    FreezeFrameValue, IdentificationMatch, LinkSettings, LoggingId, ModbusFunction, ModbusTable,
+    MonotonicInstant, OperationId, ParameterAccess, ParameterId, Parity, PlanId, QuantityKind,
+    RawRegisters, RegisterEncoding, RequestId, RequiredDriveState, RestoreEligibility,
+    RestorePolicy, RoundingMode, Rs485Mode, SessionId, SlaveId, StopBits, TelemetryGapCore,
+    TelemetryQuality, UnitId, UtcTimestamp, WordOrder, WriteIntent, WriteOutcome,
 };
 pub use lantern_profile::{AddressNotation, ValidatedDeviceProfile};
 pub use monitoring::*;

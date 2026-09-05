@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, path::Path, str::FromStr};
 
 use lantern_domain::{
     BackupCompleteness, BackupId, BackupParameterValue, BackupReadError, BackupSnapshot, Decimal,
-    DeviceFingerprint, DriveState, EngineeringValue, MonotonicInstant, ParameterAccess, ParameterId,
-    ProfileId, RawRegisters, RestorePolicy, TelemetryQuality, UtcTimestamp,
+    DeviceFingerprint, DriveState, EngineeringValue, MonotonicInstant, ParameterAccess,
+    ParameterId, ProfileId, RawRegisters, RestorePolicy, TelemetryQuality, UtcTimestamp,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -96,7 +96,10 @@ pub enum BackupStorageError {
     #[error("backup contains {actual} values; maximum is {maximum}")]
     TooManyValues { actual: usize, maximum: usize },
     #[error("invalid backup field {field}: {message}")]
-    InvalidField { field: &'static str, message: String },
+    InvalidField {
+        field: &'static str,
+        message: String,
+    },
 }
 
 pub fn write_backup(path: &Path, backup: &BackupSnapshot) -> Result<(), BackupStorageError> {
@@ -325,7 +328,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn validate_sha256(field: &'static str, value: &str) -> Result<(), BackupStorageError> {
-    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
         Ok(())
     } else {
         Err(invalid(field, "expected lowercase SHA-256 hex"))
@@ -333,11 +340,15 @@ fn validate_sha256(field: &'static str, value: &str) -> Result<(), BackupStorage
 }
 
 fn parse_u128(field: &'static str, value: &str) -> Result<u128, BackupStorageError> {
-    value.parse().map_err(|error: std::num::ParseIntError| invalid(field, error.to_string()))
+    value
+        .parse()
+        .map_err(|error: std::num::ParseIntError| invalid(field, error.to_string()))
 }
 
 fn parse_i128(field: &'static str, value: &str) -> Result<i128, BackupStorageError> {
-    value.parse().map_err(|error: std::num::ParseIntError| invalid(field, error.to_string()))
+    value
+        .parse()
+        .map_err(|error: std::num::ParseIntError| invalid(field, error.to_string()))
 }
 
 fn invalid(field: &'static str, message: impl Into<String>) -> BackupStorageError {
@@ -515,7 +526,10 @@ mod tests {
         write_backup(&path, &expected).expect("write");
         let actual = read_backup(&path).expect("read");
         assert_eq!(actual, expected);
-        assert_eq!(fs::metadata(path).expect("metadata").permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(path).expect("metadata").permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]
