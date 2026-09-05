@@ -1,0 +1,16 @@
+VFD Lantern Third-Party Notices
+
+This file is generated from Cargo metadata and dependency license texts.
+
+{{#each licenses}}
+================================================================================
+{{name}}
+================================================================================
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}
+{{/each}}
+
+{{text}}
+
+{{/each}}
