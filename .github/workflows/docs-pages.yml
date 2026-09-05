@@ -7,6 +7,7 @@ on:
     paths:
       - 'book.toml'
       - 'docs/**'
+      - 'tools.lock.toml'
       - '.github/workflows/docs-pages.yml'
   workflow_dispatch:
 
