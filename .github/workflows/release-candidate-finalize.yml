@@ -31,35 +31,74 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
   actions: read
+
+concurrency:
+  group: release-candidate-finalize-${{ inputs.draft_release_id }}
+  cancel-in-progress: false
 
 jobs:
   finalize:
     runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
     steps:
+      - name: Validate immutable inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.commit }}" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]]
+          [[ "${{ inputs.draft_release_id }}" =~ ^[1-9][0-9]*$ ]]
+          test -n "${{ inputs.version }}"
+
       - name: Check out exact candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ inputs.commit }}
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Download product snapshot S
+      - name: Prepare dry-run product snapshot
+        if: ${{ inputs.dry_run }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ${{ inputs.product_artifact_name }}
           path: target/finalize/assets
 
-      - name: Download gate reports
+      - name: Prepare dry-run gate reports
+        if: ${{ inputs.dry_run }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ${{ inputs.reports_artifact_name }}
           path: target/finalize/reports
 
+      - name: Download exact live draft asset set
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v gh
+          command -v jq
+          release=$(gh api "repos/${{ github.repository }}/releases/${{ inputs.draft_release_id }}")
+          test "$(printf '%s' "$release" | jq -r '.draft')" = true
+          test "$(printf '%s' "$release" | jq -r '.target_commitish')" = "${{ inputs.commit }}"
+          tag=$(printf '%s' "$release" | jq -r '.tag_name')
+          test -n "$tag"
+          mkdir -p target/finalize/assets target/finalize/reports
+          gh release download "$tag" --dir target/finalize/assets
+          test ! -e target/finalize/assets/candidate-manifest-v1.json
+          for report in target/finalize/assets/gate-report-*.json; do
+            test -f "$report"
+            cp "$report" target/finalize/reports/
+          done
+
       - name: Validate immutable gate evidence
         shell: bash
         run: |
           set -euo pipefail
+          test -d target/finalize/assets
+          test -d target/finalize/reports
           args=()
           IFS=',' read -ra hashes <<< "${{ inputs.required_profile_hashes }}"
           for hash in "${hashes[@]}"; do
@@ -71,6 +110,18 @@ jobs:
             --reports-dir target/finalize/reports \
             --commit "${{ inputs.commit }}" \
             "${args[@]}"
+
+      - name: Add dry-run gate reports to snapshot S
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for report in target/finalize/reports/*; do
+            test -f "$report"
+            name=$(basename "$report")
+            test ! -e "target/finalize/assets/$name"
+            cp "$report" "target/finalize/assets/$name"
+          done
 
       - name: Freeze snapshot S and create CandidateManifest
         id: manifest
@@ -103,7 +154,27 @@ jobs:
             --manifest target/finalize/assets/candidate-manifest-v1.json \
             --expected-manifest-sha256 "${{ steps.manifest.outputs.sha256 }}"
 
-      - name: Upload finalized immutable draft snapshot
+      - name: Upload CandidateManifest as sole post-snapshot draft asset
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release=$(gh api "repos/${{ github.repository }}/releases/${{ inputs.draft_release_id }}")
+          tag=$(printf '%s' "$release" | jq -r '.tag_name')
+          before=$(printf '%s' "$release" | jq '.assets | length')
+          gh release upload "$tag" target/finalize/assets/candidate-manifest-v1.json
+          after_release=$(gh api "repos/${{ github.repository }}/releases/${{ inputs.draft_release_id }}")
+          after=$(printf '%s' "$after_release" | jq '.assets | length')
+          test "$after" -eq $((before + 1))
+          rm -rf target/finalize/redownload
+          mkdir -p target/finalize/redownload
+          gh release download "$tag" --pattern candidate-manifest-v1.json --dir target/finalize/redownload
+          test "$(sha256sum target/finalize/redownload/candidate-manifest-v1.json | awk '{print $1}')" = "${{ steps.manifest.outputs.sha256 }}"
+          cmp target/finalize/redownload/candidate-manifest-v1.json target/finalize/assets/candidate-manifest-v1.json
+
+      - name: Persist external approval anchor artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: finalized-candidate-draft
@@ -111,12 +182,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Non-dry-run guard
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "${{ inputs.dry_run }}" != "true" ]]; then
-            echo 'Direct GitHub draft mutation is intentionally disabled in #24; #25 consumes the finalized snapshot and protected external approval anchor.' >&2
-            exit 1
-          fi
-          echo 'dry-run finalizer complete; no real release asset mutated'
+      - name: Dry-run finalizer proof
+        if: ${{ inputs.dry_run }}
+        run: echo 'dry-run froze S, added only CandidateManifest, and verified the external SHA-256 anchor'
