@@ -158,3 +158,5 @@ jobs:
           path: target/supply-chain
           if-no-files-found: warn
           retention-days: 14
+
+# final-acceptance retrigger 2026-09-05
