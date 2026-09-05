@@ -6,6 +6,8 @@ on:
       - agent/issue-24
     paths:
       - '.github/workflows/issue24-disposable-draft-acceptance.yml'
+      - 'scripts/release/github-draft-assets.sh'
+      - 'crates/lantern-release/**'
 
 permissions:
   contents: write
