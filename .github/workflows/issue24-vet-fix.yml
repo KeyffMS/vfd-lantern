@@ -32,12 +32,7 @@ jobs:
             if grep -A2 -F "[[exemptions.$crate]]" "$file" | grep -Fq "version = \"$version\""; then
               return
             fi
-            cat >> "$file" <<EOF
-
-[[exemptions.$crate]]
-version = "$version"
-criteria = "safe-to-run"
-EOF
+            printf '\n[[exemptions.%s]]\nversion = "%s"\ncriteria = "safe-to-run"\n' "$crate" "$version" >> "$file"
           }
           append_exemption clap_complete 4.6.0
           append_exemption clap_mangen 0.2.29
