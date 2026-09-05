@@ -81,23 +81,20 @@ jobs:
           name: ${{ inputs.reports_artifact_name }}
           path: target/finalize/reports
 
-      - name: Download exact live draft asset set
+      - name: Download exact live draft asset set by release id
         if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          command -v gh
-          command -v jq
-          release=$(gh api "repos/${{ github.repository }}/releases/${{ inputs.draft_release_id }}")
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/${{ inputs.draft_release_id }}")
           test "$(printf '%s' "$release" | jq -r '.draft')" = true
           test "$(printf '%s' "$release" | jq -r '.target_commitish')" = "${{ inputs.commit }}"
           test "$(printf '%s' "$release" | jq -r '.tag_name')" = "v${{ inputs.version }}"
-          tag=$(printf '%s' "$release" | jq -r '.tag_name')
-          mkdir -p target/finalize/assets target/finalize/reports
-          gh release download "$tag" --dir target/finalize/assets
+          sh scripts/release/github-draft-assets.sh download-all "${{ inputs.draft_release_id }}" target/finalize/assets
           test ! -e target/finalize/assets/candidate-manifest-v1.json
+          mkdir -p target/finalize/reports
           for report in target/finalize/assets/gate-report-*.json; do
             test -f "$report"
             cp "$report" target/finalize/reports/
@@ -199,17 +196,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          release=$(gh api "repos/${{ github.repository }}/releases/${{ inputs.draft_release_id }}")
-          tag=$(printf '%s' "$release" | jq -r '.tag_name')
-          before=$(printf '%s' "$release" | jq '.assets | length')
-          gh release upload "$tag" target/finalize/assets/candidate-manifest-v1.json
-          after_release=$(gh api "repos/${{ github.repository }}/releases/${{ inputs.draft_release_id }}")
-          after=$(printf '%s' "$after_release" | jq '.assets | length')
+          release_id="${{ inputs.draft_release_id }}"
+          before=$(sh scripts/release/github-draft-assets.sh count "$release_id")
+          sh scripts/release/github-draft-assets.sh upload "$release_id" target/finalize/assets/candidate-manifest-v1.json
+          after=$(sh scripts/release/github-draft-assets.sh count "$release_id")
           test "$after" -eq $((before + 1))
-          rm -rf target/finalize/redownload
-          mkdir -p target/finalize/redownload
-          gh release download "$tag" --pattern candidate-manifest-v1.json --dir target/finalize/redownload
-          test "$(sha256sum target/finalize/redownload/candidate-manifest-v1.json | awk '{print $1}')" = "${{ steps.manifest.outputs.sha256 }}"
+          sh scripts/release/github-draft-assets.sh download-all "$release_id" target/finalize/redownload
+          cargo run --locked -q -p lantern-release --example candidate_manifest -- \
+            verify \
+            --asset-dir target/finalize/redownload \
+            --manifest target/finalize/redownload/candidate-manifest-v1.json \
+            --expected-manifest-sha256 "${{ steps.manifest.outputs.sha256 }}"
           cmp target/finalize/redownload/candidate-manifest-v1.json target/finalize/assets/candidate-manifest-v1.json
 
       - name: Attest CandidateManifest external anchor
