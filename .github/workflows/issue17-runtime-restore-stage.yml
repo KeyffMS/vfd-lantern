@@ -1,0 +1,37 @@
+name: Stage issue 17 runtime restore lifecycle
+
+on:
+  push:
+    branches:
+      - agent/issue-17-stage-runtime
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-17-stage-runtime
+          fetch-depth: 0
+      - name: Validate and persist production restore session lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --edition=2024 .github/scripts/issue17_runtime_restore_stage.rs -o /tmp/issue17-runtime-restore-stage
+          /tmp/issue17-runtime-restore-stage
+          cargo fmt --all
+          cargo check --workspace --all-features --locked
+          cargo test --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
+          git add crates/vfd-lantern/src/write_runtime.rs
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'feat(#17): bind production session runtime to restore permit lifecycle'
+            git push origin HEAD:agent/issue-17-stage-runtime
+          fi
