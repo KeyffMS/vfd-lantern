@@ -1,0 +1,15 @@
+# Summary
+
+- [VFD Lantern](index.md)
+- [Safety, installation and RS-485](safety-install-rs485.md)
+- [Verified connection and TUI](verified-tui.md)
+- [Monitoring and quantities](monitoring.md)
+- [Writes, trust and audit](writes-trust-audit.md)
+- [Profile qualification and candidate HIL](qualification-hil.md)
+- [Backup, semantic diff and restore](backup-restore.md)
+- [Faults and freeze-frame](faults.md)
+- [CSV, diagnostics and recovery artifacts](data-diagnostics.md)
+- [Profiles, canonicalization and addressing](profiles.md)
+- [Architecture, simulator and CI](architecture-ci.md)
+- [Threat model](development/threat-model.md)
+- [Release infrastructure](release-infrastructure.md)
