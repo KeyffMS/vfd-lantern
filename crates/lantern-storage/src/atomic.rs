@@ -16,18 +16,23 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AtomicWriteError> {
 
     let mut temporary =
         NamedTempFile::new_in(parent).map_err(|error| AtomicWriteError::io(parent, error))?;
-    temporary
-        .as_file_mut()
-        .set_permissions(Permissions::from_mode(PRIVATE_FILE_MODE))
-        .map_err(|error| AtomicWriteError::io(path, error))?;
-    temporary
-        .as_file_mut()
-        .write_all(bytes)
-        .and_then(|()| temporary.as_file_mut().flush())
-        .and_then(|()| temporary.as_file_mut().sync_all())
-        .map_err(|error| AtomicWriteError::io(path, error))?;
+    prepare_private_file(path, &mut temporary, bytes)?;
     temporary
         .persist(path)
+        .map_err(|error| AtomicWriteError::io(path, error.error))?;
+    sync_directory(parent)
+}
+
+/// Atomically creates a private file and refuses to replace an existing destination.
+pub fn atomic_create_new(path: &Path, bytes: &[u8]) -> Result<(), AtomicWriteError> {
+    let parent = parent_directory(path)?;
+    fs::create_dir_all(parent).map_err(|error| AtomicWriteError::io(parent, error))?;
+
+    let mut temporary =
+        NamedTempFile::new_in(parent).map_err(|error| AtomicWriteError::io(parent, error))?;
+    prepare_private_file(path, &mut temporary, bytes)?;
+    temporary
+        .persist_noclobber(path)
         .map_err(|error| AtomicWriteError::io(path, error.error))?;
     sync_directory(parent)
 }
@@ -46,6 +51,23 @@ pub fn create_new_synced(path: &Path, bytes: &[u8]) -> Result<(), AtomicWriteErr
         .and_then(|()| file.sync_all())
         .map_err(|error| AtomicWriteError::io(path, error))?;
     sync_directory(parent)
+}
+
+fn prepare_private_file(
+    path: &Path,
+    temporary: &mut NamedTempFile,
+    bytes: &[u8],
+) -> Result<(), AtomicWriteError> {
+    temporary
+        .as_file_mut()
+        .set_permissions(Permissions::from_mode(PRIVATE_FILE_MODE))
+        .map_err(|error| AtomicWriteError::io(path, error))?;
+    temporary
+        .as_file_mut()
+        .write_all(bytes)
+        .and_then(|()| temporary.as_file_mut().flush())
+        .and_then(|()| temporary.as_file_mut().sync_all())
+        .map_err(|error| AtomicWriteError::io(path, error))
 }
 
 fn parent_directory(path: &Path) -> Result<&Path, AtomicWriteError> {
@@ -83,7 +105,7 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{atomic_write, create_new_synced};
+    use super::{atomic_create_new, atomic_write, create_new_synced};
 
     #[test]
     fn atomic_write_replaces_complete_content_with_private_permissions() {
@@ -92,6 +114,19 @@ mod tests {
         atomic_write(&path, b"first").expect("first");
         atomic_write(&path, b"second").expect("second");
         assert_eq!(fs::read(&path).expect("read"), b"second");
+        assert_eq!(
+            fs::metadata(path).expect("metadata").permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn atomic_create_new_is_private_and_refuses_overwrite() {
+        let directory = tempdir().expect("tempdir");
+        let path = directory.path().join("backup/item.json");
+        atomic_create_new(&path, b"one").expect("first");
+        assert!(atomic_create_new(&path, b"two").is_err());
+        assert_eq!(fs::read(&path).expect("read"), b"one");
         assert_eq!(
             fs::metadata(path).expect("metadata").permissions().mode() & 0o777,
             0o600
