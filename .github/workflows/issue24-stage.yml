@@ -1,0 +1,41 @@
+name: Issue 24 staging
+
+on:
+  push:
+    branches:
+      - agent/issue-24
+    paths:
+      - '.github/workflows/issue24-stage.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - name: Verify runner
+        run: |
+          test "$RUNNER_NAME" = "vfd-lantern-podman-01"
+          test "$RUNNER_OS" = "Linux"
+          test "$RUNNER_ARCH" = "X64"
+      - name: Check out issue branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-24
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+      - name: Resolve lockfile and check workspace
+        run: cargo check --workspace --all-features
+      - name: Show lockfile delta
+        if: always()
+        run: git diff -- Cargo.lock
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Run tests for release contract
+        run: cargo test -p lantern-release
