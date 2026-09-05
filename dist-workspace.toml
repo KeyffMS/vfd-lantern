@@ -4,6 +4,9 @@ members = ["cargo:."]
 [dist]
 cargo-dist-version = "0.30.3"
 ci = "github"
+# VFD Lantern owns release orchestration in release-candidate-build/finalize/publish.
+# cargo-dist is used only to plan/build product archives, so its generated CI is intentionally ignored.
+allow-dirty = ["ci"]
 installers = []
 targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 precise-builds = true
