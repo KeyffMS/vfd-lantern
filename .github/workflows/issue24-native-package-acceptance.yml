@@ -6,6 +6,9 @@ on:
       - agent/issue-24
     paths:
       - '.github/workflows/issue24-native-package-acceptance.yml'
+      - 'crates/vfd-lantern/Cargo.toml'
+      - 'dist-workspace.toml'
+      - 'scripts/release/**'
 
 permissions:
   contents: read
@@ -58,6 +61,8 @@ jobs:
           cargo fmt --all -- --check
           cargo test --locked -p lantern-release
           mdbook build
+          grep -Fq 'publish = false' crates/vfd-lantern/Cargo.toml
+          grep -Fq 'dist = true' crates/vfd-lantern/Cargo.toml
 
       - name: Resolve deterministic inputs
         id: inputs
