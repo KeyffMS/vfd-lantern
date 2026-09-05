@@ -1,0 +1,78 @@
+name: Package test
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        required: true
+        type: string
+      commit:
+        required: true
+        type: string
+      runner:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      artifact_name:
+        description: Existing Actions artifact containing arch/ and common/
+        required: true
+        type: string
+      commit:
+        description: Exact source commit
+        required: true
+        type: string
+      runner:
+        description: Native runner label (ubuntu-24.04 or ubuntu-24.04-arm)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  package-test:
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+
+      - name: Download exact package artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: target/package-stage
+
+      - name: Resolve pinned Trixie image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=$(awk -F ' = ' '
+            /^\[images\]$/ { in_images=1; next }
+            /^\[/ { if (in_images) exit }
+            in_images && $1 == "debian-trixie-slim" {
+              gsub(/"/, "", $2); print $2; found=1; exit
+            }
+            END { if (!found) exit 1 }
+          ' tools.lock.toml)
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Install, smoke, integrity-check and uninstall exact .deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          deb=$(find target/package-stage/arch -maxdepth 1 -type f -name '*.deb' -print -quit)
+          test -n "$deb"
+          test -f target/package-stage/common/profiles-v1.json
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            -e VFD_PACKAGE_DEB="$deb" \
+            -e VFD_EXPECTED_PACKAGED_MANIFEST=target/package-stage/common/profiles-v1.json \
+            "${{ steps.image.outputs.image }}" \
+            sh scripts/release/test-deb.sh
