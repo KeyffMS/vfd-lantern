@@ -35,24 +35,28 @@ jobs:
         run: |
           set -euo pipefail
           tag="issue24-pipeline-test-${GITHUB_RUN_ID}"
-          printf '%s\n' "$tag" > "$RUNNER_TEMP/issue24-tag"
           mkdir -p target/disposable/assets
           printf 'amd64 pipeline fixture\ncommit=%s\n' "$GITHUB_SHA" > target/disposable/assets/product-amd64.txt
           printf 'arm64 pipeline fixture\ncommit=%s\n' "$GITHUB_SHA" > target/disposable/assets/product-arm64.txt
           printf '{"schema_version":1,"status":"passed","run_id":%s}\n' "$GITHUB_RUN_ID" > target/disposable/assets/package-gate.json
-          gh release create "$tag" \
-            --draft \
-            --prerelease \
-            --target "$GITHUB_SHA" \
-            --title "Issue 24 pipeline test $GITHUB_RUN_ID" \
-            --notes 'Disposable #24 release infrastructure acceptance. Not a product release.'
-          gh release upload "$tag" target/disposable/assets/*
-          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.id')
+          release=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$tag" \
+            -f target_commitish="$GITHUB_SHA" \
+            -f name="Issue 24 pipeline test $GITHUB_RUN_ID" \
+            -f body='Disposable #24 release infrastructure acceptance. Not a product release.' \
+            -F draft=true \
+            -F prerelease=true)
+          release_id=$(printf '%s' "$release" | jq -r '.id')
           test -n "$release_id"
+          test "$release_id" != null
+          printf '%s\n' "$release_id" > "$RUNNER_TEMP/issue24-release-id"
+          printf '%s\n' "$tag" > "$RUNNER_TEMP/issue24-tag"
+          sh scripts/release/github-draft-assets.sh upload-dir "$release_id" target/disposable/assets
+          test "$(sh scripts/release/github-draft-assets.sh count "$release_id")" -eq 3
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Freeze S and upload CandidateManifest as the only final asset
+      - name: Freeze S and create CandidateManifest
         id: manifest
         shell: bash
         run: |
@@ -72,17 +76,19 @@ jobs:
           test -n "$hash"
           echo "sha256=$hash" >> "$GITHUB_OUTPUT"
 
-      - name: Upload manifest, re-download and validate exact S plus manifest
+      - name: Upload manifest as sole post-snapshot asset and verify exact set
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          tag="${{ steps.draft.outputs.tag }}"
-          gh release upload "$tag" target/disposable/assets/candidate-manifest-v1.json
-          rm -rf target/redownloaded
-          mkdir -p target/redownloaded
-          gh release download "$tag" --dir target/redownloaded
+          release_id="${{ steps.draft.outputs.release_id }}"
+          before=$(sh scripts/release/github-draft-assets.sh count "$release_id")
+          test "$before" -eq 3
+          sh scripts/release/github-draft-assets.sh upload "$release_id" target/disposable/assets/candidate-manifest-v1.json
+          after=$(sh scripts/release/github-draft-assets.sh count "$release_id")
+          test "$after" -eq 4
+          sh scripts/release/github-draft-assets.sh download-all "$release_id" target/redownloaded
           cargo run --locked -q -p lantern-release --example candidate_manifest -- \
             verify \
             --asset-dir target/redownloaded \
@@ -95,12 +101,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="${{ steps.draft.outputs.tag }}"
+          release_id="${{ steps.draft.outputs.release_id }}"
           printf 'forbidden post-freeze mutation\n' > target/unexpected-after-freeze.txt
-          gh release upload "$tag" target/unexpected-after-freeze.txt
-          rm -rf target/mutated
-          mkdir -p target/mutated
-          gh release download "$tag" --dir target/mutated
+          sh scripts/release/github-draft-assets.sh upload "$release_id" target/unexpected-after-freeze.txt
+          sh scripts/release/github-draft-assets.sh download-all "$release_id" target/mutated
           if cargo run --locked -q -p lantern-release --example candidate_manifest -- \
             verify \
             --asset-dir target/mutated \
@@ -119,11 +123,11 @@ jobs:
         shell: bash
         run: |
           set +e
+          if [ -f "$RUNNER_TEMP/issue24-release-id" ]; then
+            release_id=$(cat "$RUNNER_TEMP/issue24-release-id")
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id" >/dev/null 2>&1 || true
+          fi
           if [ -f "$RUNNER_TEMP/issue24-tag" ]; then
             tag=$(cat "$RUNNER_TEMP/issue24-tag")
-            release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.id' 2>/dev/null)
-            if [ -n "$release_id" ]; then
-              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"
-            fi
             gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" >/dev/null 2>&1 || true
           fi
