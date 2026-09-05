@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod backup_commands;
 mod cli;
 mod connection_runtime;
 mod fault_runtime;
@@ -18,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use clap::Parser;
 use lantern_app::{
     ApplicationAction, ApplicationRuntime, ApplicationState, CliSettingsOverrides, ColorMode,
@@ -38,7 +39,7 @@ use tokio::{
 };
 
 use crate::{
-    cli::{BackupCommand, Cli, Command, DiagnosticsCommand},
+    cli::{Cli, Command, DiagnosticsCommand},
     connection_runtime::{TuiEffectRunner, TuiRuntimePaths},
     panic_support::install_terminal_panic_hook,
 };
@@ -100,19 +101,7 @@ async fn main() -> Result<()> {
         Some(Command::Profile(arguments)) => {
             profile_commands::run(arguments.command, &paths.profile_trust_store)
         }
-        Some(Command::Backup(arguments)) => match arguments.command {
-            BackupCommand::Inspect { file } => {
-                bail!(
-                    "backup inspection for {} is implemented by roadmap issue #17",
-                    file.display()
-                )
-            }
-            BackupCommand::Diff { left, right } => bail!(
-                "backup diff for {} and {} is implemented by roadmap issue #17",
-                left.display(),
-                right.display()
-            ),
-        },
+        Some(Command::Backup(arguments)) => backup_commands::run(arguments.command),
         Some(Command::Diagnostics(arguments)) => match arguments.command {
             DiagnosticsCommand::Collect {
                 output,

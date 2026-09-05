@@ -32,7 +32,8 @@ pub fn run(command: BackupCommand) -> Result<()> {
             let diff = semantic_backup_diff(&left_backup, &right_backup, None);
             let mut counts = [0_usize; 7];
             for entry in &diff {
-                counts[status_index(entry.status)] = counts[status_index(entry.status)].saturating_add(1);
+                counts[status_index(entry.status)] =
+                    counts[status_index(entry.status)].saturating_add(1);
                 println!("{}\t{:?}", entry.parameter_id.as_str(), entry.status);
             }
             println!(

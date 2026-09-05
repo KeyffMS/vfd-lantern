@@ -195,6 +195,21 @@ impl BackupPayloadV1 {
     fn into_snapshot(self) -> Result<BackupSnapshot, BackupStorageError> {
         validate_sha256("source_hash", &self.source_hash)?;
         validate_sha256("profile_hash", &self.profile_hash)?;
+        let completeness = parse_completeness(&self.completeness)?;
+        if matches!(completeness, BackupCompleteness::Complete) && !self.errors.is_empty() {
+            return Err(invalid(
+                "errors",
+                "complete backup cannot contain read errors",
+            ));
+        }
+        let started_at = parse_i128("started_at_unix_nanos", &self.started_at_unix_nanos)?;
+        let finished_at = parse_i128("finished_at_unix_nanos", &self.finished_at_unix_nanos)?;
+        if finished_at < started_at {
+            return Err(invalid(
+                "finished_at_unix_nanos",
+                "backup finished before it started",
+            ));
+        }
         let mut values = BTreeMap::new();
         for value in self.values {
             let (parameter_id, value) = value.into_value()?;
@@ -217,14 +232,8 @@ impl BackupPayloadV1 {
             app_version: self.app_version,
             build_id: self.build_id,
             backup_id: BackupId::new(parse_u128("backup_id", &self.backup_id)?),
-            started_at: UtcTimestamp::from_unix_nanos(parse_i128(
-                "started_at_unix_nanos",
-                &self.started_at_unix_nanos,
-            )?),
-            finished_at: UtcTimestamp::from_unix_nanos(parse_i128(
-                "finished_at_unix_nanos",
-                &self.finished_at_unix_nanos,
-            )?),
+            started_at: UtcTimestamp::from_unix_nanos(started_at),
+            finished_at: UtcTimestamp::from_unix_nanos(finished_at),
             profile_id: ProfileId::parse(self.profile_id)
                 .map_err(|error| invalid("profile_id", error.to_string()))?,
             profile_revision: self.profile_revision,
@@ -239,7 +248,7 @@ impl BackupPayloadV1 {
             adapter: self.adapter,
             link_settings: self.link_settings,
             drive_state: parse_drive_state(&self.drive_state)?,
-            completeness: parse_completeness(&self.completeness)?,
+            completeness,
             values,
             errors: errors.into_boxed_slice(),
         })
@@ -309,11 +318,35 @@ impl EngineeringValueV1 {
 
     fn into_engineering(self) -> Result<EngineeringValue, BackupStorageError> {
         match self {
-            Self::Fixed { decimal } => Decimal::from_str(&decimal)
-                .map(EngineeringValue::Fixed)
-                .map_err(|error| invalid("values.engineering.decimal", error.to_string())),
-            Self::Float32 { bits, .. } => Ok(EngineeringValue::Float32Bits(bits)),
-            Self::Float64 { bits, .. } => Ok(EngineeringValue::Float64Bits(bits)),
+            Self::Fixed { decimal } => {
+                let value = Decimal::from_str(&decimal)
+                    .map_err(|error| invalid("values.engineering.decimal", error.to_string()))?;
+                if value.normalize().to_string() != decimal {
+                    return Err(invalid(
+                        "values.engineering.decimal",
+                        "fixed decimal is not canonical",
+                    ));
+                }
+                Ok(EngineeringValue::Fixed(value))
+            }
+            Self::Float32 { bits, text } => {
+                if f32::from_bits(bits).to_string() != text {
+                    return Err(invalid(
+                        "values.engineering.text",
+                        "float32 text does not match raw bits",
+                    ));
+                }
+                Ok(EngineeringValue::Float32Bits(bits))
+            }
+            Self::Float64 { bits, text } => {
+                if f64::from_bits(bits).to_string() != text {
+                    return Err(invalid(
+                        "values.engineering.text",
+                        "float64 text does not match raw bits",
+                    ));
+                }
+                Ok(EngineeringValue::Float64Bits(bits))
+            }
             Self::Enum { raw } => Ok(EngineeringValue::EnumRaw(raw)),
             Self::Bitfield { raw } => Ok(EngineeringValue::BitfieldRaw(raw)),
         }
@@ -546,6 +579,55 @@ mod tests {
         let mut closed: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
         closed["unexpected"] = serde_json::Value::Bool(true);
         fs::write(&path, serde_json::to_vec(&closed).expect("json")).expect("tamper");
+        assert!(read_backup(&path).is_err());
+    }
+
+    #[test]
+    fn backup_rejects_symlink_irregular_and_oversized_files() {
+        use std::{fs::File, os::unix::fs::symlink};
+
+        let directory = tempdir().expect("tempdir");
+        let regular = directory.path().join("regular.vfdlantern-backup.json");
+        write_backup(&regular, &sample_backup()).expect("write");
+        let link = directory.path().join("link.vfdlantern-backup.json");
+        symlink(&regular, &link).expect("symlink");
+        assert!(read_backup(&link).is_err());
+        assert!(read_backup(directory.path()).is_err());
+
+        let oversized = directory.path().join("oversized.vfdlantern-backup.json");
+        let file = File::create(&oversized).expect("create oversized");
+        file.set_len((super::MAX_BACKUP_FILE_BYTES as u64) + 1)
+            .expect("set len");
+        assert!(read_backup(&oversized).is_err());
+    }
+
+    #[test]
+    fn backup_rejects_noncanonical_decimal_and_mismatched_float_text() {
+        let directory = tempdir().expect("tempdir");
+        let path = directory.path().join("backup.vfdlantern-backup.json");
+        write_backup(&path, &sample_backup()).expect("write");
+        let bytes = fs::read(&path).expect("read");
+        let mut envelope: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+
+        envelope["payload"]["values"][0]["engineering"]["decimal"] =
+            serde_json::Value::String("1.230".to_owned());
+        let payload = serde_jcs::to_vec(&envelope["payload"]).expect("jcs");
+        envelope["payload_sha256"] = serde_json::Value::String(super::sha256_hex(&payload));
+        fs::write(&path, serde_jcs::to_vec(&envelope).expect("jcs")).expect("tamper");
+        assert!(read_backup(&path).is_err());
+
+        let mut envelope: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        let float_index = envelope["payload"]["values"]
+            .as_array()
+            .expect("values")
+            .iter()
+            .position(|value| value["parameter_id"] == "p.float")
+            .expect("float entry");
+        envelope["payload"]["values"][float_index]["engineering"]["text"] =
+            serde_json::Value::String("0".to_owned());
+        let payload = serde_jcs::to_vec(&envelope["payload"]).expect("jcs");
+        envelope["payload_sha256"] = serde_json::Value::String(super::sha256_hex(&payload));
+        fs::write(&path, serde_jcs::to_vec(&envelope).expect("jcs")).expect("tamper");
         assert!(read_backup(&path).is_err());
     }
 }
