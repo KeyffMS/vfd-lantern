@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   disposable-draft:
@@ -96,6 +98,20 @@ jobs:
             --asset-dir target/redownloaded \
             --manifest target/redownloaded/candidate-manifest-v1.json \
             --expected-manifest-sha256 "${{ steps.manifest.outputs.sha256 }}"
+
+      - name: Attest CandidateManifest
+        id: attest-manifest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: target/disposable/assets/candidate-manifest-v1.json
+          show-summary: true
+
+      - name: Verify attestation output
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ steps.attest-manifest.outputs.attestation-id }}"
+          test -n "${{ steps.attest-manifest.outputs.attestation-url }}"
 
       - name: Prove post-freeze mutation invalidates approval
         env:
