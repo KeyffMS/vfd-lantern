@@ -1,0 +1,122 @@
+name: Release candidate finalize
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      draft_release_id:
+        required: true
+        type: string
+      product_artifact_name:
+        required: true
+        default: candidate-product-assets
+        type: string
+      reports_artifact_name:
+        required: true
+        default: candidate-gate-reports
+        type: string
+      required_profile_hashes:
+        description: Comma-separated write-capable profile hashes
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  finalize:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+
+      - name: Download product snapshot S
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.product_artifact_name }}
+          path: target/finalize/assets
+
+      - name: Download gate reports
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.reports_artifact_name }}
+          path: target/finalize/reports
+
+      - name: Validate immutable gate evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=()
+          IFS=',' read -ra hashes <<< "${{ inputs.required_profile_hashes }}"
+          for hash in "${hashes[@]}"; do
+            [[ -z "$hash" ]] || args+=(--required-profile-hash "$hash")
+          done
+          cargo run --locked -q -p lantern-release --example release_evidence -- \
+            validate-gates \
+            --product-asset-dir target/finalize/assets \
+            --reports-dir target/finalize/reports \
+            --commit "${{ inputs.commit }}" \
+            "${args[@]}"
+
+      - name: Freeze snapshot S and create CandidateManifest
+        id: manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e target/finalize/assets/candidate-manifest-v1.json
+          hash=$(cargo run --locked -q -p lantern-release --example candidate_manifest -- \
+            snapshot \
+            --asset-dir target/finalize/assets \
+            --commit "${{ inputs.commit }}" \
+            --version "${{ inputs.version }}" \
+            --draft-release-id "${{ inputs.draft_release_id }}" \
+            --toolchain 'rustc 1.97.1' \
+            --image-digest 'sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132' \
+            --workflow-revision release-candidate-finalize-v1 \
+            --attestation-id "workflow-run:${{ github.run_id }}" \
+            --gate candidate-evidence=passed \
+            --output target/finalize/assets/candidate-manifest-v1.json)
+          echo "sha256=$hash" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$hash" > target/finalize/candidate-manifest.sha256
+
+      - name: Verify exact final asset set S plus CandidateManifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked -q -p lantern-release --example candidate_manifest -- \
+            verify \
+            --asset-dir target/finalize/assets \
+            --manifest target/finalize/assets/candidate-manifest-v1.json \
+            --expected-manifest-sha256 "${{ steps.manifest.outputs.sha256 }}"
+
+      - name: Upload finalized immutable draft snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: finalized-candidate-draft
+          path: target/finalize
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Non-dry-run guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.dry_run }}" != "true" ]]; then
+            echo 'Direct GitHub draft mutation is intentionally disabled in #24; #25 consumes the finalized snapshot and protected external approval anchor.' >&2
+            exit 1
+          fi
+          echo 'dry-run finalizer complete; no real release asset mutated'
