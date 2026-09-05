@@ -16,9 +16,19 @@ on:
         required: true
         default: candidate-product-assets
         type: string
+      product_artifact_run_id:
+        description: Source workflow run ID for dry-run product artifact
+        required: false
+        default: ''
+        type: string
       reports_artifact_name:
         required: true
         default: candidate-gate-reports
+        type: string
+      reports_artifact_run_id:
+        description: Source workflow run ID for dry-run gate report artifact
+        required: false
+        default: ''
         type: string
       product_attestation_ids:
         description: Comma-separated GitHub attestation IDs emitted by release-candidate-build; required for non-dry-run
@@ -56,7 +66,10 @@ jobs:
           [[ "${{ inputs.commit }}" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]]
           [[ "${{ inputs.draft_release_id }}" =~ ^[1-9][0-9]*$ ]]
           test -n "${{ inputs.version }}"
-          if [[ "${{ inputs.dry_run }}" != "true" ]]; then
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            [[ "${{ inputs.product_artifact_run_id }}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${{ inputs.reports_artifact_run_id }}" =~ ^[1-9][0-9]*$ ]]
+          else
             test -n "${{ inputs.product_attestation_ids }}"
           fi
 
@@ -67,19 +80,25 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Prepare dry-run product snapshot
+      - name: Prepare dry-run product snapshot from explicit source run
         if: ${{ inputs.dry_run }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ${{ inputs.product_artifact_name }}
           path: target/finalize/assets
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.product_artifact_run_id }}
 
-      - name: Prepare dry-run gate reports
+      - name: Prepare dry-run gate reports from explicit source run
         if: ${{ inputs.dry_run }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ${{ inputs.reports_artifact_name }}
           path: target/finalize/reports
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.reports_artifact_run_id }}
 
       - name: Download exact live draft asset set by release id
         if: ${{ !inputs.dry_run }}
