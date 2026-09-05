@@ -25,6 +25,9 @@ clap_complete.workspace = true
 clap_mangen.workspace = true
 tempfile.workspace = true
 
+[package.metadata.dist]
+dist = true
+
 [package.metadata.deb]
 section = "utils"
 priority = "optional"
