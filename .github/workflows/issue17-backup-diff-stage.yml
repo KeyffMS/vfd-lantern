@@ -1,0 +1,28 @@
+name: Stage issue 17 backup and diff
+
+on:
+  push:
+    branches:
+      - agent/issue-17-stage-backup-diff
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-17-stage-backup-diff
+          fetch-depth: 0
+      - name: Validate backup and semantic diff slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo check --workspace --all-features --locked
+          cargo test --workspace --all-features --locked
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
+          sh scripts/check-architecture.sh
