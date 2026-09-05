@@ -184,24 +184,30 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Create and re-download draft release
+      - name: Create and re-download draft release by immutable release id
         if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          command -v gh
           tag="v${{ inputs.version }}"
-          ! gh release view "$tag" >/dev/null 2>&1
           printf 'Candidate built from %s. Final publication requires #25 gates.\n' "${{ inputs.commit }}" > target/release-notes.txt
-          gh release create "$tag" --draft --target "${{ inputs.commit }}" --title "VFD Lantern ${{ inputs.version }}" --notes-file target/release-notes.txt
-          gh release upload "$tag" target/candidate-assets/*
-          rm -rf target/redownloaded
-          mkdir -p target/redownloaded
-          gh release download "$tag" --dir target/redownloaded
+          body=$(cat target/release-notes.txt)
+          release=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$tag" \
+            -f target_commitish="${{ inputs.commit }}" \
+            -f name="VFD Lantern ${{ inputs.version }}" \
+            -f body="$body" \
+            -F draft=true \
+            -F prerelease=false)
+          release_id=$(printf '%s' "$release" | jq -r '.id')
+          test -n "$release_id"
+          test "$release_id" != null
+          sh scripts/release/github-draft-assets.sh upload-dir "$release_id" target/candidate-assets
+          sh scripts/release/github-draft-assets.sh download-all "$release_id" target/redownloaded
           (cd target/redownloaded && sha256sum -c SHA256SUMS)
-          gh api "repos/${{ github.repository }}/releases/tags/$tag" --jq '.id' > target/draft-release-id.txt
+          printf '%s\n' "$release_id" > target/draft-release-id.txt
 
       - name: Dry-run draft policy
         if: ${{ inputs.dry_run }}
