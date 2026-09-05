@@ -136,7 +136,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install pinned Rust and release tools
+      - name: Install pinned Rust
         run: |
           rustup toolchain install 1.97.1 --profile minimal
           rustup default 1.97.1
@@ -169,6 +169,13 @@ jobs:
           (cd target/candidate-assets && sha256sum -c SHA256SUMS)
           test ! -e target/candidate-assets/candidate-manifest-v1.json
 
+      - name: Attest assembled product snapshot
+        id: attest-product
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: target/candidate-assets/*
+          show-summary: true
+
       - name: Upload candidate product snapshot
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -198,4 +205,29 @@ jobs:
 
       - name: Dry-run draft policy
         if: ${{ inputs.dry_run }}
-        run: echo 'dry-run validated build/assembly/reproducibility; no GitHub Release created'
+        run: echo 'dry-run validated build/assembly/reproducibility and product attestation; no GitHub Release created'
+
+      - name: Persist candidate build reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/candidate-reference
+          {
+            echo "commit=${{ inputs.commit }}"
+            echo "version=${{ inputs.version }}"
+            echo "product_attestation_id=${{ steps.attest-product.outputs.attestation-id }}"
+            if [ -f target/draft-release-id.txt ]; then
+              echo "draft_release_id=$(cat target/draft-release-id.txt)"
+              echo "tag=v${{ inputs.version }}"
+            else
+              echo 'draft_release_id=DRY_RUN'
+            fi
+          } > target/candidate-reference/reference.txt
+
+      - name: Upload candidate build reference
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-build-reference
+          path: target/candidate-reference/reference.txt
+          if-no-files-found: error
+          retention-days: 14
