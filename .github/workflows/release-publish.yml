@@ -56,6 +56,7 @@ jobs:
           path: target/approved
 
       - name: Verify external CandidateManifest anchor and exact snapshot
+        id: approved
         shell: bash
         run: |
           set -euo pipefail
@@ -66,16 +67,21 @@ jobs:
             --asset-dir target/approved/assets \
             --manifest "$manifest" \
             --expected-manifest-sha256 "${{ inputs.expected_manifest_sha256 }}"
-          grep -Fq '"draft_release_id":${{ inputs.draft_release_id }}' "$manifest"
-          grep -Fq '"commit":"${{ inputs.commit }}"' "$manifest"
+          test "$(jq -r '.draft_release_id' "$manifest")" = "${{ inputs.draft_release_id }}"
+          test "$(jq -r '.commit' "$manifest")" = "${{ inputs.commit }}"
+          version=$(jq -r '.version' "$manifest")
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
-      - name: Verify and promote the same GitHub draft
-        if: ${{ !inputs.dry_run }}
+      - name: Verify live draft identity and exact asset set
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RELEASE_ID: ${{ inputs.draft_release_id }}
           EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
+          EXPECTED_TAG: ${{ steps.approved.outputs.tag }}
+          EXPECTED_COMMIT: ${{ inputs.commit }}
         shell: bash
         run: |
           set -euo pipefail
@@ -83,6 +89,8 @@ jobs:
           command -v jq
           release=$(gh api "repos/$REPO/releases/$RELEASE_ID")
           test "$(printf '%s' "$release" | jq -r '.draft')" = true
+          test "$(printf '%s' "$release" | jq -r '.tag_name')" = "$EXPECTED_TAG"
+          test "$(printf '%s' "$release" | jq -r '.target_commitish')" = "$EXPECTED_COMMIT"
           live=target/live-draft
           rm -rf "$live"
           mkdir -p "$live"
@@ -98,11 +106,23 @@ jobs:
             --manifest "$live/candidate-manifest-v1.json" \
             --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256"
           cmp "$live/candidate-manifest-v1.json" target/approved/assets/candidate-manifest-v1.json
+
+      - name: Promote the same verified draft
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ inputs.draft_release_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
           gh api --method PATCH "repos/$REPO/releases/$RELEASE_ID" -f draft=false >/dev/null
+          published=$(gh api "repos/$REPO/releases/$RELEASE_ID")
+          test "$(printf '%s' "$published" | jq -r '.draft')" = false
 
       - name: Dry-run publication proof
         if: ${{ inputs.dry_run }}
         shell: bash
         run: |
           set -euo pipefail
-          echo 'dry-run verified exact S ∪ {CandidateManifest}; same-draft promotion intentionally not executed'
+          echo 'dry-run verified release ID, tag, target commit, external CandidateManifest anchor and exact S ∪ {CandidateManifest}; no build/upload occurred'
