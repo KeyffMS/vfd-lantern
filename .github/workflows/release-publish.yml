@@ -13,6 +13,10 @@ on:
         required: true
         default: finalized-candidate-draft
         type: string
+      finalized_artifact_run_id:
+        description: Finalizer workflow run ID containing the protected approval artifact
+        required: true
+        type: string
       expected_manifest_sha256:
         description: External protected approval anchor
         required: true
@@ -41,6 +45,7 @@ jobs:
           [[ "${{ inputs.commit }}" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]]
           [[ "${{ inputs.expected_manifest_sha256 }}" =~ ^[0-9a-f]{64}$ ]]
           [[ "${{ inputs.draft_release_id }}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${{ inputs.finalized_artifact_run_id }}" =~ ^[1-9][0-9]*$ ]]
 
       - name: Check out exact candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -49,19 +54,24 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Download externally approved finalized snapshot
+      - name: Download protected finalizer approval from explicit source run
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ${{ inputs.finalized_artifact_name }}
           path: target/approved
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.finalized_artifact_run_id }}
 
-      - name: Verify external CandidateManifest anchor and exact snapshot
+      - name: Verify external CandidateManifest anchor and approved snapshot
         id: approved
         shell: bash
         run: |
           set -euo pipefail
           manifest=target/approved/assets/candidate-manifest-v1.json
+          approval=target/approved/approval-record.txt
           test -f "$manifest"
+          test -f "$approval"
           cargo run --locked -q -p lantern-release --example candidate_manifest -- \
             verify \
             --asset-dir target/approved/assets \
@@ -69,15 +79,18 @@ jobs:
             --expected-manifest-sha256 "${{ inputs.expected_manifest_sha256 }}"
           test "$(jq -r '.draft_release_id' "$manifest")" = "${{ inputs.draft_release_id }}"
           test "$(jq -r '.commit' "$manifest")" = "${{ inputs.commit }}"
+          grep -Fxq "draft_release_id=${{ inputs.draft_release_id }}" "$approval"
+          grep -Fxq "commit=${{ inputs.commit }}" "$approval"
+          grep -Fxq "candidate_manifest_sha256=${{ inputs.expected_manifest_sha256 }}" "$approval"
           version=$(jq -r '.version' "$manifest")
           test -n "$version"
+          grep -Fxq "version=$version" "$approval"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
       - name: Verify live draft identity and exact asset set
         env:
           GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
           RELEASE_ID: ${{ inputs.draft_release_id }}
           EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
           EXPECTED_TAG: ${{ steps.approved.outputs.tag }}
@@ -85,39 +98,31 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          command -v gh
-          command -v jq
-          release=$(gh api "repos/$REPO/releases/$RELEASE_ID")
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")
+          test "$(printf '%s' "$release" | jq -r '.id')" = "$RELEASE_ID"
           test "$(printf '%s' "$release" | jq -r '.draft')" = true
           test "$(printf '%s' "$release" | jq -r '.tag_name')" = "$EXPECTED_TAG"
           test "$(printf '%s' "$release" | jq -r '.target_commitish')" = "$EXPECTED_COMMIT"
-          live=target/live-draft
-          rm -rf "$live"
-          mkdir -p "$live"
-          gh api --paginate "repos/$REPO/releases/$RELEASE_ID/assets?per_page=100" | jq -s 'add' > target/live-assets.json
-          jq -r '.[] | [.id,.name] | @tsv' target/live-assets.json | while IFS="	" read -r id name; do
-            case "$name" in ''|*/*|*\\*) echo "invalid release asset name: $name" >&2; exit 1;; esac
-            gh api -H 'Accept: application/octet-stream' "repos/$REPO/releases/assets/$id" > "$live/$name"
-          done
-          test -f "$live/candidate-manifest-v1.json"
+          sh scripts/release/github-draft-assets.sh download-all "$RELEASE_ID" target/live-draft
+          test -f target/live-draft/candidate-manifest-v1.json
           cargo run --locked -q -p lantern-release --example candidate_manifest -- \
             verify \
-            --asset-dir "$live" \
-            --manifest "$live/candidate-manifest-v1.json" \
+            --asset-dir target/live-draft \
+            --manifest target/live-draft/candidate-manifest-v1.json \
             --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256"
-          cmp "$live/candidate-manifest-v1.json" target/approved/assets/candidate-manifest-v1.json
+          cmp target/live-draft/candidate-manifest-v1.json target/approved/assets/candidate-manifest-v1.json
 
       - name: Promote the same verified draft
         if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
           RELEASE_ID: ${{ inputs.draft_release_id }}
         shell: bash
         run: |
           set -euo pipefail
-          gh api --method PATCH "repos/$REPO/releases/$RELEASE_ID" -f draft=false >/dev/null
-          published=$(gh api "repos/$REPO/releases/$RELEASE_ID")
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false >/dev/null
+          published=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")
+          test "$(printf '%s' "$published" | jq -r '.id')" = "$RELEASE_ID"
           test "$(printf '%s' "$published" | jq -r '.draft')" = false
 
       - name: Dry-run publication proof
@@ -125,4 +130,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo 'dry-run verified release ID, tag, target commit, external CandidateManifest anchor and exact S ∪ {CandidateManifest}; no build/upload occurred'
+          echo 'dry-run verified finalizer run, release ID, tag, target commit, external CandidateManifest anchor and exact S ∪ {CandidateManifest}; no build/upload occurred'
