@@ -1,0 +1,11 @@
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.32.0"
+ci = "github"
+installers = []
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+precise-builds = true
+github-attestations = true
+include = ["README.md", "CHANGELOG.md", "LICENSE", "SECURITY.md"]
