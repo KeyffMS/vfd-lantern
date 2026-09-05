@@ -1,0 +1,108 @@
+name: Release publish same draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        required: true
+        type: string
+      draft_release_id:
+        required: true
+        type: string
+      finalized_artifact_name:
+        required: true
+        default: finalized-candidate-draft
+        type: string
+      expected_manifest_sha256:
+        description: External protected approval anchor
+        required: true
+        type: string
+      dry_run:
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: release-publish-${{ inputs.draft_release_id }}
+  cancel-in-progress: false
+
+jobs:
+  verify-and-publish:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - name: Validate immutable inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.commit }}" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]]
+          [[ "${{ inputs.expected_manifest_sha256 }}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${{ inputs.draft_release_id }}" =~ ^[1-9][0-9]*$ ]]
+
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download externally approved finalized snapshot
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.finalized_artifact_name }}
+          path: target/approved
+
+      - name: Verify external CandidateManifest anchor and exact snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=target/approved/assets/candidate-manifest-v1.json
+          test -f "$manifest"
+          cargo run --locked -q -p lantern-release --example candidate_manifest -- \
+            verify \
+            --asset-dir target/approved/assets \
+            --manifest "$manifest" \
+            --expected-manifest-sha256 "${{ inputs.expected_manifest_sha256 }}"
+          grep -Fq '"draft_release_id":${{ inputs.draft_release_id }}' "$manifest"
+          grep -Fq '"commit":"${{ inputs.commit }}"' "$manifest"
+
+      - name: Verify and promote the same GitHub draft
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ inputs.draft_release_id }}
+          EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v gh
+          command -v jq
+          release=$(gh api "repos/$REPO/releases/$RELEASE_ID")
+          test "$(printf '%s' "$release" | jq -r '.draft')" = true
+          live=target/live-draft
+          rm -rf "$live"
+          mkdir -p "$live"
+          gh api --paginate "repos/$REPO/releases/$RELEASE_ID/assets?per_page=100" | jq -s 'add' > target/live-assets.json
+          jq -r '.[] | [.id,.name] | @tsv' target/live-assets.json | while IFS="	" read -r id name; do
+            case "$name" in ''|*/*|*\\*) echo "invalid release asset name: $name" >&2; exit 1;; esac
+            gh api -H 'Accept: application/octet-stream' "repos/$REPO/releases/assets/$id" > "$live/$name"
+          done
+          test -f "$live/candidate-manifest-v1.json"
+          cargo run --locked -q -p lantern-release --example candidate_manifest -- \
+            verify \
+            --asset-dir "$live" \
+            --manifest "$live/candidate-manifest-v1.json" \
+            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256"
+          cmp "$live/candidate-manifest-v1.json" target/approved/assets/candidate-manifest-v1.json
+          gh api --method PATCH "repos/$REPO/releases/$RELEASE_ID" -f draft=false >/dev/null
+
+      - name: Dry-run publication proof
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'dry-run verified exact S ∪ {CandidateManifest}; same-draft promotion intentionally not executed'
