@@ -1,0 +1,63 @@
+name: Documentation Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'book.toml'
+      - 'docs/**'
+      - '.github/workflows/docs-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Install pinned mdBook
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(awk -F ' = ' '
+            /^\[tools\]$/ { in_tools=1; next }
+            /^\[/ { if (in_tools) exit }
+            in_tools && $1 == "mdbook" { gsub(/"/, "", $2); print $2; found=1; exit }
+            END { if (!found) exit 1 }
+          ' tools.lock.toml)
+          cargo install --locked --version "$version" mdbook
+
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d
+
+      - name: Build mdBook
+        run: mdbook build
+
+      - name: Upload exact Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
+        with:
+          path: target/book
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-24.04
+    needs: build
+    steps:
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346
