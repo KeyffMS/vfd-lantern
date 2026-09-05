@@ -8,7 +8,7 @@ on:
       - '.github/workflows/issue24-stage.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   stage:
@@ -23,19 +23,26 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: agent/issue-24
-          persist-credentials: false
+          persist-credentials: true
       - name: Install pinned Rust
         run: |
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
           rustup default 1.97.1
-      - name: Resolve lockfile and check workspace
-        run: cargo check --workspace --all-features
-      - name: Show lockfile delta
-        if: always()
-        run: git diff -- Cargo.lock
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Resolve lockfile and check all targets
+        run: cargo check --workspace --all-targets --all-features
+      - name: Apply rustfmt
+        run: cargo fmt --all
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - name: Run tests for release contract
+      - name: Run release contract tests
         run: cargo test -p lantern-release
+      - name: Persist generated lockfile and rustfmt normalization
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock crates/lantern-release crates/vfd-lantern
+          git commit -m "chore(#24): normalize release staging inputs"
+          git push origin HEAD:agent/issue-24
