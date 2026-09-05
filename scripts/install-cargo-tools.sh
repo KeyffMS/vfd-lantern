@@ -51,6 +51,14 @@ case "$SCOPE" in
         install_tool cargo-audit
         install_tool cargo-vet
         ;;
+    release)
+        install_tool cargo-cyclonedx
+        install_tool cargo-about
+        install_tool cargo-auditable
+        install_tool cargo-dist
+        install_tool cargo-deb
+        install_tool mdbook
+        ;;
     *)
         printf 'unsupported tool scope: %s\n' "$SCOPE" >&2
         exit 1
