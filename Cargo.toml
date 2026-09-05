@@ -7,6 +7,7 @@ members = [
     "crates/lantern-transport",
     "crates/lantern-tui",
     "crates/lantern-sim",
+    "crates/lantern-release",
     "crates/vfd-lantern",
 ]
 default-members = ["crates/vfd-lantern"]
