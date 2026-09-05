@@ -1,0 +1,129 @@
+name: Issue 24 disposable draft acceptance
+
+on:
+  push:
+    branches:
+      - agent/issue-24
+    paths:
+      - '.github/workflows/issue24-disposable-draft-acceptance.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  disposable-draft:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact triggering commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+
+      - name: Create disposable draft and upload snapshot S
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="issue24-pipeline-test-${GITHUB_RUN_ID}"
+          printf '%s\n' "$tag" > "$RUNNER_TEMP/issue24-tag"
+          mkdir -p target/disposable/assets
+          printf 'amd64 pipeline fixture\ncommit=%s\n' "$GITHUB_SHA" > target/disposable/assets/product-amd64.txt
+          printf 'arm64 pipeline fixture\ncommit=%s\n' "$GITHUB_SHA" > target/disposable/assets/product-arm64.txt
+          printf '{"schema_version":1,"status":"passed","run_id":%s}\n' "$GITHUB_RUN_ID" > target/disposable/assets/package-gate.json
+          gh release create "$tag" \
+            --draft \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Issue 24 pipeline test $GITHUB_RUN_ID" \
+            --notes 'Disposable #24 release infrastructure acceptance. Not a product release.'
+          gh release upload "$tag" target/disposable/assets/*
+          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.id')
+          test -n "$release_id"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Freeze S and upload CandidateManifest as the only final asset
+        id: manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          hash=$(cargo run --locked -q -p lantern-release --example candidate_manifest -- \
+            snapshot \
+            --asset-dir target/disposable/assets \
+            --commit "$GITHUB_SHA" \
+            --version 0.0.0-pipeline-test \
+            --draft-release-id "${{ steps.draft.outputs.release_id }}" \
+            --toolchain 'rustc 1.97.1' \
+            --image-digest 'sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132' \
+            --workflow-revision issue24-disposable-draft-v1 \
+            --attestation-id "workflow-run:${GITHUB_RUN_ID}" \
+            --gate package-test=passed \
+            --output target/disposable/assets/candidate-manifest-v1.json)
+          test -n "$hash"
+          echo "sha256=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Upload manifest, re-download and validate exact S plus manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.draft.outputs.tag }}"
+          gh release upload "$tag" target/disposable/assets/candidate-manifest-v1.json
+          rm -rf target/redownloaded
+          mkdir -p target/redownloaded
+          gh release download "$tag" --dir target/redownloaded
+          cargo run --locked -q -p lantern-release --example candidate_manifest -- \
+            verify \
+            --asset-dir target/redownloaded \
+            --manifest target/redownloaded/candidate-manifest-v1.json \
+            --expected-manifest-sha256 "${{ steps.manifest.outputs.sha256 }}"
+
+      - name: Prove post-freeze mutation invalidates approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.draft.outputs.tag }}"
+          printf 'forbidden post-freeze mutation\n' > target/unexpected-after-freeze.txt
+          gh release upload "$tag" target/unexpected-after-freeze.txt
+          rm -rf target/mutated
+          mkdir -p target/mutated
+          gh release download "$tag" --dir target/mutated
+          if cargo run --locked -q -p lantern-release --example candidate_manifest -- \
+            verify \
+            --asset-dir target/mutated \
+            --manifest target/mutated/candidate-manifest-v1.json \
+            --expected-manifest-sha256 "${{ steps.manifest.outputs.sha256 }}"
+          then
+            echo 'post-freeze mutation unexpectedly remained valid' >&2
+            exit 1
+          fi
+          echo 'post-freeze mutation correctly invalidated approval'
+
+      - name: Cleanup disposable release and tag
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +e
+          if [ -f "$RUNNER_TEMP/issue24-tag" ]; then
+            tag=$(cat "$RUNNER_TEMP/issue24-tag")
+            release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.id' 2>/dev/null)
+            if [ -n "$release_id" ]; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"
+            fi
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" >/dev/null 2>&1 || true
+          fi
