@@ -31,6 +31,9 @@ concurrency:
   group: release-candidate-build-${{ inputs.commit }}-${{ inputs.version }}
   cancel-in-progress: false
 
+env:
+  RELEASE_IMAGE_DIGEST: sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
+
 jobs:
   build:
     name: Native Trixie package / ${{ matrix.arch }}
@@ -59,13 +62,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify frozen qualification input predates build
+      - name: Verify frozen qualification input
         shell: bash
         run: |
           set -euo pipefail
           test -f "${{ inputs.qualification_index }}"
           test "$(git rev-parse HEAD)" = "${{ inputs.commit }}"
-          test "$(git log -1 --format=%H -- "${{ inputs.qualification_index }}")" != ""
+          test -n "$(git log -1 --format=%H -- "${{ inputs.qualification_index }}")"
 
       - name: Install pinned Rust and release tools
         shell: bash
@@ -77,45 +80,52 @@ jobs:
           export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
           sh scripts/install-cargo-tools.sh release
 
-      - name: Build deterministic product assets
+      - name: Build deterministic product stage
         shell: bash
         env:
-          VFD_LANTERN_VERSION: ${{ inputs.version }}
-          VFD_LANTERN_QUALIFICATION_INDEX: ${{ inputs.qualification_index }}
-          VFD_LANTERN_RELEASE_ARCH: ${{ matrix.arch }}
+          VFD_RELEASE_COMMIT: ${{ inputs.commit }}
+          VFD_RELEASE_VERSION: ${{ inputs.version }}
+          VFD_RELEASE_QUALIFICATION_INDEX: ${{ inputs.qualification_index }}
+          VFD_RELEASE_IMAGE_DIGEST: ${{ env.RELEASE_IMAGE_DIGEST }}
+          VFD_RELEASE_ARCH: ${{ matrix.arch }}
+          VFD_RELEASE_TEST_MODE: ${{ inputs.dry_run && '1' || '0' }}
         run: |
           set -euo pipefail
-          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
-          sh scripts/release/build-product.sh "target/release-candidate/${{ matrix.arch }}"
-          sh scripts/release/finalize-product-assets.sh "target/release-candidate/${{ matrix.arch }}"
+          sh scripts/release/build-product.sh
+          test -d "target/release-stage/${{ matrix.arch }}/arch"
+          test -d "target/release-stage/${{ matrix.arch }}/common"
 
       - name: Verify two clean builds are reproducible
         shell: bash
         env:
-          VFD_LANTERN_VERSION: ${{ inputs.version }}
-          VFD_LANTERN_QUALIFICATION_INDEX: ${{ inputs.qualification_index }}
-          VFD_LANTERN_RELEASE_ARCH: ${{ matrix.arch }}
+          VFD_RELEASE_COMMIT: ${{ inputs.commit }}
+          VFD_RELEASE_VERSION: ${{ inputs.version }}
+          VFD_RELEASE_QUALIFICATION_INDEX: ${{ inputs.qualification_index }}
+          VFD_RELEASE_IMAGE_DIGEST: ${{ env.RELEASE_IMAGE_DIGEST }}
+          VFD_RELEASE_ARCH: ${{ matrix.arch }}
+          VFD_RELEASE_TEST_MODE: ${{ inputs.dry_run && '1' || '0' }}
         run: |
           set -euo pipefail
-          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
-          rm -rf target/repro-a target/repro-b
-          sh scripts/release/build-product.sh target/repro-a
-          sh scripts/release/finalize-product-assets.sh target/repro-a
+          rm -rf .issue24-repro-a .issue24-repro-b
+          cp -a "target/release-stage/${{ matrix.arch }}" .issue24-repro-a
           cargo clean
-          sh scripts/release/build-product.sh target/repro-b
-          sh scripts/release/finalize-product-assets.sh target/repro-b
-          diff -u <(cd target/repro-a && sha256sum * | sort -k2) <(cd target/repro-b && sha256sum * | sort -k2)
+          sh scripts/release/build-product.sh
+          cp -a "target/release-stage/${{ matrix.arch }}" .issue24-repro-b
+          (cd .issue24-repro-a && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > /tmp/repro-a.sha256
+          (cd .issue24-repro-b && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > /tmp/repro-b.sha256
+          diff -u /tmp/repro-a.sha256 /tmp/repro-b.sha256
+          rm -rf .issue24-repro-a .issue24-repro-b
 
-      - name: Upload architecture assets for assembly
+      - name: Upload architecture stage
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: candidate-${{ matrix.arch }}
-          path: target/release-candidate/${{ matrix.arch }}
+          path: target/release-stage/${{ matrix.arch }}
           if-no-files-found: error
           retention-days: 14
 
   assemble:
-    name: Assemble immutable draft input set
+    name: Assemble immutable product snapshot
     needs: build
     runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
     steps:
@@ -126,25 +136,40 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Download native build assets
+      - name: Install pinned Rust and release tools
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+
+      - name: Download amd64 stage
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          pattern: candidate-*
-          path: target/candidate-input
-          merge-multiple: true
+          name: candidate-amd64
+          path: target/native/amd64
 
-      - name: Assemble candidate product snapshot
+      - name: Download arm64 stage
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: candidate-arm64
+          path: target/native/arm64
+
+      - name: Assemble and finalize candidate product assets
         shell: bash
         env:
-          VFD_LANTERN_VERSION: ${{ inputs.version }}
-          VFD_LANTERN_QUALIFICATION_INDEX: ${{ inputs.qualification_index }}
+          VFD_AMD64_STAGE: target/native/amd64
+          VFD_ARM64_STAGE: target/native/arm64
+          VFD_CANDIDATE_PRODUCT_DIR: target/candidate-assets
+          VFD_RELEASE_COMMIT: ${{ inputs.commit }}
+          VFD_RELEASE_VERSION: ${{ inputs.version }}
+          VFD_RELEASE_IMAGE_DIGEST: ${{ env.RELEASE_IMAGE_DIGEST }}
         run: |
           set -euo pipefail
-          sh scripts/release/assemble-matrix.sh target/candidate-input target/candidate-assets
-          test -f target/candidate-assets/SHA256SUMS
-          sha256sum -c target/candidate-assets/SHA256SUMS
+          sh scripts/release/assemble-matrix.sh
+          sh scripts/release/finalize-product-assets.sh
+          (cd target/candidate-assets && sha256sum -c SHA256SUMS)
+          test ! -e target/candidate-assets/candidate-manifest-v1.json
 
-      - name: Upload candidate build output
+      - name: Upload candidate product snapshot
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: candidate-product-assets
@@ -152,13 +177,25 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Draft creation policy
+      - name: Create and re-download draft release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
-            echo 'dry-run: product snapshot validated; no GitHub Release created'
-          else
-            echo 'non-dry-run draft creation is reserved for the protected #25 invocation' >&2
-            exit 1
-          fi
+          command -v gh
+          tag="v${{ inputs.version }}"
+          ! gh release view "$tag" >/dev/null 2>&1
+          printf 'Candidate built from %s. Final publication requires #25 gates.\n' "${{ inputs.commit }}" > target/release-notes.txt
+          gh release create "$tag" --draft --target "${{ inputs.commit }}" --title "VFD Lantern ${{ inputs.version }}" --notes-file target/release-notes.txt
+          gh release upload "$tag" target/candidate-assets/*
+          rm -rf target/redownloaded
+          mkdir -p target/redownloaded
+          gh release download "$tag" --dir target/redownloaded
+          (cd target/redownloaded && sha256sum -c SHA256SUMS)
+          gh api "repos/${{ github.repository }}/releases/tags/$tag" --jq '.id' > target/draft-release-id.txt
+
+      - name: Dry-run draft policy
+        if: ${{ inputs.dry_run }}
+        run: echo 'dry-run validated build/assembly/reproducibility; no GitHub Release created'
