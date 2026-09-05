@@ -195,7 +195,8 @@ pub enum SessionControlError {
     Other(String),
 }
 
-/// Narrow write-specific session boundary. #16 owns no production adapter for this port.
+/// Narrow write-specific session boundary. Production adapters fail closed unless they implement
+/// the restore operation methods introduced by #17.
 pub trait SessionControlPort: Send + Sync {
     fn snapshot(&self) -> WriteSessionSnapshot;
 
@@ -207,9 +208,51 @@ pub trait SessionControlPort: Send + Sync {
 
     fn finish_single_write(&self, outcome: WriteOutcome);
 
+    fn begin_restore(
+        &self,
+        _operation_id: lantern_domain::OperationId,
+        _plan_hash: &str,
+    ) -> Result<(), SessionControlError> {
+        Err(SessionControlError::PreconditionChanged)
+    }
+
+    fn restore_matches(
+        &self,
+        _operation_id: lantern_domain::OperationId,
+        _plan_hash: &str,
+        _next_index: usize,
+    ) -> bool {
+        false
+    }
+
+    fn advance_restore(
+        &self,
+        _operation_id: lantern_domain::OperationId,
+        _plan_hash: &str,
+        _next_index: usize,
+    ) -> Result<(), SessionControlError> {
+        Err(SessionControlError::PreconditionChanged)
+    }
+
+    fn finish_restore(
+        &self,
+        _operation_id: lantern_domain::OperationId,
+        _plan_hash: &str,
+    ) -> Result<(), SessionControlError> {
+        Err(SessionControlError::PreconditionChanged)
+    }
+
+    fn abort_restore(
+        &self,
+        _operation_id: lantern_domain::OperationId,
+        _plan_hash: &str,
+    ) -> Result<(), SessionControlError> {
+        Err(SessionControlError::PreconditionChanged)
+    }
+
     fn disarm(&self);
 
-    /// Must reset an in-flight single-write operation to Idle, mark audit Degraded and disarm.
+    /// Must reset an in-flight operation to Idle, mark audit Degraded and disarm.
     fn degrade_audit_and_disarm(&self);
 
     /// Best-effort diagnostics only. Implementations must not recursively persist an audit record.
