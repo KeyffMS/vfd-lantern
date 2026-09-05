@@ -22,10 +22,10 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Check out exact issue branch
+      - name: Check out exact triggering commit
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: agent/issue-24
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -53,6 +53,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
           cargo metadata --locked --format-version 1 --no-deps >/dev/null
           cargo fmt --all -- --check
           cargo test --locked -p lantern-release
@@ -147,10 +148,10 @@ jobs:
     needs: native-package
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out exact issue branch
+      - name: Check out exact triggering commit
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: agent/issue-24
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -171,6 +172,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
           export VFD_AMD64_STAGE=target/native/issue24-native-amd64
           export VFD_ARM64_STAGE=target/native/issue24-native-arm64
           export VFD_CANDIDATE_PRODUCT_DIR=target/candidate-product
