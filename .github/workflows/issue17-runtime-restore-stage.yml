@@ -16,22 +16,33 @@ jobs:
         with:
           ref: agent/issue-17-stage-runtime
           fetch-depth: 0
-      - name: Validate and persist production restore session lifecycle
+      - name: Validate and persist production backup restore flow
         shell: bash
         run: |
           set -euo pipefail
           rustc --edition=2024 .github/scripts/issue17_runtime_restore_stage.rs -o /tmp/issue17-runtime-restore-stage
           /tmp/issue17-runtime-restore-stage
+          rustc --edition=2024 .github/scripts/issue17_backup_restore_application_stage.rs -o /tmp/issue17-backup-restore-application-stage
+          /tmp/issue17-backup-restore-application-stage
+          rustc --edition=2024 .github/scripts/issue17_backup_restore_tui_stage.rs -o /tmp/issue17-backup-restore-tui-stage
+          /tmp/issue17-backup-restore-tui-stage
+          rustc --edition=2024 .github/scripts/issue17_backup_restore_runtime_flow_stage.rs -o /tmp/issue17-backup-restore-runtime-flow-stage
+          /tmp/issue17-backup-restore-runtime-flow-stage
           cargo fmt --all
           cargo check --workspace --all-features --locked
           cargo test --workspace --all-features --locked
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
           RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
           sh scripts/check-architecture.sh
-          git add crates/vfd-lantern/src/write_runtime.rs
+          git add crates/lantern-app/src/backup.rs crates/lantern-app/src/backup_restore_flow.rs \
+            crates/lantern-app/src/application.rs crates/lantern-app/src/lib.rs \
+            crates/lantern-app/src/write_flow.rs crates/lantern-tui/src/ui_state.rs \
+            crates/lantern-tui/src/parameter_keymap.rs crates/lantern-tui/src/keymap.rs \
+            crates/lantern-tui/src/screens.rs crates/vfd-lantern/src/write_runtime.rs \
+            crates/vfd-lantern/src/connection_runtime.rs crates/vfd-lantern/src/main.rs
           if ! git diff --cached --quiet; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m 'feat(#17): bind production session runtime to restore permit lifecycle'
+            git commit -m 'feat(#17): wire backup and guarded restore through production TUI'
             git push origin HEAD:agent/issue-17-stage-runtime
           fi
