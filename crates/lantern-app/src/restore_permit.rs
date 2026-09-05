@@ -103,7 +103,14 @@ impl RestoreOperationPermit {
         self.token.take()
     }
 
-    pub(crate) fn into_parts(mut self) -> (Option<OperationToken>, ApprovedRestorePlan, usize, Vec<RestoreStepResult>) {
+    pub(crate) fn into_parts(
+        mut self,
+    ) -> (
+        Option<OperationToken>,
+        ApprovedRestorePlan,
+        usize,
+        Vec<RestoreStepResult>,
+    ) {
         self.active = false;
         (self.token.take(), self.plan, self.next_index, self.results)
     }

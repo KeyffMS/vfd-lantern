@@ -10,7 +10,7 @@ use lantern_domain::{
     ParameterAccess, ParameterId, QuantityKind, RawRegisters, RequestId, RequiredDriveState,
     RestoreEligibility, RestorePolicy, TelemetryQuality, UtcTimestamp,
 };
-use lantern_profile::{ReadBackPolicy, ValidatedDeviceProfile, ValidatedParameter};
+use lantern_profile::{ValidatedDeviceProfile, ValidatedParameter};
 use thiserror::Error;
 
 use crate::{
@@ -248,12 +248,6 @@ pub fn restore_eligibility(parameter: &ValidatedParameter) -> RestoreEligibility
         .is_some_and(ModbusFunction::is_write)
     {
         return RestoreEligibility::MissingWriteFunction;
-    }
-    if !matches!(
-        parameter.read_back(),
-        ReadBackPolicy::ExactRaw | ReadBackPolicy::FloatExactBits
-    ) {
-        return RestoreEligibility::MissingReadBackPolicy;
     }
     RestoreEligibility::Eligible
 }

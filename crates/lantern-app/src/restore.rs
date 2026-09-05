@@ -155,6 +155,8 @@ pub enum RestorePlanError {
     InvalidBackupParameter(ParameterId),
     #[error("restore plan contains no eligible changed parameters")]
     NoEligibleChanges,
+    #[error("restore precondition changed while the plan was being prepared or confirmed")]
+    PreconditionChanged,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -198,7 +200,10 @@ pub(crate) fn build_restore_plan(
     validate_backup_values(current, profile)?;
 
     let diff = semantic_backup_diff(source, current, Some(profile));
-    let by_id: BTreeMap<&ParameterId, _> = diff.iter().map(|entry| (&entry.parameter_id, entry)).collect();
+    let by_id: BTreeMap<&ParameterId, _> = diff
+        .iter()
+        .map(|entry| (&entry.parameter_id, entry))
+        .collect();
     let restore_order: BTreeSet<&ParameterId> = profile.restore_order().iter().collect();
     let mut steps = Vec::new();
     let mut skipped = Vec::new();
@@ -293,19 +298,24 @@ fn validate_backup_values(
 ) -> Result<(), RestorePlanError> {
     for (parameter_id, value) in &backup.values {
         let Some(parameter) = profile.parameter(parameter_id) else {
-            return Err(RestorePlanError::InvalidBackupParameter(parameter_id.clone()));
+            return Err(RestorePlanError::InvalidBackupParameter(
+                parameter_id.clone(),
+            ));
         };
         if value.quality != TelemetryQuality::Good
             || value.code != parameter.code()
             || value.unit != parameter.unit().as_str()
             || value.raw.as_slice().len() != usize::from(parameter.block().count().get())
-            || parameter.codec().decode(value.raw.as_slice()).ok().as_ref() != Some(&value.engineering)
+            || parameter.codec().decode(value.raw.as_slice()).ok().as_ref()
+                != Some(&value.engineering)
             || parameter
                 .forbidden_raw()
                 .iter()
                 .any(|raw| raw == &value.raw)
         {
-            return Err(RestorePlanError::InvalidBackupParameter(parameter_id.clone()));
+            return Err(RestorePlanError::InvalidBackupParameter(
+                parameter_id.clone(),
+            ));
         }
     }
     Ok(())
@@ -441,7 +451,10 @@ mod tests {
         .expect("plan");
         assert_eq!(plan.steps().len(), 1);
         assert_eq!(plan.steps()[0].index(), 0);
-        assert_eq!(plan.steps()[0].parameter_id().as_str(), "config.acceleration");
+        assert_eq!(
+            plan.steps()[0].parameter_id().as_str(),
+            "config.acceleration"
+        );
         assert_eq!(plan.steps()[0].expected_old_raw().as_slice(), &[101]);
         assert_eq!(plan.steps()[0].target_raw().as_slice(), &[100]);
         assert_eq!(plan.plan_hash().len(), 64);
