@@ -1,9 +1,15 @@
+use std::path::PathBuf;
+
 use lantern_domain::{PlanId, WriteIntent};
 
-use crate::{WriteConfirmation, WriteSessionSnapshot};
+use crate::{
+    ApprovedRestorePlan, BackupRuntimeMetadata, RestoreConfirmation, WriteConfirmation,
+    WriteSessionSnapshot,
+};
 
-/// Application-owned effects for the production guarded-write boundary. The composition root is
-/// the only layer allowed to turn these effects into access to a physical bus.
+/// Application-owned effects for the production guarded-write and backup/restore boundary. The
+/// composition root is the only layer allowed to turn these effects into physical bus access or
+/// durable filesystem artifacts.
 #[derive(Clone, Debug)]
 pub enum WriteEffect {
     SyncSession(WriteSessionSnapshot),
@@ -18,5 +24,19 @@ pub enum WriteEffect {
     },
     Cancel {
         plan_id: PlanId,
+    },
+    CaptureBackup {
+        metadata: BackupRuntimeMetadata,
+        snapshot: WriteSessionSnapshot,
+    },
+    PrepareRestore {
+        source: PathBuf,
+        metadata: BackupRuntimeMetadata,
+        snapshot: WriteSessionSnapshot,
+    },
+    BeginRestore {
+        plan: ApprovedRestorePlan,
+        confirmation: RestoreConfirmation,
+        snapshot: WriteSessionSnapshot,
     },
 }
