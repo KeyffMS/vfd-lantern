@@ -95,6 +95,7 @@ impl CandidateGateReportV1 {
 }
 
 impl BuildManifestV1 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         commit: String,
         version: String,
@@ -139,7 +140,10 @@ impl BuildManifestV1 {
             .strip_prefix("sha256:")
             .ok_or_else(|| invalid("image_digest must use sha256:<hex>"))?;
         validate_sha256("image_digest", digest)?;
-        validate_sha256("qualification_index_sha256", &self.qualification_index_sha256)?;
+        validate_sha256(
+            "qualification_index_sha256",
+            &self.qualification_index_sha256,
+        )?;
         validate_sha256(
             "packaged_profiles_manifest_sha256",
             &self.packaged_profiles_manifest_sha256,
@@ -290,20 +294,24 @@ mod tests {
     #[test]
     fn every_write_capable_profile_requires_its_own_candidate_hil() {
         let required = vec!["33".repeat(32), "44".repeat(32)];
-        assert!(validate_candidate_gate_reports(
-            &[hil(&required[0])],
-            &"11".repeat(20),
-            &[asset()],
-            &required,
-        )
-        .is_err());
-        assert!(validate_candidate_gate_reports(
-            &[hil(&required[0]), hil_with_id(&required[1], "hil-second")],
-            &"11".repeat(20),
-            &[asset()],
-            &required,
-        )
-        .is_ok());
+        assert!(
+            validate_candidate_gate_reports(
+                &[hil(&required[0])],
+                &"11".repeat(20),
+                &[asset()],
+                &required,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_candidate_gate_reports(
+                &[hil(&required[0]), hil_with_id(&required[1], "hil-second")],
+                &"11".repeat(20),
+                &[asset()],
+                &required,
+            )
+            .is_ok()
+        );
     }
 
     fn hil_with_id(profile_hash: &str, report_id: &str) -> CandidateGateReportV1 {
@@ -318,12 +326,7 @@ mod tests {
         let mut report = hil(&required[0]);
         report.tested_asset_sha256 = "55".repeat(32);
         assert!(matches!(
-            validate_candidate_gate_reports(
-                &[report],
-                &"11".repeat(20),
-                &[asset()],
-                &required,
-            ),
+            validate_candidate_gate_reports(&[report], &"11".repeat(20), &[asset()], &required,),
             Err(ReleaseReportError::AssetMismatch(_))
         ));
     }
