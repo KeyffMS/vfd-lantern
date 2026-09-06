@@ -23,7 +23,7 @@ permissions:
 
 concurrency:
   group: issue24-native-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   inputs:

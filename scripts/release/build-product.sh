@@ -89,15 +89,14 @@ test -f "$binary"
 objcopy --only-keep-debug "$binary" \
     "$ARCH_ASSETS/vfd-lantern-${VFD_RELEASE_VERSION}-${VFD_RELEASE_ARCH}.debug"
 
-sbom=$(find target/distrib crates/vfd-lantern -maxdepth 3 -type f \
-    \( -name '*.cdx.json' -o -name '*bom*.json' \) | sort | head -n 1 || true)
-if [ -z "$sbom" ]; then
-    cargo cyclonedx --manifest-path crates/vfd-lantern/Cargo.toml \
-        --format json --describe crate --all-features --target "$TARGET" \
-        --override-filename "vfd-lantern-${VFD_RELEASE_ARCH}.cdx.json" --spec-version 1.5
-    sbom=$(find crates/vfd-lantern -maxdepth 1 -type f -name "vfd-lantern-${VFD_RELEASE_ARCH}.cdx.json" | head -n 1)
-fi
-test -n "$sbom"
+# Generate the product SBOM explicitly; never pick a stale workspace report.
+# override-filename takes a basename without the final format extension and is
+# mutually exclusive with --describe in the pinned cargo-cyclonedx CLI.
+cargo cyclonedx --manifest-path crates/vfd-lantern/Cargo.toml \
+    --format json --all --all-features --target "$TARGET" \
+    --override-filename "vfd-lantern-${VFD_RELEASE_ARCH}.cdx" --spec-version 1.5
+sbom="crates/vfd-lantern/vfd-lantern-${VFD_RELEASE_ARCH}.cdx.json"
+test -f "$sbom"
 sh scripts/release/verify-sbom.sh "$binary" "$sbom"
 cp "$sbom" "$ARCH_ASSETS/vfd-lantern-${VFD_RELEASE_VERSION}-${VFD_RELEASE_ARCH}.cdx.json"
 
