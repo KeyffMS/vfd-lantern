@@ -37,8 +37,9 @@ The package smoke harness prepares runtime dependencies from the pinned Trixie
 image and runs the exact `.deb` install, CLI checks and purge with `--network=none`.
 It compares `profile embedded-manifest` byte for byte with the disk copy and build
 input, checks owners/permissions/capabilities/completions, and verifies that modifying
-the disk manifest does not change embedded trust. It also verifies HOME and XDG
-locations remain unchanged by the tested offline commands.
+the disk manifest does not change embedded trust. It also verifies HOME and XDG config/data/cache remain unchanged by the tested
+offline commands. Expected runtime diagnostic logs use a separate temporary XDG
+state directory.
 
 ## Reproducibility and documentation delivery
 
@@ -82,3 +83,37 @@ A successful general CI run alone is not completion of this infrastructure test.
 The current commit needs a successful native acceptance run including cleanup.
 Real hardware qualification and the 24-hour candidate gates remain in #25; #21
 and #27 remain independently tracked dependencies, not implied completed work.
+
+
+## Runner acceptance blocker observed on 2026-09-06
+
+The Debian 13 amd64 runner passes application CI, but its container currently lacks
+`gh` and Podman. Attempting ordinary package installation fails because its runtime
+cannot perform `setgroups`, `setegid` or `seteuid` (`Operation not permitted`).
+See [native package preparation run](https://github.com/KeyffMS/vfd-lantern/actions/runs/34022631562)
+and [draft preparation run](https://github.com/KeyffMS/vfd-lantern/actions/runs/34022631556).
+This is an incomplete acceptance result, not a passed package/release gate.
+
+The runner image/container deployment is maintained outside this repository.
+Its administrator needs to provide these packages in the image before starting CI:
+
+```sh
+apt-get update
+apt-get install -y --no-install-recommends gh podman dpkg-dev binutils xz-utils qpdf
+```
+
+The existing Rust compiler, C compiler, `pkg-config`, OpenSSL/libudev development
+files, Git, jq and curl remain required. The image must also provide an operational
+Podman engine under the runner's normal security configuration. Presence of the
+`podman` command or a runner label alone is insufficient. From the runner's actual
+execution context verify:
+
+```sh
+sh scripts/release/ensure-runner-tools.sh build
+sh scripts/release/ensure-runner-tools.sh package
+```
+
+After provisioning, rerun PR #71's current-head native acceptance and general CI.
+Do not close #24 or merge on the basis of the earlier general CI alone. Required
+remaining evidence is two reproducible builds, actual offline package acceptance,
+the three-workflow disposable draft round trip and successful cleanup.

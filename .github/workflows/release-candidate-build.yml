@@ -120,7 +120,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare release system tools
-        run: sh scripts/release/ensure-runner-tools.sh package
+        run: sh scripts/release/ensure-runner-tools.sh build
 
       - name: Verify frozen qualification input
         shell: bash
@@ -230,7 +230,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare release system tools
-        run: sh scripts/release/ensure-runner-tools.sh package
+        run: sh scripts/release/ensure-runner-tools.sh github
 
       - name: Install pinned Rust
         run: |

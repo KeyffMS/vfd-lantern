@@ -100,7 +100,9 @@ while IFS= read -r path; do
 done < "$scratch/installed-paths"
 find "$HOME" -mindepth 1 -printf '%P %s %m\n' | LC_ALL=C sort > "$scratch/home-after"
 cmp "$scratch/home-before" "$scratch/home-after"
-for location in "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"; do
+# Runtime diagnostic logs are expected in the isolated XDG state directory.
+# Package installation and read-only commands must not create user config/trust/data.
+for location in "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME"; do
     test ! -e "$location" || test -z "$(find "$location" -mindepth 1 -print -quit)"
 done
 

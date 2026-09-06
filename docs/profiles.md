@@ -9,3 +9,20 @@ Register references carry table, address, width and the permitted Modbus functio
 Profile discovery has deterministic precedence: explicit paths, user XDG profiles, then system package profiles. Scanning is bounded and non-recursive; symlinks are rejected. Same-tier duplicate IDs are errors.
 
 A profile is considered packaged only when its system source matches the exact embedded manifest entry by ID, revision and profile hash. Write-capable packaged entries also require their pre-build `qualification_report_id`. The installed manifest copy must be byte-identical in package tests, but it never raises runtime trust on its own.
+
+
+The packaged reference file also serves as the package-test fixture. Inspect it
+without opening a serial device:
+
+```sh
+vfd-lantern profile validate /usr/share/vfd-lantern/profiles/example-vfd.toml
+vfd-lantern profile inspect /usr/share/vfd-lantern/profiles/example-vfd.toml
+vfd-lantern profile hashes /usr/share/vfd-lantern/profiles/example-vfd.toml
+vfd-lantern profile schema > profile-v1.schema.json
+```
+
+Use `profile normalize INPUT` to emit canonical TOML. Normalization does not approve
+local writes. A local write approval is an explicit operator decision bound to the
+exact hash and manual reference; consult `profile approve-write --help` and the
+[write/trust rules](writes-trust-audit.md) before using it. Never copy fixture
+qualification evidence into a hardware release.

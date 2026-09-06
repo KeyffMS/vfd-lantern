@@ -8,21 +8,27 @@ test "$(uname -m)" = x86_64
 
 scope=${1:-package}
 case "$scope" in
-    package) packages='podman gh dpkg-dev binutils xz-utils qpdf'; commands='podman gh dpkg-shlibdeps objcopy xz zlib-flate' ;;
+    build) packages='gh dpkg-dev binutils xz-utils qpdf'; commands='gh dpkg-shlibdeps objcopy xz zlib-flate' ;;
+    package) packages='podman gh'; commands='podman gh' ;;
     github) packages='gh'; commands='gh' ;;
-    *) echo 'usage: ensure-runner-tools.sh package|github' >&2; exit 2 ;;
+    *) echo 'usage: ensure-runner-tools.sh build|package|github' >&2; exit 2 ;;
 esac
+provisioning_failed() {
+    printf 'Runner cannot install its required packages in this container: %s\n' "$packages" >&2
+    echo 'Install them while building the runner image, then restart the runner with a working Podman engine for package acceptance.' >&2
+    exit 1
+}
 missing=0
 for tool in $commands; do
     command -v "$tool" >/dev/null || missing=1
 done
 if [ "$missing" -eq 1 ]; then
     if [ "$(id -u)" -eq 0 ]; then
-        apt-get update
-        apt-get install -y --no-install-recommends $packages
+        apt-get update || provisioning_failed
+        apt-get install -y --no-install-recommends $packages || provisioning_failed
     elif command -v sudo >/dev/null && sudo -n true; then
-        sudo -n apt-get update
-        sudo -n apt-get install -y --no-install-recommends $packages
+        sudo -n apt-get update || provisioning_failed
+        sudo -n apt-get install -y --no-install-recommends $packages || provisioning_failed
     else
         printf 'Runner administrator must install Debian packages: %s\n' "$packages" >&2
         exit 1

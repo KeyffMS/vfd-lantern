@@ -131,7 +131,7 @@ The permanent self-hosted performance gate renders a 120×40 `TestBackend` with 
 
 ## Runtime consumers
 
-Until their owning roadmap issues are implemented, the telemetry pipeline's CSV, fault and diagnostics event receivers are actively drained by the composition root. This prevents artificial queue drops without introducing placeholder persistence or fault semantics. Their real consumers remain owned by their later roadmap issues.
+CSV events are consumed by `CsvLoggingCoordinator` and the storage writer. Fault-source events are forwarded to the application fault tracker for transitions and freeze-frame handling. The diagnostics telemetry receiver is currently drained; explicit diagnostic bundles are collected through the storage adapter. See the [CSV and diagnostics](data-diagnostics.md) and [faults](faults.md) chapters for the current behavior.
 
 ## Verification
 
