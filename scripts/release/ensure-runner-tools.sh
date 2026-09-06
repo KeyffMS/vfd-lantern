@@ -8,7 +8,7 @@ test "$(uname -m)" = x86_64
 
 scope=${1:-package}
 case "$scope" in
-    package) packages='podman gh dpkg-dev binutils xz-utils'; commands='podman gh dpkg-shlibdeps objcopy xz' ;;
+    package) packages='podman gh dpkg-dev binutils xz-utils qpdf'; commands='podman gh dpkg-shlibdeps objcopy xz zlib-flate' ;;
     github) packages='gh'; commands='gh' ;;
     *) echo 'usage: ensure-runner-tools.sh package|github' >&2; exit 2 ;;
 esac

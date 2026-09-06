@@ -1,6 +1,57 @@
 name: Release candidate finalize
 
 on:
+  workflow_call:
+    inputs:
+      commit:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      draft_release_id:
+        required: true
+        type: string
+      product_artifact_name:
+        required: true
+        default: candidate-product-assets
+        type: string
+      product_artifact_run_id:
+        description: Source workflow run ID for dry-run product artifact
+        required: false
+        default: ''
+        type: string
+      reports_artifact_name:
+        required: true
+        default: candidate-gate-reports
+        type: string
+      reports_artifact_run_id:
+        description: Source workflow run ID for dry-run gate report artifact
+        required: false
+        default: ''
+        type: string
+      product_attestation_ids:
+        description: Comma-separated GitHub attestation IDs emitted by release-candidate-build; required for non-dry-run
+        required: false
+        default: ''
+        type: string
+      required_profile_hashes:
+        description: Optional comma-separated cross-check of write-capable profile hashes; authoritative scope is profiles-v1.json
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        required: true
+        default: true
+        type: boolean
+      pipeline_test:
+        description: Permit only a disposable prerelease with synthetic infrastructure evidence
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      manifest_sha256:
+        value: ${{ jobs.finalize.outputs.manifest_sha256 }}
   workflow_dispatch:
     inputs:
       commit:
@@ -44,6 +95,11 @@ on:
         required: true
         default: true
         type: boolean
+      pipeline_test:
+        description: Permit only a disposable prerelease with synthetic infrastructure evidence
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -57,6 +113,8 @@ concurrency:
 
 jobs:
   finalize:
+    outputs:
+      manifest_sha256: ${{ steps.manifest.outputs.sha256 }}
     runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
     steps:
       - name: Verify active Debian 13 amd64 platform
@@ -152,6 +210,38 @@ jobs:
           fi
           echo "count=$(wc -l < target/finalize/required-profile-hashes.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
 
+      - name: Verify report workflow provenance and synthetic evidence boundary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+          PIPELINE_TEST: ${{ inputs.pipeline_test }}
+          RELEASE_ID: ${{ inputs.draft_release_id }}
+          CANDIDATE_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$PIPELINE_TEST" == true ]]; then
+            [[ "$CANDIDATE_VERSION" == *-pipeline-test-"$GITHUB_RUN_ID" ]]
+            release=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")
+            test "$(printf '%s' "$release" | jq -r .draft)" = true
+            test "$(printf '%s' "$release" | jq -r .prerelease)" = true
+            test "$(printf '%s' "$release" | jq -r .tag_name)" = "v$CANDIDATE_VERSION"
+          fi
+          for report in target/finalize/reports/*.json; do
+            test -f "$report"
+            run_id=$(jq -er '.workflow_run_id' "$report")
+            [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
+            if [[ "$PIPELINE_TEST" != true ]] && grep -Ei 'pipeline-test|synthetic' "$report"; then
+              echo 'Synthetic gate evidence cannot finalize a production candidate' >&2
+              exit 1
+            fi
+            source=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")
+            test "$(printf '%s' "$source" | jq -r .head_sha)" = "$EXPECTED_COMMIT"
+            if [[ "$PIPELINE_TEST" != true || "$run_id" != "$GITHUB_RUN_ID" ]]; then
+              test "$(printf '%s' "$source" | jq -r .conclusion)" = success
+            fi
+          done
+
       - name: Validate immutable gate evidence
         shell: bash
         run: |
@@ -198,6 +288,11 @@ jobs:
           else
             attestation_args+=(--attestation-id "workflow-run:${{ github.run_id }}")
           fi
+          gate_args=()
+          for report in target/finalize/reports/*.json; do
+            gate=$(jq -r '.gate_kind + (if .profile_hash then ":" + .profile_hash else "" end) + "=passed"' "$report")
+            gate_args+=(--gate "$gate")
+          done
           hash=$(cargo run --locked -q -p lantern-release --example candidate_manifest -- \
             snapshot \
             --asset-dir target/finalize/assets \
@@ -208,7 +303,7 @@ jobs:
             --image-digest 'sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132' \
             --workflow-revision release-candidate-finalize-v1 \
             "${attestation_args[@]}" \
-            --gate candidate-evidence=passed \
+            "${gate_args[@]}" \
             --output target/finalize/assets/candidate-manifest-v1.json)
           echo "sha256=$hash" >> "$GITHUB_OUTPUT"
           printf '%s\n' "$hash" > target/finalize/candidate-manifest.sha256

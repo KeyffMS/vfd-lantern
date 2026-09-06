@@ -1,6 +1,30 @@
 name: Release publish same draft
 
 on:
+  workflow_call:
+    inputs:
+      commit:
+        required: true
+        type: string
+      draft_release_id:
+        required: true
+        type: string
+      finalized_artifact_name:
+        required: true
+        default: finalized-candidate-draft
+        type: string
+      finalized_artifact_run_id:
+        description: Finalizer workflow run ID containing the protected approval artifact
+        required: true
+        type: string
+      expected_manifest_sha256:
+        description: External protected approval anchor
+        required: true
+        type: string
+      dry_run:
+        required: true
+        default: true
+        type: boolean
   workflow_dispatch:
     inputs:
       commit:

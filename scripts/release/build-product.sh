@@ -31,6 +31,16 @@ case "$VFD_RELEASE_QUALIFICATION_INDEX" in
         ;;
 esac
 
+# Fixture evidence remains synthetic if copied to a different repository path.
+if [ "${VFD_RELEASE_TEST_MODE:-0}" != 1 ]; then
+    if grep -Ei 'SYNTHETIC|pipeline-test' "$VFD_RELEASE_QUALIFICATION_INDEX" >/dev/null; then
+        echo 'synthetic qualification evidence is forbidden outside test mode' >&2
+        exit 1
+    fi
+fi
+
+git ls-files --error-unmatch "$VFD_RELEASE_QUALIFICATION_INDEX" >/dev/null
+git diff --exit-code HEAD -- "$VFD_RELEASE_QUALIFICATION_INDEX"
 actual_commit=$(git rev-parse HEAD)
 test "$actual_commit" = "$VFD_RELEASE_COMMIT"
 actual_version=$(cargo metadata --locked --format-version 1 --no-deps \
@@ -90,6 +100,7 @@ if [ -z "$sbom" ]; then
     sbom=$(find crates/vfd-lantern -maxdepth 1 -type f -name "vfd-lantern-${VFD_RELEASE_ARCH}.cdx.json" | head -n 1)
 fi
 test -n "$sbom"
+sh scripts/release/verify-sbom.sh "$binary" "$sbom"
 cp "$sbom" "$ARCH_ASSETS/vfd-lantern-${VFD_RELEASE_VERSION}-${VFD_RELEASE_ARCH}.cdx.json"
 
 cp "$PACKAGE_ASSETS/profiles-v1.json" "$COMMON_ASSETS/profiles-v1.json"

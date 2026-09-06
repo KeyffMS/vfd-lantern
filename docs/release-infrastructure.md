@@ -21,3 +21,40 @@ Any add/remove/replace mutation after finalization invalidates approval and requ
 `release-publish` receives an explicit draft release ID, CandidateManifest and external expected manifest SHA-256. It checks tag/commit, verifies the manifest anchor, requires the exact asset set, recalculates every hash in `S`, and only then promotes the same draft. It never builds, packages, generates SBOM, uploads another asset or creates a second release.
 
 #24 proves this flow with a disposable non-production draft and cleanup. #25 supplies real candidate soak/HIL/conformance reports and is the only place where 1.0 may be made public.
+
+
+## Debian runner prerequisites
+
+The runner process itself must have `gh`, Podman, `dpkg-shlibdeps`, binutils,
+XZ and `zlib-flate` (Debian package `qpdf`) available. Running the runner in a
+Podman container does not by itself provide a container engine inside it.
+`ensure-runner-tools.sh` checks Debian 13 amd64, installs missing packages only
+through existing root/passwordless sudo access, and requires `podman info` to
+succeed. If those permissions or a working engine are unavailable, an administrator
+must provision the runner; the acceptance job fails instead of skipping package tests.
+
+The package smoke harness prepares runtime dependencies from the pinned Trixie
+image and runs the exact `.deb` install, CLI checks and purge with `--network=none`.
+It compares `profile embedded-manifest` byte for byte with the disk copy and build
+input, checks owners/permissions/capabilities/completions, and verifies that modifying
+the disk manifest does not change embedded trust. It also verifies HOME and XDG
+locations remain unchanged by the tested offline commands.
+
+## Reproducibility and documentation delivery
+
+Cargo CycloneDX 0.5.9 honors `SOURCE_DATE_EPOCH` for the SBOM timestamp and omits a
+random serial number. `verify-sbom.sh` requires each embedded cargo-auditable
+name/version pair to appear in the generated SBOM; build/development dependencies
+may additionally appear there. SHA256SUMS is written outside the asset directory
+and moved into place after hashing so it cannot accidentally hash itself.
+
+Pages receives an explicit successful candidate-build run and commit, downloads
+its existing product artifact, verifies checksums and BuildManifest, and extracts
+the packaged mdBook archive. It performs no second documentation build. Updating
+Pages is an explicit deployment; ordinary source changes still build the book in CI.
+
+The publication job uses `verify-draft.sh` without Cargo and resolves the actual
+tag to its commit. Configure required reviewers on the `release-production`
+GitHub environment before #25; naming an environment alone does not create a
+protected approval. Approval records and attestation IDs must be retained outside
+the mutable draft asset set.

@@ -73,6 +73,8 @@ pub enum ProfileCommand {
         #[arg(long)]
         summary: String,
     },
+    /// Export the exact manifest bytes embedded in this binary.
+    EmbeddedManifest,
     Manifest(ManifestArgs),
 }
 

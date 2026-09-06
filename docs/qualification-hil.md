@@ -4,7 +4,7 @@ Two different hardware evidence stages must not be conflated.
 
 ## Profile qualification
 
-A write-capable packaged profile requires a qualification report that exists **before the product build** and is bound to the exact profile semantic hash. `profile manifest build` consumes a frozen `QualificationIndexV1`; missing evidence for a write-capable profile stops the build. Its `qualification_report_id` is embedded in `PackagedProfilesManifestV1` and the byte-identical diagnostic copy is packaged on disk.
+A write-capable packaged profile requires a qualification report that exists **before the product build** and is bound to the exact profile semantic hash. `profile manifest` consumes a frozen `QualificationIndexV1`; missing evidence for a write-capable profile stops the build. Its `qualification_report_id` is embedded in `PackagedProfilesManifestV1` and the byte-identical diagnostic copy is packaged on disk.
 
 Changing write/read-back/restore semantics changes the profile identity/revision and invalidates previous qualification.
 

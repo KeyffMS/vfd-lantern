@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - agent/issue-24
+      - main
     paths:
       - 'Cargo.toml'
       - '.github/workflows/issue24-final-acceptance.yml'
@@ -23,6 +24,10 @@ on:
       - 'about.toml'
       - 'about.hbs'
       - 'tools.lock.toml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

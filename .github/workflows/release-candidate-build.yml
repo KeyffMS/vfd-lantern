@@ -1,6 +1,38 @@
 name: Release candidate build
 
 on:
+  workflow_call:
+    inputs:
+      commit:
+        description: Full candidate commit SHA
+        required: true
+        type: string
+      version:
+        description: Final candidate version (no RC rewrite)
+        required: true
+        type: string
+      qualification_index:
+        description: Repository path to frozen qualification index
+        required: true
+        default: release/fixtures/qualification-index-v1.json
+        type: string
+      dry_run:
+        description: Build and validate without creating a GitHub Release
+        required: true
+        default: true
+        type: boolean
+      pipeline_test:
+        description: Permit only a disposable prerelease with synthetic infrastructure evidence
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      draft_release_id:
+        value: ${{ jobs.assemble.outputs.draft_release_id }}
+      draft_version:
+        value: ${{ jobs.assemble.outputs.draft_version }}
+      product_attestation_id:
+        value: ${{ jobs.assemble.outputs.product_attestation_id }}
   workflow_dispatch:
     inputs:
       commit:
@@ -21,9 +53,15 @@ on:
         required: true
         default: true
         type: boolean
+      pipeline_test:
+        description: Permit only a disposable prerelease with synthetic infrastructure evidence
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
+  actions: read
   id-token: write
   attestations: write
 
@@ -115,6 +153,7 @@ jobs:
           VFD_RELEASE_TEST_MODE: ${{ inputs.dry_run && '1' || '0' }}
         run: |
           set -euo pipefail
+          cargo clean
           sh scripts/release/build-product.sh
           test -d "target/release-stage/${{ matrix.arch }}/arch"
           test -d "target/release-stage/${{ matrix.arch }}/common"
@@ -148,9 +187,20 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  package-test:
+    needs: build
+    uses: ./.github/workflows/package-test.yml
+    with:
+      artifact_name: candidate-amd64
+      commit: ${{ inputs.commit }}
+
   assemble:
     name: Assemble immutable product snapshot
-    needs: build
+    needs: [build, package-test]
+    outputs:
+      draft_release_id: ${{ steps.draft.outputs.release_id }}
+      draft_version: ${{ steps.draft.outputs.version }}
+      product_attestation_id: ${{ steps.attest-product.outputs.attestation-id }}
     runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
     steps:
       - name: Verify active Debian 13 amd64 platform
@@ -226,13 +276,24 @@ jobs:
           retention-days: 14
 
       - name: Create and re-download draft release by immutable release id
-        if: ${{ !inputs.dry_run }}
+        id: draft
+        if: ${{ !inputs.dry_run || inputs.pipeline_test }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          tag="v${{ inputs.version }}"
+          version="${{ inputs.version }}"
+          prerelease=false
+          if [[ "${{ inputs.pipeline_test }}" == true ]]; then
+            test "${{ inputs.dry_run }}" = true
+            version="$version-pipeline-test-$GITHUB_RUN_ID"
+            prerelease=true
+            sh scripts/release/generate-test-gates.sh target/candidate-assets "${{ inputs.commit }}" "$GITHUB_RUN_ID"
+          fi
+          tag="v$version"
+          # Create the immutable tag now so publication checks the actual Git object.
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="${{ inputs.commit }}" >/dev/null
           printf 'Candidate built from %s. Final publication requires #25 gates.\n' "${{ inputs.commit }}" > target/release-notes.txt
           body=$(cat target/release-notes.txt)
           release=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
@@ -241,7 +302,7 @@ jobs:
             -f name="VFD Lantern ${{ inputs.version }}" \
             -f body="$body" \
             -F draft=true \
-            -F prerelease=false)
+            -F prerelease="$prerelease")
           release_id=$(printf '%s' "$release" | jq -r '.id')
           test -n "$release_id"
           test "$release_id" != null
@@ -249,9 +310,11 @@ jobs:
           sh scripts/release/github-draft-assets.sh download-all "$release_id" target/redownloaded
           (cd target/redownloaded && sha256sum -c SHA256SUMS)
           printf '%s\n' "$release_id" > target/draft-release-id.txt
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Dry-run draft policy
-        if: ${{ inputs.dry_run }}
+        if: ${{ inputs.dry_run && !inputs.pipeline_test }}
         run: echo 'dry-run validated build/assembly/reproducibility and product attestation; no GitHub Release created'
 
       - name: Persist candidate build reference

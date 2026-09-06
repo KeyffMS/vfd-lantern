@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::{io::Write, path::Path, sync::Arc};
 
 use anyhow::{Context, Result, bail};
 use lantern_app::{
@@ -50,6 +50,12 @@ pub fn run(command: ProfileCommand, trust_store_path: &Path) -> Result<()> {
             &manual_source,
             &summary,
         ),
+        ProfileCommand::EmbeddedManifest => {
+            std::io::stdout()
+                .lock()
+                .write_all(embedded_manifest_bytes())?;
+            Ok(())
+        }
         ProfileCommand::Manifest(arguments) => build_manifest(arguments),
     }
 }
