@@ -1,6 +1,11 @@
 # Pinned development toolchain
 
-VFD Lantern targets Debian 13 (Trixie) on amd64 and arm64. Install `rustup` from
+VFD Lantern currently targets **Debian 13 (Trixie) on amd64**. Arm64 and other
+operating systems are deferred to the end of the queue; see the
+[platform policy](platform-policy.md). Acceptance uses the existing self-hosted
+`vfd-lantern-podman-01` runner, with labels `[self-hosted, linux, x64, podman, vfd-lantern]`.
+
+Install `rustup` from
 APT, then let `rust-toolchain.toml` select Rust 1.97.1. Do not use `curl | sh`.
 
 ```sh
