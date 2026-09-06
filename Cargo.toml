@@ -85,6 +85,9 @@ panic = "unwind"
 debug = "line-tables-only"
 strip = "none"
 
+[profile.dist]
+inherits = "release"
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 

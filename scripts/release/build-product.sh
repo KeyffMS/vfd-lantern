@@ -43,7 +43,7 @@ export TZ=UTC
 export LC_ALL=C.UTF-8
 export RUSTFLAGS="--remap-path-prefix=${PWD}=. -C link-arg=-Wl,--build-id=sha1 ${RUSTFLAGS:-}"
 
-PACKAGE_ASSETS=target/release/package-assets
+PACKAGE_ASSETS=target/package-assets
 STAGE=target/release-stage/$VFD_RELEASE_ARCH
 ARCH_ASSETS=$STAGE/arch
 COMMON_ASSETS=$STAGE/common
@@ -75,10 +75,7 @@ deb=$(find target/debian -maxdepth 1 -type f -name "*.deb" | grep "_${DEB_ARCH}\
 test -n "$deb"
 cp "$deb" "$ARCH_ASSETS/"
 
-binary="target/$TARGET/release/vfd-lantern"
-if [ ! -f "$binary" ]; then
-    binary=target/release/vfd-lantern
-fi
+binary="target/$TARGET/dist/vfd-lantern"
 test -f "$binary"
 objcopy --only-keep-debug "$binary" \
     "$ARCH_ASSETS/vfd-lantern-${VFD_RELEASE_VERSION}-${VFD_RELEASE_ARCH}.debug"

@@ -5,6 +5,7 @@ on:
     branches:
       - agent/issue-24
     paths:
+      - 'Cargo.toml'
       - '.github/workflows/issue24-final-acceptance.yml'
       - '.github/workflows/release-candidate-build.yml'
       - '.github/workflows/release-candidate-finalize.yml'
