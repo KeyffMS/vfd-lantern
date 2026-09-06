@@ -66,6 +66,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Verify release tools and Podman engine before compilation
+        run: |
+          sh scripts/release/ensure-runner-tools.sh build
+          sh scripts/release/ensure-runner-tools.sh package
+
       - name: Install pinned Rust
         run: |
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy --component llvm-tools-preview
