@@ -36,6 +36,7 @@ concurrency:
 
 jobs:
   verify-and-publish:
+    environment: ${{ inputs.dry_run && 'release-pipeline-test' || 'release-production' }}
     runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
     steps:
       - name: Verify active Debian 13 amd64 platform
@@ -66,6 +67,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Prepare release system tools
+        run: sh scripts/release/ensure-runner-tools.sh github
+
       - name: Download protected finalizer approval from explicit source run
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
@@ -84,11 +88,7 @@ jobs:
           approval=target/approved/approval-record.txt
           test -f "$manifest"
           test -f "$approval"
-          cargo run --locked -q -p lantern-release --example candidate_manifest -- \
-            verify \
-            --asset-dir target/approved/assets \
-            --manifest "$manifest" \
-            --expected-manifest-sha256 "${{ inputs.expected_manifest_sha256 }}"
+          sh scripts/release/verify-draft.sh target/approved/assets "${{ inputs.expected_manifest_sha256 }}"
           test "$(jq -r '.draft_release_id' "$manifest")" = "${{ inputs.draft_release_id }}"
           test "$(jq -r '.commit' "$manifest")" = "${{ inputs.commit }}"
           grep -Fxq "draft_release_id=${{ inputs.draft_release_id }}" "$approval"
@@ -115,13 +115,11 @@ jobs:
           test "$(printf '%s' "$release" | jq -r '.draft')" = true
           test "$(printf '%s' "$release" | jq -r '.tag_name')" = "$EXPECTED_TAG"
           test "$(printf '%s' "$release" | jq -r '.target_commitish')" = "$EXPECTED_COMMIT"
+          tag_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$EXPECTED_TAG" --jq .sha)
+          test "$tag_commit" = "$EXPECTED_COMMIT"
           sh scripts/release/github-draft-assets.sh download-all "$RELEASE_ID" target/live-draft
           test -f target/live-draft/candidate-manifest-v1.json
-          cargo run --locked -q -p lantern-release --example candidate_manifest -- \
-            verify \
-            --asset-dir target/live-draft \
-            --manifest target/live-draft/candidate-manifest-v1.json \
-            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256"
+          sh scripts/release/verify-draft.sh target/live-draft "$EXPECTED_MANIFEST_SHA256"
           cmp target/live-draft/candidate-manifest-v1.json target/approved/assets/candidate-manifest-v1.json
 
       - name: Promote the same verified draft

@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -12,7 +13,7 @@ use thiserror::Error;
 pub const CANDIDATE_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const CANDIDATE_MANIFEST_FILENAME: &str = "candidate-manifest-v1.json";
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CandidateGateStatus {
     Passed,
@@ -20,7 +21,7 @@ pub enum CandidateGateStatus {
     NotApplicable,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateAssetV1 {
     pub name: String,
@@ -28,7 +29,7 @@ pub struct CandidateAssetV1 {
     pub sha256: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateManifestMetadataV1 {
     pub commit: String,
@@ -39,7 +40,7 @@ pub struct CandidateManifestMetadataV1 {
     pub workflow_revision: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateManifestV1 {
     pub schema_version: u32,

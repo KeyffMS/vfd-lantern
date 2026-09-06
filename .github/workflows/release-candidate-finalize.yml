@@ -92,6 +92,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Prepare release system tools
+        run: sh scripts/release/ensure-runner-tools.sh github
+
       - name: Prepare dry-run product snapshot from explicit source run
         if: ${{ inputs.dry_run }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093

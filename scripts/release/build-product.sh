@@ -59,6 +59,7 @@ cargo run --locked -p vfd-lantern -- \
 
 cargo run --locked -p vfd-lantern --example generate_package_assets -- "$PACKAGE_ASSETS"
 cargo about generate about.hbs > "$PACKAGE_ASSETS/THIRD-PARTY-NOTICES.txt"
+cargo run --locked -p lantern-release --example release_schemas -- "$PACKAGE_ASSETS"
 mdbook build
 
 export VFD_LANTERN_PACKAGED_PROFILES_MANIFEST="$PACKAGE_ASSETS/profiles-v1.json"
@@ -93,6 +94,7 @@ cp "$sbom" "$ARCH_ASSETS/vfd-lantern-${VFD_RELEASE_VERSION}-${VFD_RELEASE_ARCH}.
 
 cp "$PACKAGE_ASSETS/profiles-v1.json" "$COMMON_ASSETS/profiles-v1.json"
 cp "$PACKAGE_ASSETS/profile-schema.json" "$COMMON_ASSETS/profile-schema.json"
+cp "$PACKAGE_ASSETS/"*.schema.json "$COMMON_ASSETS/"
 cp profiles/example-vfd.toml "$COMMON_ASSETS/example-vfd.toml"
 cp "$VFD_RELEASE_QUALIFICATION_INDEX" "$COMMON_ASSETS/qualification-index-v1.json"
 cp "$PACKAGE_ASSETS/THIRD-PARTY-NOTICES.txt" "$COMMON_ASSETS/THIRD-PARTY-NOTICES.txt"

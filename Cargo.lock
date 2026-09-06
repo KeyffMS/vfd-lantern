@@ -1003,6 +1003,7 @@ name = "lantern-release"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "schemars",
  "serde",
  "serde_jcs",
  "serde_json",

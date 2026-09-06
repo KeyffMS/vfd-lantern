@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -8,7 +9,9 @@ use crate::{CandidateAssetV1, CandidateGateStatus};
 pub const GATE_REPORT_SCHEMA_VERSION: u32 = 1;
 pub const BUILD_MANIFEST_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(
+    Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ReleaseGateKind {
     PackageTest,
@@ -18,7 +21,7 @@ pub enum ReleaseGateKind {
     Conformance,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateGateReportV1 {
     pub schema_version: u32,
@@ -32,7 +35,7 @@ pub struct CandidateGateReportV1 {
     pub status: CandidateGateStatus,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BuildManifestV1 {
     pub schema_version: u32,
@@ -187,6 +190,10 @@ pub fn validate_candidate_gate_reports(
         .collect::<BTreeSet<_>>();
     let mut passed_hil = BTreeSet::new();
     let mut report_ids = BTreeSet::new();
+    let mut passed_kinds = BTreeSet::new();
+    for hash in &required_profiles {
+        validate_sha256("required profile hash", hash)?;
+    }
 
     for report in reports {
         report.validate()?;
@@ -205,6 +212,7 @@ pub fn validate_candidate_gate_reports(
         if report.status != CandidateGateStatus::Passed {
             return Err(ReleaseReportError::GateFailed(report.report_id.clone()));
         }
+        passed_kinds.insert(report.gate_kind);
         if report.gate_kind == ReleaseGateKind::CandidateHil {
             let profile_hash = report
                 .profile_hash
@@ -221,6 +229,16 @@ pub fn validate_candidate_gate_reports(
             return Err(ReleaseReportError::MissingCandidateHil(
                 profile_hash.to_owned(),
             ));
+        }
+    }
+    for kind in [
+        ReleaseGateKind::PackageTest,
+        ReleaseGateKind::Soak,
+        ReleaseGateKind::Performance,
+        ReleaseGateKind::Conformance,
+    ] {
+        if !passed_kinds.contains(&kind) {
+            return Err(invalid(format!("missing passed candidate gate: {kind:?}")));
         }
     }
     Ok(())
@@ -305,13 +323,67 @@ mod tests {
         );
         assert!(
             validate_candidate_gate_reports(
-                &[hil(&required[0]), hil_with_id(&required[1], "hil-second")],
+                &complete_reports(vec![
+                    hil(&required[0]),
+                    hil_with_id(&required[1], "hil-second")
+                ]),
                 &"11".repeat(20),
                 &[asset()],
                 &required,
             )
             .is_ok()
         );
+    }
+
+    fn complete_reports(mut reports: Vec<CandidateGateReportV1>) -> Vec<CandidateGateReportV1> {
+        for kind in [
+            ReleaseGateKind::PackageTest,
+            ReleaseGateKind::Soak,
+            ReleaseGateKind::Performance,
+            ReleaseGateKind::Conformance,
+        ] {
+            let mut report = hil(&"33".repeat(32));
+            report.report_id = format!("gate-{kind:?}");
+            report.gate_kind = kind;
+            report.profile_hash = None;
+            reports.push(report);
+        }
+        reports
+    }
+
+    #[test]
+    fn empty_or_incomplete_gate_set_cannot_finalize_read_only_candidate() {
+        assert!(validate_candidate_gate_reports(&[], &"11".repeat(20), &[asset()], &[]).is_err());
+        let reports = complete_reports(vec![]);
+        assert!(
+            validate_candidate_gate_reports(&reports, &"11".repeat(20), &[asset()], &[]).is_ok()
+        );
+        for missing in 0..reports.len() {
+            let mut incomplete = reports.clone();
+            incomplete.remove(missing);
+            assert!(
+                validate_candidate_gate_reports(&incomplete, &"11".repeat(20), &[asset()], &[])
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn failed_duplicate_wrong_commit_and_invalid_run_reports_are_rejected() {
+        let original = complete_reports(vec![]);
+        for mutation in 0..4 {
+            let mut reports = original.clone();
+            match mutation {
+                0 => reports[0].status = CandidateGateStatus::Failed,
+                1 => reports.push(reports[0].clone()),
+                2 => reports[0].commit = "99".repeat(20),
+                _ => reports[0].workflow_run_id = 0,
+            }
+            assert!(
+                validate_candidate_gate_reports(&reports, &"11".repeat(20), &[asset()], &[])
+                    .is_err()
+            );
+        }
     }
 
     fn hil_with_id(profile_hash: &str, report_id: &str) -> CandidateGateReportV1 {

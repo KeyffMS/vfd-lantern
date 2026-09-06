@@ -37,6 +37,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Prepare release system tools
+        run: sh scripts/release/ensure-runner-tools.sh github
+
       - name: Install pinned Rust
         run: |
           set -euo pipefail

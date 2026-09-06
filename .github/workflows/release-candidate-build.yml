@@ -83,6 +83,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Prepare release system tools
+        run: sh scripts/release/ensure-runner-tools.sh package
+
       - name: Verify frozen qualification input
         shell: bash
         run: |
@@ -177,6 +180,9 @@ jobs:
           ref: ${{ inputs.commit }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Prepare release system tools
+        run: sh scripts/release/ensure-runner-tools.sh package
 
       - name: Install pinned Rust
         run: |

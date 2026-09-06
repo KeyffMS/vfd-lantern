@@ -38,6 +38,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Prepare Debian package test tools
+        run: sh scripts/release/ensure-runner-tools.sh package
+
       - name: Install native build prerequisites
         shell: bash
         run: |

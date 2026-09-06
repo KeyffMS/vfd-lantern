@@ -17,6 +17,14 @@ cat > "$root/reports/candidate-hil.json" <<EOF
 {"schema_version":1,"report_id":"pipeline-test-hil","workflow_run_id":1,"commit":"$commit","tested_asset_name":"vfd-lantern-amd64.deb","tested_asset_sha256":"$asset_hash","gate_kind":"candidate_hil","profile_hash":"$profile_hash","status":"passed"}
 EOF
 
+# Synthetic gates are deliberately restricted to this disposable pipeline fixture.
+for kind in package_test soak performance conformance
+do
+    cat > "$root/reports/gate-$kind.json" <<EOF
+{"schema_version":1,"report_id":"pipeline-test-$kind","workflow_run_id":1,"commit":"$commit","tested_asset_name":"vfd-lantern-amd64.deb","tested_asset_sha256":"$asset_hash","gate_kind":"$kind","profile_hash":null,"status":"passed"}
+EOF
+done
+
 cargo run --locked -q -p lantern-release --example release_evidence -- \
   validate-gates \
   --product-asset-dir "$root/assets" \
@@ -24,6 +32,7 @@ cargo run --locked -q -p lantern-release --example release_evidence -- \
   --commit "$commit" \
   --required-profile-hash "$profile_hash"
 
+cp "$root/reports/"*.json "$root/assets/"
 manifest="$root/assets/candidate-manifest-v1.json"
 manifest_hash=$(cargo run --locked -q -p lantern-release --example candidate_manifest -- \
   snapshot \
@@ -43,6 +52,8 @@ cargo run --locked -q -p lantern-release --example candidate_manifest -- \
   --asset-dir "$root/assets" \
   --manifest "$manifest" \
   --expected-manifest-sha256 "$manifest_hash"
+
+sh scripts/release/verify-draft.sh "$root/assets" "$manifest_hash"
 
 # Prove any post-finalization mutation invalidates the exact-set check.
 printf 'forbidden mutation\n' > "$root/assets/unexpected-after-finalize.txt"

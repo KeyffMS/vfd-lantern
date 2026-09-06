@@ -26,6 +26,16 @@ jobs:
           test "$ID" = debian
           test "${VERSION_ID%%.*}" = 13
 
+      - name: Check out exact issue branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/issue-24
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare Debian package test tools
+        run: sh scripts/release/ensure-runner-tools.sh package
+
       - name: Verify runner prerequisites
         shell: bash
         run: |
@@ -43,13 +53,6 @@ jobs:
           command -v sha256sum
           pkg-config --exists openssl
           pkg-config --exists libudev
-
-      - name: Check out exact issue branch
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          ref: agent/issue-24
-          fetch-depth: 0
-          persist-credentials: false
 
       - name: Install pinned Rust and release tools
         shell: bash

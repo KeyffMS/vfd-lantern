@@ -65,6 +65,9 @@ jobs:
           ref: ${{ inputs.commit }}
           persist-credentials: false
 
+      - name: Prepare release system tools
+        run: sh scripts/release/ensure-runner-tools.sh package
+
       - name: Download package artifact from current run
         if: ${{ inputs.artifact_run_id == '' }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
