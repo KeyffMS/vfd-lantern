@@ -118,7 +118,7 @@ jobs:
       - name: Run release contract tests and dry-run
         run: |
           cargo test --locked -p lantern-release
-          sh scripts/release/dry-run-candidate.sh
+          sh scripts/release/test-verify-draft.sh
 
       - name: Validate production release workflow safety
         run: |

@@ -14,7 +14,6 @@ on:
         type: string
       product_artifact_name:
         required: true
-        default: candidate-product-assets
         type: string
       product_artifact_run_id:
         description: Source workflow run ID for dry-run product artifact
@@ -23,7 +22,6 @@ on:
         type: string
       reports_artifact_name:
         required: true
-        default: candidate-gate-reports
         type: string
       reports_artifact_run_id:
         description: Source workflow run ID for dry-run gate report artifact
@@ -35,14 +33,8 @@ on:
         required: false
         default: ''
         type: string
-      required_profile_hashes:
-        description: Optional comma-separated cross-check of write-capable profile hashes; authoritative scope is profiles-v1.json
-        required: false
-        default: ''
-        type: string
       dry_run:
         required: true
-        default: true
         type: boolean
       pipeline_test:
         description: Permit only a disposable prerelease with synthetic infrastructure evidence
@@ -83,11 +75,6 @@ on:
         type: string
       product_attestation_ids:
         description: Comma-separated GitHub attestation IDs emitted by release-candidate-build; required for non-dry-run
-        required: false
-        default: ''
-        type: string
-      required_profile_hashes:
-        description: Optional comma-separated cross-check of write-capable profile hashes; authoritative scope is profiles-v1.json
         required: false
         default: ''
         type: string
@@ -204,10 +191,6 @@ jobs:
           while IFS= read -r hash; do
             [[ "$hash" =~ ^[0-9a-f]{64}$ ]]
           done < target/finalize/required-profile-hashes.txt
-          if [[ -n "${{ inputs.required_profile_hashes }}" ]]; then
-            printf '%s' "${{ inputs.required_profile_hashes }}" | tr ',' '\n' | sed '/^$/d' | LC_ALL=C sort -u > target/finalize/input-profile-hashes.txt
-            diff -u target/finalize/required-profile-hashes.txt target/finalize/input-profile-hashes.txt
-          fi
           echo "count=$(wc -l < target/finalize/required-profile-hashes.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
 
       - name: Verify report workflow provenance and synthetic evidence boundary

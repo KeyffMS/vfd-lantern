@@ -58,3 +58,27 @@ tag to its commit. Configure required reviewers on the `release-production`
 GitHub environment before #25; naming an environment alone does not create a
 protected approval. Approval records and attestation IDs must be retained outside
 the mutable draft asset set.
+
+
+## Repeatable infrastructure acceptance
+
+`Issue 24 native package acceptance` calls the same `release-candidate-build`,
+`release-candidate-finalize` and `release-publish` reusable workflows used by the
+release process. Build runs twice from clean targets and compares the staged bytes;
+`package-test` installs/removes the exact package before the disposable draft is
+created. The test uses a unique `-pipeline-test-<run ID>` prerelease tag, fixture
+qualification, and synthetic gate reports bound to the actual `.deb` hash.
+
+Finalization derives HIL scope from the packaged manifest, checks report run IDs
+against GitHub, freezes all existing assets and uploads only CandidateManifest.
+Publication verification downloads the protected anchor and the live draft again,
+resolves the actual tag commit, and checks the exact asset set without compiling.
+The test always requests `dry_run: true` for publication, then deletes its unique
+draft and tag. Synthetic reports cannot finalize a production candidate.
+`test-verify-draft.sh` additionally checks wrong anchors and asset addition,
+removal, replacement, symlinks and manifest replacement.
+
+A successful general CI run alone is not completion of this infrastructure test.
+The current commit needs a successful native acceptance run including cleanup.
+Real hardware qualification and the 24-hour candidate gates remain in #25; #21
+and #27 remain independently tracked dependencies, not implied completed work.

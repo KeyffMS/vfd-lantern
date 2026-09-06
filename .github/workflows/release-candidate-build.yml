@@ -14,12 +14,10 @@ on:
       qualification_index:
         description: Repository path to frozen qualification index
         required: true
-        default: release/fixtures/qualification-index-v1.json
         type: string
       dry_run:
         description: Build and validate without creating a GitHub Release
         required: true
-        default: true
         type: boolean
       pipeline_test:
         description: Permit only a disposable prerelease with synthetic infrastructure evidence

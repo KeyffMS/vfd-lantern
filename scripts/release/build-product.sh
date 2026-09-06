@@ -76,15 +76,13 @@ export VFD_LANTERN_PACKAGED_PROFILES_MANIFEST="$PACKAGE_ASSETS/profiles-v1.json"
 dist build --artifacts=local --target "$TARGET" --output-format=json \
     > "$STAGE/dist-manifest.json"
 
-cargo deb -p vfd-lantern --target "$TARGET" --no-build
+cargo deb -p vfd-lantern --target "$TARGET" --no-build \
+    --output "$ARCH_ASSETS/vfd-lantern_${VFD_RELEASE_VERSION}_${DEB_ARCH}.deb"
 
 archive=$(find target/distrib -maxdepth 1 -type f -name "*${TARGET}*.tar.xz" | sort | head -n 1)
 test -n "$archive"
 cp "$archive" "$ARCH_ASSETS/"
 
-deb=$(find target/debian -maxdepth 1 -type f -name "*.deb" | grep "_${DEB_ARCH}\.deb$" | sort | head -n 1)
-test -n "$deb"
-cp "$deb" "$ARCH_ASSETS/"
 
 binary="target/$TARGET/dist/vfd-lantern"
 test -f "$binary"
