@@ -1,5 +1,7 @@
 # Safety, installation and RS-485
 
+Current package and installation acceptance targets **Debian 13 Trixie amd64** only. Arm64 and other operating systems are deferred; see the [platform policy](development/platform-policy.md).
+
 ## Safety boundary
 
 VFD Lantern is not a motion-control system, safety PLC or emergency-stop device. Remove hazardous energy and follow the drive manufacturer's procedure before wiring or servicing equipment. The application does not provide fault reset or motion commands.

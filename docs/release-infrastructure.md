@@ -4,9 +4,9 @@ Issue #24 builds and tests release infrastructure; it does **not** publish the r
 
 ## Candidate build
 
-`release-candidate-build` is given an exact commit/version and a qualification index that already exists. It validates write-capable profile qualification, generates `PackagedProfilesManifestV1`, embeds those exact bytes in the product, installs the same bytes as the package diagnostic copy, and creates product assets for native Debian Trixie amd64/arm64. Product assets include archives, `.deb`, separate symbols, SBOM, notices, attestations, checksums, profile schema/reference data, documentation and `BuildManifestV1`.
+`release-candidate-build` is given an exact commit/version and a qualification index that already exists. It validates write-capable profile qualification, generates `PackagedProfilesManifestV1`, embeds those exact bytes in the product, installs the same bytes as the package diagnostic copy, and creates product assets for native Debian 13 Trixie amd64. Product assets include archives, `.deb`, separate symbols, SBOM, notices, attestations, checksums, profile schema/reference data, documentation and `BuildManifestV1`.
 
-The build uses pinned Rust/tools, `Cargo.lock`, `--locked`, `SOURCE_DATE_EPOCH` from the commit and deterministic release settings. Hashes are calculated after final packaging. Two clean builds per architecture must reproduce the expected artifacts.
+The build uses pinned Rust/tools, `Cargo.lock`, `--locked`, `SOURCE_DATE_EPOCH` from the commit and deterministic release settings. Hashes are calculated after final packaging. Two clean amd64 builds must reproduce the expected artifacts. Build and package acceptance use the existing Debian 13 amd64 self-hosted runner; installation smoke runs in pinned Trixie through Podman. Assembly requires only the amd64 stage. Arm64 builds, artifacts and reports are deferred and do not block this candidate scope; see the [platform policy](development/platform-policy.md).
 
 ## Finalizer
 

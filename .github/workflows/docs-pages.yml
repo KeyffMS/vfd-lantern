@@ -22,8 +22,20 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
     steps:
+      - name: Verify active Debian 13 amd64 platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = vfd-lantern-podman-01
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
       - name: Check out exact source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -56,9 +68,21 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
     needs: build
     steps:
+      - name: Verify active Debian 13 amd64 platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = vfd-lantern-podman-01
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
       - name: Deploy Pages
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346

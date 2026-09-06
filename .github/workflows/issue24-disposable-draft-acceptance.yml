@@ -16,8 +16,20 @@ permissions:
 
 jobs:
   disposable-draft:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
     steps:
+      - name: Verify active Debian 13 amd64 platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = vfd-lantern-podman-01
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
       - name: Check out exact triggering commit
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -41,7 +53,7 @@ jobs:
           tag="issue24-pipeline-test-${GITHUB_RUN_ID}"
           mkdir -p target/disposable/assets
           printf 'amd64 pipeline fixture\ncommit=%s\n' "$GITHUB_SHA" > target/disposable/assets/product-amd64.txt
-          printf 'arm64 pipeline fixture\ncommit=%s\n' "$GITHUB_SHA" > target/disposable/assets/product-arm64.txt
+          printf 'amd64 documentation fixture\ncommit=%s\n' "$GITHUB_SHA" > target/disposable/assets/product-docs.txt
           printf '{"schema_version":1,"status":"passed","run_id":%s}\n' "$GITHUB_RUN_ID" > target/disposable/assets/package-gate.json
           release=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
             -f tag_name="$tag" \

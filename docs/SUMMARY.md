@@ -1,6 +1,7 @@
 # Summary
 
 - [VFD Lantern](index.md)
+- [Platform policy and roadmap](development/platform-policy.md)
 - [Safety, installation and RS-485](safety-install-rs485.md)
 - [Verified connection and TUI](verified-tui.md)
 - [Monitoring and quantities](monitoring.md)

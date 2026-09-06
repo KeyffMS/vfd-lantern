@@ -44,11 +44,20 @@ jobs:
           - arch: amd64
             native_uname: x86_64
             runner: '["self-hosted","linux","x64","podman","vfd-lantern"]'
-          - arch: arm64
-            native_uname: aarch64
-            runner: '["self-hosted","linux","arm64","vfd-lantern-release-arm64"]'
     runs-on: ${{ fromJSON(matrix.runner) }}
     steps:
+      - name: Verify active Debian 13 amd64 platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = vfd-lantern-podman-01
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
       - name: Verify native Debian Trixie runner
         shell: bash
         run: |
@@ -141,6 +150,18 @@ jobs:
     needs: build
     runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
     steps:
+      - name: Verify active Debian 13 amd64 platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = vfd-lantern-podman-01
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
       - name: Verify assembler runner
         run: |
           set -eu
@@ -168,17 +189,10 @@ jobs:
           name: candidate-amd64
           path: target/native/amd64
 
-      - name: Download arm64 stage
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: candidate-arm64
-          path: target/native/arm64
-
       - name: Assemble and finalize candidate product assets
         shell: bash
         env:
           VFD_AMD64_STAGE: target/native/amd64
-          VFD_ARM64_STAGE: target/native/arm64
           VFD_CANDIDATE_PRODUCT_DIR: target/candidate-assets
           VFD_RELEASE_COMMIT: ${{ inputs.commit }}
           VFD_RELEASE_VERSION: ${{ inputs.version }}

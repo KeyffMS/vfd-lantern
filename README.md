@@ -24,7 +24,9 @@ Run `scripts/check-architecture.sh` to verify the dependency boundaries.
 
 ## Platform
 
-The reference environment is Debian 13 (Trixie) on amd64 and arm64.
+The active development, testing, packaging and candidate-release target is **Debian 13 (Trixie) on amd64 (x86_64)**, using the self-hosted runner `vfd-lantern-podman-01`.
+
+Arm64 and other operating systems are deferred to the end of the queue, after Debian 13 amd64 is complete and qualified. They are not current acceptance requirements or supported-platform claims. See the [platform policy and remaining roadmap](docs/development/platform-policy.md).
 
 ## Safety
 

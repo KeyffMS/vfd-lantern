@@ -5,7 +5,7 @@ set -eu
 : "${VFD_RELEASE_VERSION:?set VFD_RELEASE_VERSION}"
 : "${VFD_RELEASE_QUALIFICATION_INDEX:?set VFD_RELEASE_QUALIFICATION_INDEX}"
 : "${VFD_RELEASE_IMAGE_DIGEST:?set VFD_RELEASE_IMAGE_DIGEST}"
-: "${VFD_RELEASE_ARCH:?set VFD_RELEASE_ARCH to amd64 or arm64}"
+: "${VFD_RELEASE_ARCH:?set VFD_RELEASE_ARCH to amd64}"
 
 case "$VFD_RELEASE_ARCH" in
     amd64)
@@ -13,8 +13,8 @@ case "$VFD_RELEASE_ARCH" in
         DEB_ARCH=amd64
         ;;
     arm64)
-        TARGET=aarch64-unknown-linux-gnu
-        DEB_ARCH=arm64
+        printf 'arm64 packaging is deferred; see docs/development/platform-policy.md\n' >&2
+        exit 1
         ;;
     *)
         printf 'unsupported release architecture: %s\n' "$VFD_RELEASE_ARCH" >&2

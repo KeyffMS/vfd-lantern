@@ -8,7 +8,8 @@ ci = "github"
 # cargo-dist is used only to plan/build product archives, so its generated CI is intentionally ignored.
 allow-dirty = ["ci"]
 installers = []
-targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+# Active scope: Debian 13 amd64; platform expansion is end-of-queue work.
+targets = ["x86_64-unknown-linux-gnu"]
 precise-builds = true
 unix-archive = ".tar.xz"
 cargo-auditable = true
@@ -17,6 +18,4 @@ github-attestations = true
 pr-run-mode = "skip"
 include = ["README.md", "CHANGELOG.md", "LICENSE", "SECURITY.md"]
 
-[dist.github-custom-runners]
-aarch64-unknown-linux-gnu = "ubuntu-24.04-arm"
-x86_64-unknown-linux-gnu = "ubuntu-24.04"
+# Runner routing is owned by the hand-written self-hosted workflows above.

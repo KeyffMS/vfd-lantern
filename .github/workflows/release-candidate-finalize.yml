@@ -59,6 +59,18 @@ jobs:
   finalize:
     runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
     steps:
+      - name: Verify active Debian 13 amd64 platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = vfd-lantern-podman-01
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
       - name: Validate immutable inputs
         shell: bash
         run: |
