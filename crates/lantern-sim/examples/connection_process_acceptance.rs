@@ -667,7 +667,10 @@ fn run_monitoring_case(simulator_binary: &Path, product_binary: &Path) -> Result
     ensure!(csv_text.starts_with("schema_version,record_type,"));
     ensure!(csv_text.lines().count() > 1, "CSV must contain samples");
     let sidecar = lantern_storage::AppPaths::final_csv_sidecar(csv);
-    ensure!(sidecar.is_file(), "completed CSV requires a session sidecar");
+    ensure!(
+        sidecar.is_file(),
+        "completed CSV requires a session sidecar"
+    );
     let exports = fs::read_dir(root.join("fault-reports"))?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<std::io::Result<Vec<_>>>()?;

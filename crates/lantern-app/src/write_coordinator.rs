@@ -2178,7 +2178,11 @@ mod write_pipeline_e2e_tests {
             self.trace.operation_starts.lock().unwrap().push(start);
             let allowed = self.available && !self.fail_prepare;
             Box::pin(async move {
-                if allowed { Ok(token) } else { Err(AuditError::Unavailable) }
+                if allowed {
+                    Ok(token)
+                } else {
+                    Err(AuditError::Unavailable)
+                }
             })
         }
 
@@ -2307,13 +2311,24 @@ mod write_pipeline_e2e_tests {
         }
 
         fn restore_matches(&self, id: OperationId, hash: &str, index: usize) -> bool {
-            self.trace.restore.lock().unwrap().as_ref()
+            self.trace
+                .restore
+                .lock()
+                .unwrap()
+                .as_ref()
                 .is_some_and(|current| current.0 == id && current.1 == hash && current.2 == index)
         }
 
-        fn advance_restore(&self, id: OperationId, hash: &str, index: usize) -> Result<(), SessionControlError> {
+        fn advance_restore(
+            &self,
+            id: OperationId,
+            hash: &str,
+            index: usize,
+        ) -> Result<(), SessionControlError> {
             let mut active = self.trace.restore.lock().unwrap();
-            let current = active.as_mut().ok_or(SessionControlError::PreconditionChanged)?;
+            let current = active
+                .as_mut()
+                .ok_or(SessionControlError::PreconditionChanged)?;
             if current.0 != id || current.1 != hash || index != current.2 + 1 {
                 return Err(SessionControlError::PreconditionChanged);
             }
@@ -2323,7 +2338,10 @@ mod write_pipeline_e2e_tests {
 
         fn finish_restore(&self, id: OperationId, hash: &str) -> Result<(), SessionControlError> {
             let mut active = self.trace.restore.lock().unwrap();
-            if !active.as_ref().is_some_and(|current| current.0 == id && current.1 == hash) {
+            if !active
+                .as_ref()
+                .is_some_and(|current| current.0 == id && current.1 == hash)
+            {
                 return Err(SessionControlError::PreconditionChanged);
             }
             *active = None;
