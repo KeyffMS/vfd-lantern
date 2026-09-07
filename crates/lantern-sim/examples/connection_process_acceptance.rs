@@ -599,7 +599,10 @@ fn run_guarded_write_case(simulator_binary: &Path, product_binary: &Path) -> Res
     source.push_str("\n[initial_values]\n\"config.acceleration\" = \"9\"\n");
     fs::write(&scenario, source)?;
     let simulator = Simulator::spawn(
-        simulator_binary, &selected, &scenario, env.root.path().join("guarded-write.jsonl"),
+        simulator_binary,
+        &selected,
+        &scenario,
+        env.root.path().join("guarded-write.jsonl"),
     )?;
     let mut args = product_args(&selected, &simulator.pty);
     args.push("--enable-writes".to_owned());
@@ -624,17 +627,28 @@ fn run_guarded_write_case(simulator_binary: &Path, product_binary: &Path) -> Res
     product.send("w")?;
     product.wait_for("guarded plan prepared; exact operator confirmation required")?;
     let screen = product.screen_text();
-    let challenge = screen.split("challenge=").nth(1)
+    let challenge = screen
+        .split("challenge=")
+        .nth(1)
         .and_then(|suffix| suffix.split_whitespace().next())
-        .context("operator-visible exact write challenge")?.to_owned();
+        .context("operator-visible exact write challenge")?
+        .to_owned();
     let before = read_log_records(&simulator.log_path)?;
-    ensure!(before.iter().all(|record| record.function == 3 || record.function == 4));
+    ensure!(
+        before
+            .iter()
+            .all(|record| record.function == 3 || record.function == 4)
+    );
     product.send("w")?;
     product.wait_for("Write confirmation:")?;
     product.send("wrong\r")?;
     product.wait_for("operator confirmation does not exactly match")?;
     let rejected = read_log_records(&simulator.log_path)?;
-    ensure!(rejected.iter().all(|record| record.function == 3 || record.function == 4));
+    ensure!(
+        rejected
+            .iter()
+            .all(|record| record.function == 3 || record.function == 4)
+    );
     product.send("w")?;
     product.wait_for("Write confirmation:")?;
     product.send(&format!("{challenge}\r"))?;
@@ -642,19 +656,32 @@ fn run_guarded_write_case(simulator_binary: &Path, product_binary: &Path) -> Res
     product.quit()?;
     let records = simulator.stop()?;
     ensure!(records.iter().filter(|record| record.function == 6).count() == 1);
-    ensure!(records.iter().all(|record| matches!(record.function, 3 | 4 | 6)));
+    ensure!(
+        records
+            .iter()
+            .all(|record| matches!(record.function, 3 | 4 | 6))
+    );
     let mut kinds = Vec::new();
     for entry in fs::read_dir(env.state.join("vfd-lantern/audit"))? {
         let path = entry?.path();
-        if path.extension().is_some_and(|extension| extension == "jsonl") {
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "jsonl")
+        {
             for line in fs::read_to_string(path)?.lines() {
                 let record: serde_json::Value = serde_json::from_str(line)?;
                 kinds.push(record["kind"].as_str().context("audit kind")?.to_owned());
             }
         }
     }
-    let prepared = kinds.iter().position(|kind| kind == "device_write_prepared").context("durable preparation")?;
-    let finalized = kinds.iter().position(|kind| kind == "device_write_finalized").context("durable finalization")?;
+    let prepared = kinds
+        .iter()
+        .position(|kind| kind == "device_write_prepared")
+        .context("durable preparation")?;
+    let finalized = kinds
+        .iter()
+        .position(|kind| kind == "device_write_finalized")
+        .context("durable finalization")?;
     ensure!(prepared < finalized, "durable audit ordering");
     Ok(())
 }
@@ -805,7 +832,10 @@ fn run_monitoring_case(simulator_binary: &Path, product_binary: &Path) -> Result
     ensure!(report["event"]["acknowledged"] == true);
     ensure!(report["event"]["profile_hash"] == profile.profile_hash().to_hex());
     let digest = sha2::Sha256::digest(serde_jcs::to_vec(&report["event"])?);
-    let digest = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    let digest = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     ensure!(report["sha256"] == digest);
     Ok(())
 }
