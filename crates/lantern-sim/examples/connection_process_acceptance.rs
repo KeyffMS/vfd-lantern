@@ -19,7 +19,7 @@ use serde::Deserialize;
 use sha2::Digest as _;
 use tempfile::TempDir;
 
-const ROWS: usize = 42;
+const ROWS: usize = 64;
 const COLS: usize = 140;
 const SEED: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 const PROCESS_TIMEOUT: Duration = Duration::from_secs(8);
@@ -570,6 +570,92 @@ fn main() -> Result<()> {
     println!("process-e2e reconnect-identity-change ok");
     run_monitoring_case(&simulator, &product)?;
     println!("process-e2e monitoring-csv-faults-read-only ok");
+    if std::env::args().any(|argument| argument == "--write-fixture") {
+        run_guarded_write_case(&simulator, &product)?;
+        println!("process-e2e simulator-only-guarded-write ok");
+    }
+    Ok(())
+}
+
+fn run_guarded_write_case(simulator_binary: &Path, product_binary: &Path) -> Result<()> {
+    let env = CaseEnvironment::new()?;
+    let selected = env.root.path().join("selected-vfd.toml");
+    fs::write(&selected, fs::read_to_string(reference_profile())?)?;
+    let profile = lantern_sim::load_profile(&selected)?;
+    let hash = profile.profile_hash().to_hex();
+    let approval = Command::new(product_binary)
+        .args(["profile", "approve-write"])
+        .arg(&selected)
+        .args(["--expected-hash", &hash, "--manual-source", "PTY fixture"])
+        .args(["--summary", "Disposable simulator-only acceptance"])
+        .env("XDG_CONFIG_HOME", &env.config)
+        .env("XDG_DATA_HOME", &env.data)
+        .env("XDG_STATE_HOME", &env.state)
+        .env("XDG_CACHE_HOME", &env.cache)
+        .status()?;
+    ensure!(approval.success(), "isolated fixture profile approval");
+    let scenario = env.root.path().join("guarded-write.toml");
+    let mut source = scenario_source(&selected, &profile, Case::MatchDisarmed);
+    source.push_str("\n[initial_values]\n\"config.acceleration\" = \"9\"\n");
+    fs::write(&scenario, source)?;
+    let simulator = Simulator::spawn(
+        simulator_binary, &selected, &scenario, env.root.path().join("guarded-write.jsonl"),
+    )?;
+    let mut args = product_args(&selected, &simulator.pty);
+    args.push("--enable-writes".to_owned());
+    let mut product = TerminalChild::spawn(product_binary, &args, &env)?;
+    drive_to_summary(&mut product)?;
+    product.send("\r")?;
+    product.wait_for("Verified read-only session established")?;
+    product.send("4")?;
+    product.wait_for("WRITES DISARMED")?;
+    product.send("/acceleration\r")?;
+    product.wait_for("matches=1")?;
+    product.send("R")?;
+    product.wait_for("quality=Good")?;
+    product.send("A")?;
+    product.wait_for("Arming confirmation:")?;
+    product.send(&format!("ARM {}\r", &hash[..12]))?;
+    product.wait_for("WRITES ARMED")?;
+    product.send("e")?;
+    product.wait_for("Typed editor Fixed:")?;
+    product.send("\x7f10\r")?;
+    product.wait_for("STAGED WRITE INTENT")?;
+    product.send("w")?;
+    product.wait_for("guarded plan prepared; exact operator confirmation required")?;
+    let screen = product.screen_text();
+    let challenge = screen.split("challenge=").nth(1)
+        .and_then(|suffix| suffix.split_whitespace().next())
+        .context("operator-visible exact write challenge")?.to_owned();
+    let before = read_log_records(&simulator.log_path)?;
+    ensure!(before.iter().all(|record| record.function == 3 || record.function == 4));
+    product.send("w")?;
+    product.wait_for("Write confirmation:")?;
+    product.send("wrong\r")?;
+    product.wait_for("operator confirmation does not exactly match")?;
+    let rejected = read_log_records(&simulator.log_path)?;
+    ensure!(rejected.iter().all(|record| record.function == 3 || record.function == 4));
+    product.send("w")?;
+    product.wait_for("Write confirmation:")?;
+    product.send(&format!("{challenge}\r"))?;
+    product.wait_for("write outcome: Executed(Verified)")?;
+    product.quit()?;
+    let records = simulator.stop()?;
+    ensure!(records.iter().filter(|record| record.function == 6).count() == 1);
+    ensure!(records.iter().all(|record| matches!(record.function, 3 | 4 | 6)));
+    let mut kinds = Vec::new();
+    for entry in fs::read_dir(env.state.join("vfd-lantern/audit"))? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|extension| extension == "jsonl") {
+            for line in fs::read_to_string(path)?.lines() {
+                let record: serde_json::Value = serde_json::from_str(line)?;
+                kinds.push(record["kind"].as_str().context("audit kind")?.to_owned());
+            }
+        }
+    }
+    let prepared = kinds.iter().position(|kind| kind == "device_write_prepared").context("durable preparation")?;
+    let finalized = kinds.iter().position(|kind| kind == "device_write_finalized").context("durable finalization")?;
+    ensure!(prepared < finalized, "durable audit ordering");
     Ok(())
 }
 

@@ -40,7 +40,14 @@ Coverage includes the workspace tests and process-level E2E, with both product a
 simulator binaries instrumented. The threshold is **80% of lines globally**; no
 production file is excluded to meet it. Instrumented CLI contracts also verify
 normalization/hash stability, approval rejection/creation in isolated XDG paths,
-and backup tamper rejection. HTML and JSON reports are uploaded, also
+and backup tamper rejection. The PTY harness exercises monitoring, completed CSV
+and its sidecar, fault acknowledgment/export integrity, and read-only write guards.
+The quality gate additionally passes `--write-fixture`: this launches a disposable
+PTY simulator, approves its profile only in temporary XDG directories, and checks
+that an incorrect confirmation sends no write while exact confirmation sends one
+FC06 with durable prepare/finalize audit records. Long-run mock demonstrations do
+not pass this option. Restore unit contracts cover single-use permits, audit order,
+abort, changed preconditions and failed read-back. HTML and JSON reports are uploaded, also
 on failure. Critical write, trust, audit, restore and state rules retain their
 positive and negative tests irrespective of the aggregate percentage.
 

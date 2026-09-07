@@ -29,7 +29,7 @@ cargo nextest run --workspace --all-features --locked
 # Under show-env, regular Cargo commands share instrumentation with nextest.
 # The process harness launches the product and simulator as sibling binaries.
 cargo build --workspace --all-features --bins --locked
-cargo run --locked --all-features -p lantern-sim --example connection_process_acceptance
+cargo run --locked --all-features -p lantern-sim --example connection_process_acceptance -- --write-fixture
 sh scripts/ci/test-product-cli.sh "$CARGO_TARGET_DIR/debug/vfd-lantern"
 cargo llvm-cov report --json --summary-only --output-path target/ci/coverage.json
 jq '.data[].files[] | {filename, lines: .summary.lines}' target/ci/coverage.json
