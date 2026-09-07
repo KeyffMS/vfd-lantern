@@ -29,9 +29,17 @@ cargo nextest run --workspace --all-features --locked
 # Under show-env, regular Cargo commands share instrumentation with nextest.
 # The process harness launches the product and simulator as sibling binaries.
 cargo build --workspace --all-features --bins --locked
-cargo run --locked --all-features -p lantern-sim --example connection_process_acceptance -- --write-fixture
-sh scripts/ci/test-product-cli.sh "$CARGO_TARGET_DIR/debug/vfd-lantern"
+# Preserve independent CLI evidence and coverage even when a process assertion fails.
+# A failed contract remains a failed gate after reports have been written.
+process_status=0
+if ! cargo run --locked --all-features -p lantern-sim --example connection_process_acceptance -- --write-fixture; then
+    process_status=1
+fi
+if ! sh scripts/ci/test-product-cli.sh "$CARGO_TARGET_DIR/debug/vfd-lantern"; then
+    process_status=1
+fi
 cargo llvm-cov report --json --summary-only --output-path target/ci/coverage.json
 jq '.data[].files[] | {filename, lines: .summary.lines}' target/ci/coverage.json
 cargo llvm-cov report --html --output-dir target/ci/coverage
 cargo llvm-cov report --fail-under-lines 80
+test "$process_status" -eq 0
