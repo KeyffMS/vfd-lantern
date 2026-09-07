@@ -16,6 +16,7 @@ use nix::{
     unistd::Pid,
 };
 use serde::Deserialize;
+use sha2::Digest as _;
 use tempfile::TempDir;
 
 const ROWS: usize = 42;
@@ -567,6 +568,115 @@ fn main() -> Result<()> {
     }
     run_reconnect_case(&simulator, &product)?;
     println!("process-e2e reconnect-identity-change ok");
+    run_monitoring_case(&simulator, &product)?;
+    println!("process-e2e monitoring-csv-faults-read-only ok");
+    Ok(())
+}
+
+fn run_monitoring_case(simulator_binary: &Path, product_binary: &Path) -> Result<()> {
+    let env = CaseEnvironment::new()?;
+    let selected = env.root.path().join("selected-vfd.toml");
+    fs::write(&selected, fs::read_to_string(reference_profile())?)?;
+    let profile = lantern_sim::load_profile(&selected)?;
+    let scenario = env.root.path().join("monitoring.toml");
+    let mut source = scenario_source(&selected, &profile, Case::MatchProcessOff);
+    source.push_str(
+        "\n[initial_values]\n\"status.output_frequency\" = \"12.34\"\n\"config.acceleration\" = \"0.1\"\n",
+    );
+    fs::write(&scenario, source)?;
+    let simulator = Simulator::spawn(
+        simulator_binary,
+        &selected,
+        &scenario,
+        env.root.path().join("monitoring.jsonl"),
+    )?;
+    let mut product = TerminalChild::spawn(
+        product_binary,
+        &product_args(&selected, &simulator.pty),
+        &env,
+    )?;
+    drive_to_summary(&mut product)?;
+    product.send("\r")?;
+    product.wait_for("Verified read-only session established")?;
+    product.send("2")?;
+    product.wait_for("Profile-owned Dashboard values:")?;
+    product.wait_for("12.34")?;
+    product.send("3")?;
+    product.wait_for("Validated monitoring catalog:")?;
+    product.send("/output_frequency\r")?;
+    product.wait_for("search=\"output_frequency\"")?;
+    product.send("\r")?;
+    product.wait_for("Panel 1")?;
+    product.wait_for("history")?;
+    for (key, expected) in [
+        (" ", "PAUSED"),
+        ("w", "window=5m"),
+        ("+", "zoom=1"),
+        (",", "pan=-1"),
+        ("c", "cursor=0"),
+        ("0", "zoom=0"),
+    ] {
+        product.send(key)?;
+        product.wait_for(expected)?;
+    }
+    product.send("x")?;
+    product.wait_for("search=\"\"")?;
+    product.send("4")?;
+    product.wait_for("catalog=3")?;
+    product.send("/acceleration\r")?;
+    product.wait_for("matches=1")?;
+    product.send("R")?;
+    product.wait_for("Good")?;
+    product.send("e")?;
+    product.wait_for("Parameter editor unavailable")?;
+    product.send("\rA")?;
+    product.wait_for("Write arming unavailable")?;
+    product.send("\rw")?;
+    product.wait_for("Writes are disarmed")?;
+    product.send("\rx")?;
+    product.wait_for("matches=3")?;
+    product.send("6")?;
+    product.wait_for("DEMO.01")?;
+    product.send("a")?;
+    product.wait_for("ack=true")?;
+    product.send("o")?;
+    product.wait_for("No fault events match")?;
+    product.send("oe")?;
+    product.wait_for("last export:")?;
+    product.send("8")?;
+    product.wait_for("Validated CSV channel catalog:")?;
+    product.send("\r")?;
+    product.wait_for("selected=1")?;
+    product.send("s")?;
+    product.wait_for("state=Running")?;
+    thread::sleep(Duration::from_millis(1200));
+    product.send("s")?;
+    product.wait_for("state=Completed")?;
+    product.quit()?;
+    let records = simulator.stop()?;
+    assert_read_only_at_least("monitoring", &records, 5)?;
+    let root = env.data.join("vfd-lantern");
+    let csv_files = fs::read_dir(root.join("csv"))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let csv = csv_files
+        .iter()
+        .find(|path| path.extension().is_some_and(|extension| extension == "csv"))
+        .context("completed CSV file")?;
+    let csv_text = fs::read_to_string(csv)?;
+    ensure!(csv_text.starts_with("schema_version,record_type,"));
+    ensure!(csv_text.lines().count() > 1, "CSV must contain samples");
+    let sidecar = lantern_storage::AppPaths::final_csv_sidecar(csv);
+    ensure!(sidecar.is_file(), "completed CSV requires a session sidecar");
+    let exports = fs::read_dir(root.join("fault-reports"))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    ensure!(exports.len() == 1, "exactly one fault export expected");
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(&exports[0])?)?;
+    ensure!(report["event"]["acknowledged"] == true);
+    ensure!(report["event"]["profile_hash"] == profile.profile_hash().to_hex());
+    let digest = sha2::Sha256::digest(serde_jcs::to_vec(&report["event"])?);
+    ensure!(report["sha256"] == format!("{digest:x}"));
     Ok(())
 }
 

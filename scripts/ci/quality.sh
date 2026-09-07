@@ -7,6 +7,7 @@ rustc --version | grep '^rustc 1.97.1 '
 mkdir -p target/ci
 cargo metadata --locked --format-version 1 --no-deps > target/ci/workspace.json
 cargo fmt --all -- --check
+rustfmt --check --edition 2024 crates/lantern-app/src/write_coordinator_restore_tests.rs
 cargo fmt --manifest-path fuzz/Cargo.toml --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo hack check --workspace --each-feature --locked
