@@ -48,9 +48,12 @@ The PTY harness exercises monitoring, completed CSV
 and its sidecar, fault acknowledgment/export integrity, and read-only write guards.
 The quality gate additionally passes `--write-fixture`: this launches a disposable
 PTY simulator, approves its profile only in temporary XDG directories, and checks
-that an incorrect confirmation sends no write while exact confirmation sends one
-FC06 with durable prepare/finalize audit records. Long-run mock demonstrations do
-not pass this option. Restore unit contracts cover single-use permits, audit order,
+in a complete trace from a separate process that an incorrect confirmation sends
+no write. Exact confirmation sends one FC06 to the read-only #20 simulator, which
+returns IllegalFunction. The product must report DeviceRejected, perform zero
+retries and durably audit that exact outcome. Verified write/read-back is covered
+by the kernel and restore contracts; this mock does not claim a successful device
+write. Long-run mock demonstrations do not pass this option. Restore unit contracts cover single-use permits, audit order,
 abort, changed preconditions and failed read-back. HTML and JSON reports are uploaded, also
 on failure. Critical write, trust, audit, restore and state rules retain their
 positive and negative tests irrespective of the aggregate percentage.
@@ -164,7 +167,7 @@ These are production requirements, not prerequisites for the #21 mock demo:
   Default operation remains read-only. The mock demo requires no device access.
 
 The demo uses `$HOME/.local/state/vfd-lantern-gates` on the existing feature runner,
-separate run/upload jobs, and a short duration. `issue21-acceptance.yml` builds its
-nonproduction bundle and exercises each gate. Its reports are always marked
+separate run/upload jobs, and a short duration. `issue21-acceptance.yml` supports
+manual dispatch, builds its nonproduction bundle and exercises each gate. Its reports are always marked
 `evidence_kind: mock`. Green mock runs do not constitute 24-hour or physical HIL
 qualification.

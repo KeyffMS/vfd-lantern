@@ -75,11 +75,13 @@ struct Handshake {
 struct StructuredLogLine {
     record: String,
     function: Option<u8>,
+    outcome: Option<String>,
 }
 
 #[derive(Debug)]
 struct LogRecord {
     function: u8,
+    outcome: String,
 }
 
 struct ChildGuard(Child);
@@ -571,13 +573,19 @@ fn main() -> Result<()> {
     run_monitoring_case(&simulator, &product)?;
     println!("process-e2e monitoring-csv-faults-read-only ok");
     if std::env::args().any(|argument| argument == "--write-fixture") {
-        run_guarded_write_case(&simulator, &product)?;
-        println!("process-e2e simulator-only-guarded-write ok");
+        run_guarded_write_case(&simulator, &product, false)?;
+        println!("process-e2e rejected-confirmation-no-write ok");
+        run_guarded_write_case(&simulator, &product, true)?;
+        println!("process-e2e simulator-device-rejection-no-retry ok");
     }
     Ok(())
 }
 
-fn run_guarded_write_case(simulator_binary: &Path, product_binary: &Path) -> Result<()> {
+fn run_guarded_write_case(
+    simulator_binary: &Path,
+    product_binary: &Path,
+    confirm: bool,
+) -> Result<()> {
     let env = CaseEnvironment::new()?;
     let selected = env.root.path().join("selected-vfd.toml");
     fs::write(&selected, fs::read_to_string(reference_profile())?)?;
@@ -633,29 +641,31 @@ fn run_guarded_write_case(simulator_binary: &Path, product_binary: &Path) -> Res
         .and_then(|suffix| suffix.split_whitespace().next())
         .context("operator-visible exact write challenge")?
         .to_owned();
-    let before = read_log_records(&simulator.log_path)?;
-    ensure!(
-        before
-            .iter()
-            .all(|record| record.function == 3 || record.function == 4)
-    );
     product.send("w")?;
     product.wait_for("Write confirmation:")?;
     product.send("wrong\r")?;
     product.wait_for("operator confirmation does not exactly match")?;
-    let rejected = read_log_records(&simulator.log_path)?;
-    ensure!(
-        rejected
-            .iter()
-            .all(|record| record.function == 3 || record.function == 4)
-    );
+    if !confirm {
+        // The simulator writes its complete trace only during graceful shutdown.
+        product.quit()?;
+        let records = simulator.stop()?;
+        assert_read_only_at_least("rejected-confirmation", &records, 5)?;
+        return Ok(());
+    }
     product.send("w")?;
     product.wait_for("Write confirmation:")?;
     product.send(&format!("{challenge}\r"))?;
-    product.wait_for("write outcome: Executed(Verified)")?;
+    // #20's read-only simulator rejects FC06 with IllegalFunction. Verify the
+    // product reports that refusal and never retries; it must not claim Verified.
+    product.wait_for("write outcome: Executed(DeviceRejected)")?;
     product.quit()?;
     let records = simulator.stop()?;
     ensure!(records.iter().filter(|record| record.function == 6).count() == 1);
+    let write = records
+        .iter()
+        .find(|record| record.function == 6)
+        .context("single confirmed write request")?;
+    ensure!(write.outcome == "exception:01");
     ensure!(
         records
             .iter()
@@ -671,6 +681,9 @@ fn run_guarded_write_case(simulator_binary: &Path, product_binary: &Path) -> Res
             for line in fs::read_to_string(path)?.lines() {
                 let record: serde_json::Value = serde_json::from_str(line)?;
                 kinds.push(record["kind"].as_str().context("audit kind")?.to_owned());
+                if record["kind"] == "device_write_finalized" {
+                    ensure!(record["body"]["outcome"] == "device_rejected");
+                }
             }
         }
     }
@@ -1148,6 +1161,9 @@ fn read_log_records(path: &Path) -> Result<Vec<LogRecord>> {
                 function: parsed
                     .function
                     .context("simulator request record is missing function")?,
+                outcome: parsed
+                    .outcome
+                    .context("simulator request record is missing outcome")?,
             });
         }
     }

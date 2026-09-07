@@ -1,5 +1,6 @@
 name: Issue 21 infrastructure acceptance
 on:
+  workflow_dispatch:
   push:
     branches: [agent/issue-21]
 permissions:
