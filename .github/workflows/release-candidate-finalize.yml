@@ -176,6 +176,9 @@ jobs:
           mkdir -p target/finalize/reports
           for report in target/finalize/assets/gate-report-*.json; do
             test -f "$report"
+            # The product includes gate-report-v1.schema.json alongside reports.
+            # Keep the schema in snapshot S, but never parse it as gate evidence.
+            case "$report" in *.schema.json) continue ;; esac
             cp "$report" target/finalize/reports/
           done
 

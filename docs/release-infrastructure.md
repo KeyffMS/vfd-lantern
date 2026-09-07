@@ -92,6 +92,14 @@ All required commands and `podman info` passed on `vfd-lantern-podman-01` in
 [the runner preflight](https://github.com/KeyffMS/vfd-lantern/actions/runs/34051951413/job/101537079934).
 Preflight success alone does not establish package or release acceptance.
 
+On 2026-09-07 the operator deployed runner image `r3`, adding `CAP_NET_ADMIN`
+and removing an unnecessary `ping_group_range` setting. `/proc/sys` remains
+read-only; limits remain 4 CPUs, 6 GB RAM and 1024 PIDs. The exact offline
+install/smoke/integrity/purge test then
+[passed on the runner](https://github.com/KeyffMS/vfd-lantern/actions/runs/34089818904/job/101699646273).
+When provisioning the runner, verify an actual `podman run --rm --network=none`
+against the pinned image in addition to `podman info`.
+
 The runner image/container deployment is maintained outside this repository.
 Its administrator needs to provide these packages in the image before starting CI:
 
