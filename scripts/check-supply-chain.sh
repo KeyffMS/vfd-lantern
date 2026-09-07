@@ -232,6 +232,7 @@ prepare_rustsec_database
 cargo deny check --disable-fetch
 deny=pass
 cargo audit --db "$RUSTSEC_DATABASE_DIR" --no-fetch
+cargo audit --file fuzz/Cargo.lock --db "$RUSTSEC_DATABASE_DIR" --no-fetch
 audit=pass
 cargo vet check
 vet=pass

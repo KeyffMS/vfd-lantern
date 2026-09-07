@@ -7,6 +7,7 @@ rustc --version | grep '^rustc 1.97.1 '
 mkdir -p target/ci
 cargo metadata --locked --format-version 1 --no-deps > target/ci/workspace.json
 cargo fmt --all -- --check
+cargo fmt --manifest-path fuzz/Cargo.toml --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo hack check --workspace --each-feature --locked
 cargo test --workspace --all-features --doc --locked
@@ -17,13 +18,16 @@ sh scripts/ci/benchmark.sh
 
 # Coverage combines nextest with the actual CLI/PTY process harness. No production
 # crate/file is removed from the report to satisfy the global line threshold.
+export CARGO_TARGET_DIR="$PWD/target/llvm-cov-target"
+# 0.6.21 exposes --export-prefix. Capture separately so eval cannot mask failure.
+coverage_environment=$(cargo llvm-cov show-env --export-prefix)
+eval "$coverage_environment"
 cargo llvm-cov clean --workspace
-cargo llvm-cov nextest --workspace --all-features --locked --no-report
-# The process harness launches these siblings; compile both with the same
-# instrumentation and target directory before running it.
-eval "$(cargo llvm-cov show-env --sh)"
-cargo build --workspace --bins --locked
-cargo llvm-cov run --locked -p lantern-sim --example connection_process_acceptance --no-report
+cargo nextest run --workspace --all-features --locked
+# Under show-env, regular Cargo commands share instrumentation with nextest.
+# The process harness launches the product and simulator as sibling binaries.
+cargo build --workspace --all-features --bins --locked
+cargo run --locked --all-features -p lantern-sim --example connection_process_acceptance
 cargo llvm-cov report --json --summary-only --output-path target/ci/coverage.json
 jq '.data[].files[] | {filename, lines: .summary.lines}' target/ci/coverage.json
 cargo llvm-cov report --html --output-dir target/ci/coverage
