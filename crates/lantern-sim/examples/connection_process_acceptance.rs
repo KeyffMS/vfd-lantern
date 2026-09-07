@@ -16,9 +16,10 @@ use nix::{
     unistd::Pid,
 };
 use serde::Deserialize;
+use sha2::Digest as _;
 use tempfile::TempDir;
 
-const ROWS: usize = 42;
+const ROWS: usize = 64;
 const COLS: usize = 140;
 const SEED: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 const PROCESS_TIMEOUT: Duration = Duration::from_secs(8);
@@ -74,11 +75,13 @@ struct Handshake {
 struct StructuredLogLine {
     record: String,
     function: Option<u8>,
+    outcome: Option<String>,
 }
 
 #[derive(Debug)]
 struct LogRecord {
     function: u8,
+    outcome: String,
 }
 
 struct ChildGuard(Child);
@@ -414,7 +417,7 @@ impl TerminalChild {
             if Instant::now() >= deadline {
                 bail!(
                     "TUI did not render {needle:?}; reconstructed screen:\n{}",
-                    tail(&text, 6000)
+                    tail(&text, 20000)
                 );
             }
             thread::sleep(Duration::from_millis(25));
@@ -567,6 +570,286 @@ fn main() -> Result<()> {
     }
     run_reconnect_case(&simulator, &product)?;
     println!("process-e2e reconnect-identity-change ok");
+    run_monitoring_case(&simulator, &product)?;
+    println!("process-e2e monitoring-csv-faults-read-only ok");
+    if std::env::args().any(|argument| argument == "--write-fixture") {
+        run_guarded_write_case(&simulator, &product, false)?;
+        println!("process-e2e rejected-confirmation-no-write ok");
+        run_guarded_write_case(&simulator, &product, true)?;
+        println!("process-e2e simulator-device-rejection-no-retry ok");
+    }
+    Ok(())
+}
+
+fn run_guarded_write_case(
+    simulator_binary: &Path,
+    product_binary: &Path,
+    confirm: bool,
+) -> Result<()> {
+    let env = CaseEnvironment::new()?;
+    let selected = env.root.path().join("selected-vfd.toml");
+    fs::write(&selected, fs::read_to_string(reference_profile())?)?;
+    let profile = lantern_sim::load_profile(&selected)?;
+    let hash = profile.profile_hash().to_hex();
+    let approval = Command::new(product_binary)
+        .args(["profile", "approve-write"])
+        .arg(&selected)
+        .args(["--expected-hash", &hash, "--manual-source", "PTY fixture"])
+        .args(["--summary", "Disposable simulator-only acceptance"])
+        .env("XDG_CONFIG_HOME", &env.config)
+        .env("XDG_DATA_HOME", &env.data)
+        .env("XDG_STATE_HOME", &env.state)
+        .env("XDG_CACHE_HOME", &env.cache)
+        .status()?;
+    ensure!(approval.success(), "isolated fixture profile approval");
+    let scenario = env.root.path().join("guarded-write.toml");
+    let mut source = scenario_source(&selected, &profile, Case::MatchDisarmed);
+    source.push_str("\n[initial_values]\n\"config.acceleration\" = \"9\"\n");
+    fs::write(&scenario, source)?;
+    let simulator = Simulator::spawn(
+        simulator_binary,
+        &selected,
+        &scenario,
+        env.root.path().join("guarded-write.jsonl"),
+    )?;
+    let mut args = product_args(&selected, &simulator.pty);
+    args.push("--enable-writes".to_owned());
+    let mut product = TerminalChild::spawn(product_binary, &args, &env)?;
+    drive_to_summary(&mut product)?;
+    product.send("\r")?;
+    product.wait_for("Verified read-only session established")?;
+    product.send("4")?;
+    product.wait_for("WRITES DISARMED")?;
+    product.send("/acceleration\r")?;
+    product.wait_for("matches=1")?;
+    product.send("R")?;
+    product.wait_for("quality=Good")?;
+    product.send("A")?;
+    product.wait_for("Arming confirmation:")?;
+    product.send(&format!("ARM {}\r", &hash[..12]))?;
+    product.wait_for("WRITES ARMED")?;
+    product.send("e")?;
+    product.wait_for("Typed editor Fixed:")?;
+    product.send("\x7f10\r")?;
+    product.wait_for("STAGED WRITE INTENT")?;
+    product.send("w")?;
+    product.wait_for("guarded plan prepared; exact operator confirmation required")?;
+    let screen = product.screen_text();
+    let challenge = screen
+        .split("challenge=")
+        .nth(1)
+        .and_then(|suffix| suffix.split_whitespace().next())
+        .context("operator-visible exact write challenge")?
+        .to_owned();
+    product.send("w")?;
+    product.wait_for("Write confirmation:")?;
+    product.send("wrong\r")?;
+    product.wait_for("operator confirmation does not exactly match")?;
+    if !confirm {
+        // The simulator writes its complete trace only during graceful shutdown.
+        product.quit()?;
+        let records = simulator.stop()?;
+        assert_read_only_at_least("rejected-confirmation", &records, 5)?;
+        return Ok(());
+    }
+    product.send("w")?;
+    product.wait_for("Write confirmation:")?;
+    product.send(&format!("{challenge}\r"))?;
+    // #20's read-only simulator rejects FC06 with IllegalFunction. Verify the
+    // product reports that refusal and never retries; it must not claim Verified.
+    product.wait_for("write outcome: Executed(DeviceRejected)")?;
+    product.quit()?;
+    let records = simulator.stop()?;
+    ensure!(records.iter().filter(|record| record.function == 6).count() == 1);
+    let write = records
+        .iter()
+        .find(|record| record.function == 6)
+        .context("single confirmed write request")?;
+    ensure!(write.outcome == "exception:01");
+    ensure!(
+        records
+            .iter()
+            .all(|record| matches!(record.function, 3 | 4 | 6))
+    );
+    let mut kinds = Vec::new();
+    for entry in fs::read_dir(env.state.join("vfd-lantern/audit"))? {
+        let path = entry?.path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "jsonl")
+        {
+            for line in fs::read_to_string(path)?.lines() {
+                let record: serde_json::Value = serde_json::from_str(line)?;
+                kinds.push(record["kind"].as_str().context("audit kind")?.to_owned());
+                if record["kind"] == "device_write_finalized" {
+                    ensure!(record["body"]["outcome"] == "device_rejected");
+                }
+            }
+        }
+    }
+    let prepared = kinds
+        .iter()
+        .position(|kind| kind == "device_write_prepared")
+        .context("durable preparation")?;
+    let finalized = kinds
+        .iter()
+        .position(|kind| kind == "device_write_finalized")
+        .context("durable finalization")?;
+    ensure!(prepared < finalized, "durable audit ordering");
+    Ok(())
+}
+
+fn run_monitoring_case(simulator_binary: &Path, product_binary: &Path) -> Result<()> {
+    let env = CaseEnvironment::new()?;
+    let selected = env.root.path().join("selected-vfd.toml");
+    fs::write(&selected, fs::read_to_string(reference_profile())?)?;
+    let profile = lantern_sim::load_profile(&selected)?;
+    let scenario = env.root.path().join("monitoring.toml");
+    let mut source = scenario_source(&selected, &profile, Case::MatchProcessOff);
+    source.push_str(
+        "\n[initial_values]\n\"status.output_frequency\" = \"12.34\"\n\"config.acceleration\" = \"0.1\"\n",
+    );
+    fs::write(&scenario, source)?;
+    let simulator = Simulator::spawn(
+        simulator_binary,
+        &selected,
+        &scenario,
+        env.root.path().join("monitoring.jsonl"),
+    )?;
+    let mut product = TerminalChild::spawn(
+        product_binary,
+        &product_args(&selected, &simulator.pty),
+        &env,
+    )?;
+    drive_to_summary(&mut product)?;
+    product.send("\r")?;
+    product.wait_for("Verified read-only session established")?;
+    product.send("2")?;
+    product.wait_for("Profile-owned Dashboard values:")?;
+    product.wait_for("12.34")?;
+    product.send("3")?;
+    product.wait_for("Validated monitoring catalog:")?;
+    product.send("/output_frequency\r")?;
+    product.wait_for("search=\"output_frequency\"")?;
+    product.send("\r")?;
+    product.wait_for("Panel 1")?;
+    product.wait_for("history")?;
+    for (key, expected) in [
+        (" ", "PAUSED"),
+        ("w", "window=5m"),
+        ("+", "zoom=1"),
+        (",", "pan=-1"),
+        ("c", "cursor=0"),
+        ("n", "cursor=1"),
+        ("p", "cursor=0"),
+        (".", "pan=0"),
+        ("-", "zoom=0"),
+        ("0", "zoom=0"),
+    ] {
+        product.send(key)?;
+        product.wait_for(expected)?;
+    }
+    product.send("x")?;
+    product.wait_for("search=\"\"")?;
+    product.send("4")?;
+    product.wait_for("catalog=3")?;
+    product.send("/acceleration\r")?;
+    product.wait_for("matches=1")?;
+    product.send("R")?;
+    product.wait_for("Good")?;
+    product.send("e")?;
+    product.wait_for("Parameter editor unavailable")?;
+    product.send("\rA")?;
+    product.wait_for("Write arming unavailable")?;
+    product.send("\rw")?;
+    product.wait_for("Writes are disarmed")?;
+    product.send("\rx")?;
+    product.wait_for("matches=3")?;
+    for (key, expected) in [
+        ("g", "group=status"),
+        ("g", "group=all"),
+        ("a", "access=ReadOnly"),
+        ("a", "access=WritableWhenStopped"),
+        ("a", "access=Commissioning"),
+        ("a", "access=Dangerous"),
+        ("a", "access=all"),
+        ("y", "quality=Good"),
+        ("y", "quality=Stale"),
+        ("y", "quality=Timeout"),
+        ("y", "quality=ProtocolException"),
+        ("y", "quality=DecodeError"),
+        ("y", "quality=Disconnected"),
+        ("y", "quality=Unavailable"),
+        ("y", "quality=all"),
+        ("u", "unreadable=true"),
+        ("u", "unreadable=false"),
+        ("r", "risk=ReadOnly"),
+        ("r", "risk=Normal"),
+        ("r", "risk=Commissioning"),
+        ("r", "risk=Dangerous"),
+        ("r", "risk=all"),
+        ("t", "quantity=Time"),
+        ("t", "quantity=DigitalState"),
+        ("t", "quantity=Frequency"),
+        ("t", "quantity=all"),
+    ] {
+        product.send(key)?;
+        product.wait_for(expected)?;
+    }
+    product.send("6")?;
+    product.wait_for("DEMO.01")?;
+    product.send("a")?;
+    product.wait_for("ack=true")?;
+    product.send("o")?;
+    product.wait_for("No fault events match")?;
+    product.send("oe")?;
+    product.wait_for("last export:")?;
+    product.send("u")?;
+    product.wait_for("unknown-only=true")?;
+    product.wait_for("No fault events match")?;
+    product.send("u")?;
+    product.wait_for("unknown-only=false")?;
+    product.send("8")?;
+    product.wait_for("Validated CSV channel catalog:")?;
+    product.send("\r")?;
+    product.wait_for("selected=1")?;
+    product.send("s")?;
+    product.wait_for("state=Running")?;
+    thread::sleep(Duration::from_millis(1200));
+    product.send("s")?;
+    product.wait_for("state=Completed")?;
+    product.quit()?;
+    let records = simulator.stop()?;
+    assert_read_only_at_least("monitoring", &records, 5)?;
+    let root = env.data.join("vfd-lantern");
+    let csv_files = fs::read_dir(root.join("csv"))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let csv = csv_files
+        .iter()
+        .find(|path| path.extension().is_some_and(|extension| extension == "csv"))
+        .context("completed CSV file")?;
+    let csv_text = fs::read_to_string(csv)?;
+    ensure!(csv_text.starts_with("schema_version,record_type,"));
+    ensure!(csv_text.lines().count() > 1, "CSV must contain samples");
+    let sidecar = lantern_storage::AppPaths::final_csv_sidecar(csv);
+    ensure!(
+        sidecar.is_file(),
+        "completed CSV requires a session sidecar"
+    );
+    let exports = fs::read_dir(root.join("fault-reports"))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    ensure!(exports.len() == 1, "exactly one fault export expected");
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(&exports[0])?)?;
+    ensure!(report["event"]["acknowledged"] == true);
+    ensure!(report["event"]["profile_hash"] == profile.profile_hash().to_hex());
+    let digest = sha2::Sha256::digest(serde_jcs::to_vec(&report["event"])?);
+    let digest = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    ensure!(report["sha256"] == digest);
     Ok(())
 }
 
@@ -850,7 +1133,10 @@ address = { notation = "pdu_zero_based", value = 100 }
 }
 
 fn reference_profile() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../profiles/example-vfd.toml")
+    std::env::var_os("VFD_LANTERN_TEST_PROFILE").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../profiles/example-vfd.toml"),
+        PathBuf::from,
+    )
 }
 
 fn debug_directory() -> Result<PathBuf> {
@@ -875,6 +1161,9 @@ fn read_log_records(path: &Path) -> Result<Vec<LogRecord>> {
                 function: parsed
                     .function
                     .context("simulator request record is missing function")?,
+                outcome: parsed
+                    .outcome
+                    .context("simulator request record is missing outcome")?,
             });
         }
     }

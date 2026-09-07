@@ -14,12 +14,12 @@ do
     fi
 done
 
-if ! grep -q 'scripts/install-cargo-tools.sh supply-chain' .github/workflows/ci.yml; then
+if ! grep -q 'scripts/install-cargo-tools.sh supply-chain' .github/workflows/ci-quality.yml; then
     printf 'CI does not install the pinned supply-chain tools\n' >&2
     exit 1
 fi
 
-if ! grep -q 'scripts/check-supply-chain.sh' .github/workflows/ci.yml; then
+if ! grep -q 'scripts/check-supply-chain.sh' .github/workflows/ci-quality.yml; then
     printf 'CI does not execute the full supply-chain gate\n' >&2
     exit 1
 fi

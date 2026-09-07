@@ -28,7 +28,7 @@ pub use audit::{
 };
 pub use backup::{
     BACKUP_SCHEMA_VERSION, BACKUP_SUFFIX, BackupEnvelopeV1, BackupPayloadV1, BackupStorageError,
-    MAX_BACKUP_FILE_BYTES, MAX_BACKUP_VALUES, read_backup, write_backup,
+    MAX_BACKUP_FILE_BYTES, MAX_BACKUP_VALUES, decode_backup, read_backup, write_backup,
 };
 pub use csv_lifecycle::{CsvLoggingCoordinator, CsvLoggingLifecycleState};
 pub use csv_writer::{

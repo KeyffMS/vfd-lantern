@@ -1,0 +1,16 @@
+#!/bin/sh
+# cargo-fuzz 0.13.1 has no Cargo argument passthrough. Its child Cargo commands
+# must enforce the checked-in lockfile even when dependency fetching is offline.
+set -eu
+: "${CI_REAL_CARGO:?pinned Cargo executable required}"
+command=${1:?Cargo subcommand required}
+shift
+case "$command" in
+    build|check|metadata|run|test)
+        exec "$CI_REAL_CARGO" "$command" --locked "$@"
+        ;;
+    --version|-V)
+        exec "$CI_REAL_CARGO" "$command" "$@"
+        ;;
+    *) echo "unsupported Cargo invocation in locked fuzz gate: $command" >&2; exit 2 ;;
+esac

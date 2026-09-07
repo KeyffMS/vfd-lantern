@@ -54,3 +54,10 @@ They are covered by exact-version policy exemptions for this locked graph. These
 entries are not claims of independent source-code audits. Any version change must
 receive fresh audit/import/exemption coverage, and `cargo-deny`, `cargo-audit`, and
 `cargo-vet` remain mandatory gates.
+
+## Issue #21 benchmark dependencies
+
+The previously reserved Criterion 0.7.0 now has a concrete development consumer.
+Its 23 new exact dependency versions receive `safe-to-run` policy exemptions.
+They are not source audits or deployment approvals. The normal supply-chain
+gate remains mandatory; its report keeps exemptions distinct from audits.

@@ -1,0 +1,50 @@
+name: Reusable Debian 13 nightly experiments
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: nightly-amd64-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  experiments:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify runner and prepare pinned nightly tools
+        run: |
+          set -eu
+          test "$RUNNER_NAME" = vfd-lantern-podman-01
+          test "$RUNNER_OS" = Linux && test "$RUNNER_ARCH" = X64
+          sh scripts/release/ensure-runner-tools.sh package
+          nightly=$(sed -n 's/^nightly_toolchain = "\([^"]*\)"$/\1/p' tools.lock.toml)
+          rustup toolchain install "$nightly" --profile minimal --component miri --component rust-src
+          export CARGO_INSTALL_ROOT="$HOME/.cache/vfd-lantern-cargo-tools"
+          export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
+          sh scripts/install-cargo-tools.sh nightly
+      - name: Prepare Miri sysroot before offline gate
+        run: |
+          set -eu
+          nightly=$(sed -n 's/^nightly_toolchain = "\([^"]*\)"$/\1/p' tools.lock.toml)
+          sysroot=$(cargo +"$nightly" miri setup --print-sysroot)
+          echo "MIRI_SYSROOT=$sysroot" >> "$GITHUB_ENV"
+      - name: Execute fuzz Miri mutations and benchmark smoke
+        run: sh scripts/ci/in-container.sh nightly
+      - name: Preserve corpus crashes and mutation reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nightly-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            target/ci/nightly
+            fuzz/corpus
+            fuzz/artifacts
+            target/criterion
+          if-no-files-found: error
+          retention-days: 30

@@ -133,7 +133,18 @@ pub fn write_backup(path: &Path, backup: &BackupSnapshot) -> Result<(), BackupSt
 pub fn read_backup(path: &Path) -> Result<BackupSnapshot, BackupStorageError> {
     let bytes = read_bounded(path, MAX_BACKUP_FILE_BYTES)
         .map_err(|error| BackupStorageError::Storage(error.to_string()))?;
-    let envelope: BackupEnvelopeV1 = serde_json::from_slice(&bytes)
+    decode_backup(&bytes)
+}
+
+/// Validates an untrusted backup without filesystem access. Shared by storage,
+/// fuzzing and serializer checks, including the same byte limit as file reads.
+pub fn decode_backup(bytes: &[u8]) -> Result<BackupSnapshot, BackupStorageError> {
+    if bytes.len() > MAX_BACKUP_FILE_BYTES {
+        return Err(BackupStorageError::Storage(
+            "backup exceeds byte limit".into(),
+        ));
+    }
+    let envelope: BackupEnvelopeV1 = serde_json::from_slice(bytes)
         .map_err(|error| BackupStorageError::Deserialize(error.to_string()))?;
     if envelope.schema_version != BACKUP_SCHEMA_VERSION {
         return Err(BackupStorageError::UnsupportedSchema(
@@ -549,6 +560,18 @@ mod tests {
             ]),
             errors: Box::new([]),
         }
+    }
+
+    #[test]
+    fn pure_decoder_accepts_fuzz_seed_and_rejects_trailing_and_oversized_bytes() {
+        let seed = include_bytes!("../../../fuzz/corpus/persistent/backup.json");
+        let backup = super::decode_backup(seed).expect("valid corpus seed");
+        assert_eq!(backup.values.len(), 1);
+        let mut trailing = seed.to_vec();
+        trailing.extend_from_slice(b"{}");
+        assert!(super::decode_backup(&trailing).is_err());
+        let oversized = vec![0; super::MAX_BACKUP_FILE_BYTES + 1];
+        assert!(super::decode_backup(&oversized).is_err());
     }
 
     #[test]

@@ -223,12 +223,16 @@ prepare_rustsec_database() {
 
 sh scripts/check-supply-chain-baseline.sh
 baseline=pass
+cargo metadata --locked --format-version 1 > "$REPORT_DIR/dependencies.json"
+jq '[.packages[] | {name, version, license, license_file, source}]' \
+    "$REPORT_DIR/dependencies.json" > "$REPORT_DIR/licenses.json"
 cargo machete
 machete=pass
 prepare_rustsec_database
 cargo deny check --disable-fetch
 deny=pass
 cargo audit --db "$RUSTSEC_DATABASE_DIR" --no-fetch
+cargo audit --file fuzz/Cargo.lock --db "$RUSTSEC_DATABASE_DIR" --no-fetch
 audit=pass
 cargo vet check
 vet=pass

@@ -2059,6 +2059,9 @@ mod write_pipeline_e2e_tests {
         finals: Mutex<Vec<(DeviceWriteOutcome, ReadBackEvidence)>>,
         finishes: Mutex<Vec<WriteOutcome>>,
         diagnostics: Mutex<Vec<String>>,
+        operation_starts: Mutex<Vec<lantern_domain::OperationAuditStart>>,
+        operation_finishes: Mutex<Vec<lantern_domain::OperationAuditFinish>>,
+        restore: Mutex<Option<(OperationId, String, usize)>>,
     }
 
     struct PipelineBus {
@@ -2166,6 +2169,32 @@ mod write_pipeline_e2e_tests {
                 .push((outcome, read_back));
             Box::pin(async { Ok(()) })
         }
+        fn begin_operation(
+            &self,
+            start: lantern_domain::OperationAuditStart,
+        ) -> PortFuture<'_, Result<lantern_domain::OperationToken, AuditError>> {
+            self.trace.events.lock().unwrap().push("operation:begin");
+            let token = lantern_domain::OperationToken::for_start(2, &start);
+            self.trace.operation_starts.lock().unwrap().push(start);
+            let allowed = self.available && !self.fail_prepare;
+            Box::pin(async move {
+                if allowed {
+                    Ok(token)
+                } else {
+                    Err(AuditError::Unavailable)
+                }
+            })
+        }
+
+        fn finish_operation(
+            &self,
+            _token: lantern_domain::OperationToken,
+            finish: lantern_domain::OperationAuditFinish,
+        ) -> PortFuture<'_, Result<(), AuditError>> {
+            self.trace.events.lock().unwrap().push("operation:finish");
+            self.trace.operation_finishes.lock().unwrap().push(finish);
+            Box::pin(async { Ok(()) })
+        }
     }
 
     struct TestTrust {
@@ -2269,6 +2298,59 @@ mod write_pipeline_e2e_tests {
             snapshot.operation_idle = true;
             snapshot.armed = false;
             snapshot.audit_healthy = false;
+        }
+
+        fn begin_restore(&self, id: OperationId, hash: &str) -> Result<(), SessionControlError> {
+            let mut state = self.snapshot.lock().unwrap();
+            if !state.operation_idle {
+                return Err(SessionControlError::PreconditionChanged);
+            }
+            state.operation_idle = false;
+            *self.trace.restore.lock().unwrap() = Some((id, hash.to_owned(), 0));
+            Ok(())
+        }
+
+        fn restore_matches(&self, id: OperationId, hash: &str, index: usize) -> bool {
+            self.trace
+                .restore
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|current| current.0 == id && current.1 == hash && current.2 == index)
+        }
+
+        fn advance_restore(
+            &self,
+            id: OperationId,
+            hash: &str,
+            index: usize,
+        ) -> Result<(), SessionControlError> {
+            let mut active = self.trace.restore.lock().unwrap();
+            let current = active
+                .as_mut()
+                .ok_or(SessionControlError::PreconditionChanged)?;
+            if current.0 != id || current.1 != hash || index != current.2 + 1 {
+                return Err(SessionControlError::PreconditionChanged);
+            }
+            current.2 = index;
+            Ok(())
+        }
+
+        fn finish_restore(&self, id: OperationId, hash: &str) -> Result<(), SessionControlError> {
+            let mut active = self.trace.restore.lock().unwrap();
+            if !active
+                .as_ref()
+                .is_some_and(|current| current.0 == id && current.1 == hash)
+            {
+                return Err(SessionControlError::PreconditionChanged);
+            }
+            *active = None;
+            self.snapshot.lock().unwrap().operation_idle = true;
+            Ok(())
+        }
+
+        fn abort_restore(&self, id: OperationId, hash: &str) -> Result<(), SessionControlError> {
+            self.finish_restore(id, hash)
         }
 
         fn report_write_diagnostic(&self, message: &str) {
@@ -2720,4 +2802,5 @@ mod write_pipeline_e2e_tests {
         assert!(!snapshot.armed);
         assert!(!snapshot.audit_healthy);
     }
+    include!("write_coordinator_restore_tests.rs");
 }

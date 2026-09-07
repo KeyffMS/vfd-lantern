@@ -1,0 +1,6 @@
+FROM docker.io/library/debian@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    rustup build-essential pkg-config libssl-dev libudev-dev \
+    git ca-certificates curl jq xz-utils util-linux time \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /work

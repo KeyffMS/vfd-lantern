@@ -302,6 +302,17 @@ mod tests {
     };
 
     #[test]
+    fn register_counts_reject_zero_and_preserve_nonzero_boundaries() {
+        assert_eq!(RegisterCount::new(0), Err(RegisterRangeError::ZeroCount));
+        for value in [1, 123, 125, u16::MAX] {
+            assert_eq!(
+                RegisterCount::new(value).expect("nonzero count").get(),
+                value
+            );
+        }
+    }
+
+    #[test]
     fn protocol_limits_are_distinct() {
         let read = RegisterCount::new(125).expect("read count");
         assert!(
@@ -321,6 +332,27 @@ mod tests {
                 .validate_count(write)
                 .is_ok()
         );
+        for (function, maximum) in [
+            (ModbusFunction::ReadHoldingRegisters, 125),
+            (ModbusFunction::ReadInputRegisters, 125),
+            (ModbusFunction::WriteSingleRegister, 1),
+            (ModbusFunction::WriteMultipleRegisters, 123),
+        ] {
+            for valid in [1, maximum] {
+                assert!(
+                    function
+                        .validate_count(RegisterCount::new(valid).unwrap())
+                        .is_ok()
+                );
+            }
+            for invalid in [maximum + 1, u16::MAX] {
+                assert!(
+                    function
+                        .validate_count(RegisterCount::new(invalid).unwrap())
+                        .is_err()
+                );
+            }
+        }
     }
 
     #[test]

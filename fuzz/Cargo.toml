@@ -1,0 +1,45 @@
+[package]
+name = "lantern-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[package.metadata]
+cargo-fuzz = true
+[workspace]
+[dependencies]
+libfuzzer-sys = "=0.4.10"
+lantern-domain = { path = "../crates/lantern-domain" }
+lantern-profile = { path = "../crates/lantern-profile" }
+lantern-storage = { path = "../crates/lantern-storage" }
+serde_json = "=1.0.151"
+serde_jcs = "=0.2.0"
+[[bin]]
+name = "parser"
+path = "fuzz_targets/parser.rs"
+test = false
+doc = false
+bench = false
+[[bin]]
+name = "canonical"
+path = "fuzz_targets/canonical.rs"
+test = false
+doc = false
+bench = false
+[[bin]]
+name = "addresses"
+path = "fuzz_targets/addresses.rs"
+test = false
+doc = false
+bench = false
+[[bin]]
+name = "codec"
+path = "fuzz_targets/codec.rs"
+test = false
+doc = false
+bench = false
+[[bin]]
+name = "persistent"
+path = "fuzz_targets/persistent.rs"
+test = false
+doc = false
+bench = false
