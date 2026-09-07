@@ -183,6 +183,7 @@ async fn run_actor(
     status_tx: watch::Sender<CsvWriterStatus>,
 ) {
     let mut active: Option<RunningLogger> = None;
+    let mut data_open = true;
     let mut interval = tokio::time::interval(FLUSH_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     interval.tick().await;
@@ -345,8 +346,13 @@ async fn run_actor(
                     }
                 }
             }
-            item = data.recv() => {
-                let Some(item) = item else { return; };
+            item = data.recv(), if data_open => {
+                let Some(item) = item else {
+                    // The relay closes its sender after draining, before Stop arrives.
+                    // Keep the control channel alive for durable finalization.
+                    data_open = false;
+                    continue;
+                };
                 if let Some(logger) = active.as_mut()
                     && !logger.failed
                     && let Err(error) = write_item(logger, item)

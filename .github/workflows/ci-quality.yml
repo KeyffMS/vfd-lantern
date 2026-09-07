@@ -26,6 +26,7 @@ jobs:
           ref: ${{ inputs.commit }}
           persist-credentials: false
       - name: Verify runner and immutable input
+        id: verify
         env:
           EXPECTED_COMMIT: ${{ inputs.commit }}
         run: |
@@ -46,11 +47,14 @@ jobs:
       - name: Run quality and coverage inside pinned Trixie
         run: sh scripts/ci/in-container.sh quality
       - name: Install pinned supply-chain tools
+        id: supply-tools
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
         run: |
           export CARGO_INSTALL_ROOT="$HOME/.cache/vfd-lantern-cargo-tools"
           export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
           sh scripts/install-cargo-tools.sh supply-chain
       - name: Check dependencies and audit coverage
+        if: ${{ !cancelled() && steps.supply-tools.outcome == 'success' }}
         run: sh scripts/check-supply-chain.sh
       - name: Persist quality evidence even on failure
         if: always()

@@ -88,6 +88,53 @@ fn stop_request(pending_gap: Option<TelemetryGapCore>) -> CsvWriterStop {
 }
 
 #[tokio::test]
+async fn closed_data_channel_still_allows_durable_stop() {
+    let directory = tempdir().expect("tempdir");
+    let csv_path = directory.path().join("capture.csv");
+    let sidecar_path = directory.path().join("capture.csv.session.json");
+    let checkpoint_path = directory.path().join("state/session-runtime-7-3.json");
+    let (tx, rx) = mpsc::channel(4);
+    let (handle, task) = CsvWriterActor::spawn(rx);
+    handle
+        .start(CsvWriterStart {
+            csv_path: csv_path.clone(),
+            sidecar_path: sidecar_path.clone(),
+            checkpoint_path: checkpoint_path.clone(),
+            sidecar: sidecar("unsigned16"),
+        })
+        .await
+        .expect("start");
+    tx.send(CsvTelemetryItem::Sample(sample(
+        EngineeringValue::Fixed(Decimal::new(1234, 0)),
+        TelemetryQuality::Good,
+        1,
+    )))
+    .await
+    .expect("sample");
+    drop(tx);
+    // Let the actor observe EOF before delivering the independent Stop command.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!task.is_finished(), "data EOF must not terminate the writer");
+    handle.stop(stop_request(None)).await.expect("durable stop");
+    assert_eq!(handle.status().state, CsvWriterState::Completed);
+    let mut reader = csv::Reader::from_path(csv_path).expect("CSV");
+    let records = reader
+        .records()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("records");
+    assert_eq!(records.len(), 1);
+    let json: serde_json::Value =
+        serde_json::from_slice(&fs::read(sidecar_path).expect("sidecar")).expect("json");
+    assert_eq!(json["status"], "completed");
+    assert!(
+        !checkpoint_path.exists(),
+        "completed capture removes checkpoint"
+    );
+    handle.shutdown();
+    task.await.expect("actor");
+}
+
+#[tokio::test]
 async fn preexisting_csv_is_never_overwritten() {
     let directory = tempdir().expect("tempdir");
     let csv_path = directory.path().join("capture.csv");

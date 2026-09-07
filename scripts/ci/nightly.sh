@@ -11,7 +11,8 @@ export PROPTEST_CASES=16 PROPTEST_RNG_SEED=21
 run_miri() {
     report=$1
     shift
-    if PROPTEST_DISABLE_FAILURE_PERSISTENCE=1 cargo +"$nightly" miri test --locked "$@" > "$report" 2>&1; then
+    # Miri isolates host environment variables too; pass only these fixed values.
+    if MIRIFLAGS="-Zmiri-env-set=PROPTEST_DISABLE_FAILURE_PERSISTENCE=1 -Zmiri-env-set=PROPTEST_CASES=16 -Zmiri-env-set=PROPTEST_RNG_SEED=21" cargo +"$nightly" miri test --locked "$@" > "$report" 2>&1; then
         cat "$report"
     else
         result=$?

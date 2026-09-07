@@ -415,7 +415,7 @@ impl TerminalChild {
             if Instant::now() >= deadline {
                 bail!(
                     "TUI did not render {needle:?}; reconstructed screen:\n{}",
-                    tail(&text, 6000)
+                    tail(&text, 20000)
                 );
             }
             thread::sleep(Duration::from_millis(25));
