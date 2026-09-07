@@ -140,7 +140,9 @@ pub fn read_backup(path: &Path) -> Result<BackupSnapshot, BackupStorageError> {
 /// fuzzing and serializer checks, including the same byte limit as file reads.
 pub fn decode_backup(bytes: &[u8]) -> Result<BackupSnapshot, BackupStorageError> {
     if bytes.len() > MAX_BACKUP_FILE_BYTES {
-        return Err(BackupStorageError::Storage("backup exceeds byte limit".into()));
+        return Err(BackupStorageError::Storage(
+            "backup exceeds byte limit".into(),
+        ));
     }
     let envelope: BackupEnvelopeV1 = serde_json::from_slice(bytes)
         .map_err(|error| BackupStorageError::Deserialize(error.to_string()))?;

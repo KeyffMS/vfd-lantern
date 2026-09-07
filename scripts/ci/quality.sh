@@ -12,6 +12,8 @@ cargo hack check --workspace --each-feature --locked
 cargo test --workspace --all-features --doc --locked
 RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
 sh scripts/check-architecture.sh
+sh scripts/ci/test-staging.sh
+sh scripts/ci/benchmark.sh
 
 # Coverage combines nextest with the actual CLI/PTY process harness. No production
 # crate/file is removed from the report to satisfy the global line threshold.

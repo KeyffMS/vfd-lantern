@@ -850,7 +850,10 @@ address = { notation = "pdu_zero_based", value = 100 }
 }
 
 fn reference_profile() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../profiles/example-vfd.toml")
+    std::env::var_os("VFD_LANTERN_TEST_PROFILE").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../profiles/example-vfd.toml"),
+        PathBuf::from,
+    )
 }
 
 fn debug_directory() -> Result<PathBuf> {

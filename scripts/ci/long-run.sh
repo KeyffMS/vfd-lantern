@@ -5,7 +5,7 @@ stage=$1
 work=$(mktemp -d "${RUNNER_TEMP:-/tmp}/lantern-gate.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 # Extract individual known regular members, never archive paths or permissions.
-for name in gate-driver vfd-lantern lantern-sim connection_process_acceptance; do
+for name in gate-driver vfd-lantern lantern-sim connection_process_acceptance infrastructure; do
     test "$(tar -tf "$ARTIFACT_PATH" | grep -Fxc "$name")" -eq 1
     tar -xOf "$ARTIFACT_PATH" "$name" >"$work/$name"
     chmod 700 "$work/$name"

@@ -77,7 +77,11 @@ run)
     ;;
 verify)
     verify
-    printf 'stage=%s\nmanifest=%s/complete.json\n' "$stage" "$stage" >>"${GITHUB_OUTPUT:-/dev/stdout}"
+    if test -n "${GITHUB_OUTPUT:-}"; then
+        printf 'stage=%s\nmanifest=%s/complete.json\n' "$stage" "$stage" >>"$GITHUB_OUTPUT"
+    else
+        printf 'stage=%s\nmanifest=%s/complete.json\n' "$stage" "$stage"
+    fi
     ;;
 clean)
     verify

@@ -18,10 +18,6 @@ jobs:
           set -eu
           test "$RUNNER_NAME" = vfd-lantern-podman-01
           rustup default 1.97.1
-          # Only this temporary development job resolves newly added benchmark/fuzz
-          # dependencies. Acceptance exclusively consumes committed --locked inputs.
-          cargo update --workspace
-          cargo generate-lockfile --manifest-path fuzz/Cargo.toml
           cargo fmt --all
           cargo fmt --manifest-path fuzz/Cargo.toml --all
       - name: Export prepared files for review

@@ -4,6 +4,7 @@ on:
     branches: [agent/issue-21]
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: issue21-${{ github.ref }}
   cancel-in-progress: false
@@ -12,3 +13,49 @@ jobs:
     uses: ./.github/workflows/ci-quality.yml
     with:
       commit: ${{ github.sha }}
+  nightly:
+    needs: quality
+    uses: ./.github/workflows/ci-nightly.yml
+  fixture:
+    needs: quality
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    outputs:
+      artifact: ${{ steps.hashes.outputs.artifact }}
+      profile: ${{ steps.hashes.outputs.profile }}
+      scenario: ${{ steps.hashes.outputs.scenario }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build nonproduction fixture inside pinned Trixie
+        run: sh scripts/ci/in-container.sh demo-bundle
+      - name: Record immutable inputs
+        id: hashes
+        run: |
+          echo "artifact=$(sha256sum target/ci/gate-bundle.tar | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          echo "profile=$(sha256sum profiles/example-vfd.toml | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          echo "scenario=$(sha256sum scripts/ci/demo-scenario.json | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue21-demo-bundle
+          path: target/ci/gate-bundle.tar
+          if-no-files-found: error
+  demonstrations:
+    needs: fixture
+    strategy:
+      max-parallel: 1
+      matrix:
+        gate: [soak, hil, performance]
+    uses: ./.github/workflows/ci-long-run.yml
+    with:
+      gate: ${{ matrix.gate }}
+      commit: ${{ github.sha }}
+      artifact-name: issue21-demo-bundle
+      artifact-run-id: ${{ github.run_id }}
+      artifact-sha256: ${{ needs.fixture.outputs.artifact }}
+      profile-path: profiles/example-vfd.toml
+      profile-sha256: ${{ needs.fixture.outputs.profile }}
+      scenario-path: scripts/ci/demo-scenario.json
+      scenario-sha256: ${{ needs.fixture.outputs.scenario }}
+      duration-seconds: 1
+      demo: true

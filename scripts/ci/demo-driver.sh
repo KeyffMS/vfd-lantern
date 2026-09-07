@@ -2,6 +2,9 @@
 # Only a mock acceptance fixture. It cannot produce a candidate/HIL certificate.
 set -eu
 test "$DEMO" = true
+test "$SEED" = 21
+jq -e '.name == "issue21-process-pty-demo" and .seed == 21 and .write_enabled == false' "$SCENARIO_PATH" >/dev/null
+export VFD_LANTERN_TEST_PROFILE="$PROFILE_PATH"
 report=$1
 started=$(date +%s)
 iterations=0
@@ -17,7 +20,11 @@ cp "$GATE_BINARY_DIR/vfd-lantern" "$GATE_BINARY_DIR/lantern-sim" "$GATE_BINARY_D
 cp "$GATE_BINARY_DIR/connection_process_acceptance" "$GATE_BINARY_DIR/debug/examples/"
 while :; do
     before=$(date +%s%N)
-    /usr/bin/time -f '%U %S %M' -o "$timefile" "$GATE_BINARY_DIR/debug/examples/connection_process_acceptance"
+    if test "$GATE" = performance; then
+        /usr/bin/time -f '%U %S %M' -o "$timefile" "$GATE_BINARY_DIR/infrastructure" --test
+    else
+        /usr/bin/time -f '%U %S %M' -o "$timefile" "$GATE_BINARY_DIR/debug/examples/connection_process_acceptance"
+    fi
     after=$(date +%s%N)
     echo "$(( (after - before) / 1000000 ))" >>"$latencies"
     read -r user system peak <"$timefile"
@@ -36,5 +43,5 @@ jq -n --arg gate "$GATE" --arg seed "$SEED" --arg commit "$COMMIT_SHA" \
       artifact_sha256:$artifact,profile_sha256:$profile,scenario_sha256:$scenario,seed:$seed,
       elapsed_seconds:$elapsed,requested_seconds:$requested,
       metrics:{iterations:$iterations,cpu_seconds:$cpu,peak_rss_kib:$rss,latency_p95_ms:$p95,drops:0,
-        latency_scope:"complete process-level PTY acceptance iteration",drops_scope:"lossless synchronous harness output"},
-      hardware:{fingerprint:"mock:process.issue13",firmware:"simulator",adapter:"PTY",audit_outcome:"read-only mock",write_enabled:false}}' >"$report"
+        latency_scope:"complete mock acceptance iteration (PTY or Criterion smoke)",drops_scope:"lossless synchronous harness output"},
+      hardware:{fingerprint:"mock:process.issue13",firmware:"simulator",adapter:"PTY",audit_outcome:"simulator-only; no physical device",write_enabled:false}}' >"$report"
