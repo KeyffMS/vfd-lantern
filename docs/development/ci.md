@@ -61,7 +61,9 @@ lockfiles; formatters and tool commands without a `--locked` option are exceptio
 
 `ci-nightly.yml` is reusable, scheduled and manually dispatchable. The pinned
 `nightly-2026-09-06` has Rust source and Miri available for amd64. Miri checks the
-pure domain and profile hash tests. Five libFuzzer targets cover profile parsers,
+pure domain and profile hash tests with isolation enabled. Only Miri disables
+Proptest's filesystem failure persistence; its fixed seed and results are retained
+in the Miri logs, while native tests keep normal persistence. Five libFuzzer targets cover profile parsers,
 canonical round trips, address/function bounds, register codecs and persistent
 backup decoding. Seeds, logs and crash artifacts are retained. The fuzz workspace
 has its own committed lockfile and pins libfuzzer-sys exactly. cargo-fuzz 0.13.1
