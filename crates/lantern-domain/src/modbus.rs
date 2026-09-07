@@ -332,6 +332,27 @@ mod tests {
                 .validate_count(write)
                 .is_ok()
         );
+        for (function, maximum) in [
+            (ModbusFunction::ReadHoldingRegisters, 125),
+            (ModbusFunction::ReadInputRegisters, 125),
+            (ModbusFunction::WriteSingleRegister, 1),
+            (ModbusFunction::WriteMultipleRegisters, 123),
+        ] {
+            for valid in [1, maximum] {
+                assert!(
+                    function
+                        .validate_count(RegisterCount::new(valid).unwrap())
+                        .is_ok()
+                );
+            }
+            for invalid in [maximum + 1, u16::MAX] {
+                assert!(
+                    function
+                        .validate_count(RegisterCount::new(invalid).unwrap())
+                        .is_err()
+                );
+            }
+        }
     }
 
     #[test]

@@ -23,7 +23,11 @@ permissions.
 `tools.lock.toml`. APT installs rustup and the build dependencies. The host prepares
 the pinned Rust 1.97.1 toolchain, exact Cargo tools and dependency downloads; build
 and test execute inside that image with **no network**, 4 CPUs, 6 GiB RAM and a
-1024 PID limit. Toolchains mount read-only. Container execution uses the working
+1024 PID limit. Toolchains mount read-only. Cargo objects persist outside the
+checkout under `$HOME/.cache/vfd-lantern-ci-target/<containerfile-hash>`; source and
+compiler fingerprints control reuse. Reports are cleared before every execution,
+and coverage starts with a workspace clean. Only fresh evidence is copied back
+for upload. This cache is separate from protected long-run staging. Container execution uses the working
 Podman configuration established for #24; it does not write `/proc/sys`.
 
 The quality gate performs fmt, Clippy with warnings denied, legal feature checks,
@@ -53,8 +57,12 @@ canonical round trips, address/function bounds, register codecs and persistent
 backup decoding. Seeds, logs and crash artifacts are retained. The fuzz workspace
 has its own committed lockfile and pins libfuzzer-sys exactly.
 
+The previous unused `cargo-mutants = 26.0.1` pin does not exist in the crates.io
+index. #21 pins the published 27.1.0 release, which supports TOML 1.1. Cargo
+commands launched by it receive `--locked` through `--cargo-arg=--locked`.
+
 The mutation demonstration inventories the domain mutation space and exercises
-`RegisterCount::new`; it is a bounded demonstration, not a claim that all mutations
+`ModbusFunction::validate_count`; it is a bounded demonstration, not a claim that all mutations
 were killed. Its actual outcomes are retained. Broader campaigns and budgets are
 selected during #25. Criterion has nine benchmark families: codec, planner,
 downsampling, pipeline lifecycle, profile validation, semantic diff, render model,
