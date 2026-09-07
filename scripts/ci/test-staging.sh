@@ -18,10 +18,15 @@ cat > "$root/bundle/gate-driver" <<'DRIVER'
 #!/bin/sh
 set -eu
 test -z "${GITHUB_TOKEN:-}${GH_TOKEN:-}${ACTIONS_RUNTIME_TOKEN:-}"
+sleep 1
 jq -n --arg product "$PRODUCT_SHA256" --arg gate "$GATE" --arg commit "$COMMIT_SHA" \
     --arg asset "$ARTIFACT_SHA" --arg profile "$PROFILE_SHA" --arg scenario "$SCENARIO_SHA" --arg seed "$SEED" \
     '{product_sha256:$product,gate:$gate,commit:$commit,artifact_sha256:$asset,profile_sha256:$profile,scenario_sha256:$scenario,seed:$seed,schema_version:1,status:"pass",evidence_kind:"mock",elapsed_seconds:1,requested_seconds:1,
 metrics:{cpu_seconds:0,peak_rss_kib:1,iterations:1,latency_p95_ms:1,drops:0}}' > "$1"
+if test "${TEST_BAD_REPORT:-}" = true; then
+    jq '.metrics.cpu_seconds = "not a number"' "$1" > "$1.tmp"
+    mv "$1.tmp" "$1"
+fi
 DRIVER
 for file in vfd-lantern lantern-sim connection_process_acceptance infrastructure; do
     printf 'protocol fixture; never executed' > "$root/bundle/$file"
@@ -45,6 +50,8 @@ test -n "$stage"
 reject sh scripts/ci/staging.sh run
 reject env GITHUB_RUN_ID=101 sh scripts/ci/staging.sh verify
 reject env GITHUB_RUN_ATTEMPT=2 sh scripts/ci/staging.sh verify
+# Retrying only upload uses the completed producer job's trusted attempt output.
+env GITHUB_RUN_ATTEMPT=2 GATE_ATTEMPT=1 sh scripts/ci/staging.sh verify >/dev/null
 reject env SEED=22 sh scripts/ci/staging.sh verify
 reject env COMMIT_SHA=2222222222222222222222222222222222222222 sh scripts/ci/staging.sh verify
 reject sh scripts/ci/staging.sh clean
@@ -64,4 +71,9 @@ sh scripts/ci/staging.sh verify >/dev/null
 UPLOAD_CONFIRMED=true sh scripts/ci/staging.sh clean
 test ! -e "$stage"
 reject sh scripts/ci/staging.sh verify
+export GITHUB_RUN_ID=102
+reject env TEST_BAD_REPORT=true sh scripts/ci/staging.sh run
+sh scripts/ci/staging.sh verify > "$root/failed"
+failed_stage=$(sed -n 's/^stage=//p' "$root/failed")
+jq -e '.exit_code != 0' "$failed_stage/complete.json" >/dev/null
 printf 'staging: integrity, identity, token stripping, lock and cleanup checks passed\n'

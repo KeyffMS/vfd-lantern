@@ -14,10 +14,8 @@ jobs:
     with:
       commit: ${{ github.sha }}
   nightly:
-    needs: quality
     uses: ./.github/workflows/ci-nightly.yml
   fixture:
-    needs: quality
     runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
     outputs:
       artifact: ${{ steps.hashes.outputs.artifact }}

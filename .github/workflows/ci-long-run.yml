@@ -62,6 +62,7 @@ jobs:
     environment: ${{ inputs.write-enabled && 'hil-write' || 'ci-read-only' }}
     outputs:
       runner: ${{ steps.identity.outputs.runner }}
+      attempt: ${{ steps.identity.outputs.attempt }}
     env: &gate-env
       STAGING_ROOT: ${{ vars.VFD_LANTERN_STAGING_ROOT || '/var/lib/vfd-lantern-gates' }}
       COMMIT_SHA: ${{ inputs.commit }}
@@ -89,6 +90,7 @@ jobs:
           . /etc/os-release
           test "$ID" = debian && test "$VERSION_ID" = 13
           test "$(uname -m)" = x86_64
+          sh scripts/release/ensure-runner-tools.sh long-run
           case "$GATE" in soak|hil|performance) ;; *) exit 2;; esac
           if test "$DEMO" = true; then
             test "$RUNNER_NAME" = vfd-lantern-podman-01
@@ -98,6 +100,7 @@ jobs:
           test "$WRITE_ENABLED" = false || test "$GATE" = hil
           echo "STAGING_ROOT=$STAGING_ROOT" >> "$GITHUB_ENV"
           echo "runner=$RUNNER_NAME" >> "$GITHUB_OUTPUT"
+          echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       - name: Verify protected Environment before physical writes
         if: inputs.write-enabled
         env:
@@ -127,6 +130,7 @@ jobs:
         run: sh scripts/ci/staging.sh run
   gate-upload:
     needs: gate-run
+    if: always() && needs.gate-run.result != 'cancelled' && needs.gate-run.outputs.runner != ''
     # Unique runner names are operator-provisioned labels, not assumed GitHub labels.
     # Demo uses the sole feature runner; production must provision the name label too.
     runs-on: ${{ fromJSON(inputs.demo && '["self-hosted","linux","x64","podman","vfd-lantern"]' || format('["self-hosted","linux","x64","{0}"]', needs.gate-run.outputs.runner)) }}
@@ -144,6 +148,7 @@ jobs:
         id: verify
         env:
           EXPECTED_RUNNER: ${{ needs.gate-run.outputs.runner }}
+          GATE_ATTEMPT: ${{ needs.gate-run.outputs.attempt }}
         run: |
           set -eu
           test "$RUNNER_NAME" = "$EXPECTED_RUNNER"
@@ -152,6 +157,7 @@ jobs:
             export STAGING_ROOT="$HOME/.local/state/vfd-lantern-gates"
           fi
           echo "STAGING_ROOT=$STAGING_ROOT" >> "$GITHUB_ENV"
+          echo "GATE_ATTEMPT=$GATE_ATTEMPT" >> "$GITHUB_ENV"
           sh scripts/ci/staging.sh verify
       - name: Upload with fresh job token
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

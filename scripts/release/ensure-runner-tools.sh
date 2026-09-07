@@ -11,7 +11,8 @@ case "$scope" in
     build) packages='gh dpkg-dev binutils xz-utils qpdf'; commands='gh dpkg-shlibdeps objcopy xz zlib-flate' ;;
     package) packages='podman gh'; commands='podman gh' ;;
     github) packages='gh'; commands='gh' ;;
-    *) echo 'usage: ensure-runner-tools.sh build|package|github' >&2; exit 2 ;;
+    long-run) packages='time jq util-linux coreutils tar'; commands='time jq flock realpath sha256sum tar' ;;
+    *) echo 'usage: ensure-runner-tools.sh build|package|github|long-run' >&2; exit 2 ;;
 esac
 provisioning_failed() {
     printf 'Runner cannot install its required packages in this container: %s\n' "$packages" >&2
@@ -35,7 +36,7 @@ if [ "$missing" -eq 1 ]; then
     fi
 fi
 for tool in $commands; do command -v "$tool"; done
-gh --version
+if [ "$scope" != long-run ]; then gh --version; fi
 if [ "$scope" = package ]; then
     # A label alone is not proof that a nested container engine is usable.
     podman info >/dev/null

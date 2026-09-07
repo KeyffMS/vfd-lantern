@@ -109,7 +109,9 @@ and a local `flock` exclude overlapping producers/verifiers on a runner.
 The dependent upload job starts with a fresh token, checks it is on the same
 runner, verifies the marker and uploads the report. Cleanup happens only after a
 successful upload and successful gate. Failed runs retain evidence for diagnosis;
-staging belonging to another run or attempt is never reused. Cancellation before
+staging belonging to another run or producer attempt is never reused. An upload-only
+retry uses the original producer attempt from `needs.gate-run.outputs`, allowing a
+new upload token without repeating the 24-hour test. Cancellation before
 the marker leaves incomplete evidence that cannot be accepted.
 
 `scripts/ci/test-staging.sh` tests tampering, wrong hashes/run/attempt/commit/seed,

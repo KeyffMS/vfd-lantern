@@ -15,7 +15,10 @@ for target in parser canonical addresses codec persistent; do
 done
 # A bounded, reproducible demonstration; nightly inventories the full mutation
 # space and exercises the register-count invariant. #25 selects a wider campaign.
-cargo mutants --list --json --file 'crates/lantern-domain/src/*.rs' > target/ci/nightly/mutations.json
-cargo mutants --locked --file crates/lantern-domain/src/modbus.rs \
+cargo mutants --package lantern-domain --list --json --file 'crates/lantern-domain/src/*.rs' > target/ci/nightly/mutations.json
+cargo mutants --package lantern-domain --locked --file crates/lantern-domain/src/modbus.rs \
     --re 'RegisterCount::new' --timeout 60 --jobs 2 --output target/ci/nightly
 cargo bench --locked -p lantern-sim --bench infrastructure -- --test
+# The demonstration must select real mutations, never succeed with an empty set.
+jq -e 'type == "array" and ([.[] | select(tostring | contains("RegisterCount::new"))] | length > 0)' \
+    target/ci/nightly/mutations.json >/dev/null
