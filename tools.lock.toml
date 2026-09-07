@@ -1,5 +1,6 @@
 schema_version = 1
 rust_toolchain = "1.97.1"
+nightly_toolchain = "nightly-2026-09-06"
 
 [tools]
 cargo-nextest = "0.9.118"

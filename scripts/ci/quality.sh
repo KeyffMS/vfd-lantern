@@ -17,7 +17,12 @@ sh scripts/check-architecture.sh
 # crate/file is removed from the report to satisfy the global line threshold.
 cargo llvm-cov clean --workspace
 cargo llvm-cov nextest --workspace --all-features --locked --no-report
+# The process harness launches these siblings; compile both with the same
+# instrumentation and target directory before running it.
+eval "$(cargo llvm-cov show-env --sh)"
+cargo build --workspace --bins --locked
 cargo llvm-cov run --locked -p lantern-sim --example connection_process_acceptance --no-report
 cargo llvm-cov report --json --summary-only --output-path target/ci/coverage.json
+jq '.data[].files[] | {filename, lines: .summary.lines}' target/ci/coverage.json
 cargo llvm-cov report --html --output-dir target/ci/coverage
 cargo llvm-cov report --fail-under-lines 80

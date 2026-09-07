@@ -28,8 +28,17 @@ tokio-util.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
+lantern-storage.workspace = true
+lantern-tui.workspace = true
+ratatui.workspace = true
+serde_jcs.workspace = true
 lantern-transport.workspace = true
 tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "infrastructure"
+harness = false

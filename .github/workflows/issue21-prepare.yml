@@ -1,0 +1,37 @@
+name: Issue 21 development lockfile preparation
+on:
+  push:
+    branches: [agent/issue-21]
+    paths: [.github/workflows/issue21-prepare.yml]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Prepare development lockfiles (not an acceptance gate)
+        run: |
+          set -eu
+          test "$RUNNER_NAME" = vfd-lantern-podman-01
+          rustup default 1.97.1
+          # Only this temporary development job resolves newly added benchmark/fuzz
+          # dependencies. Acceptance exclusively consumes committed --locked inputs.
+          cargo update --workspace
+          cargo generate-lockfile --manifest-path fuzz/Cargo.toml
+          cargo fmt --all
+          cargo fmt --manifest-path fuzz/Cargo.toml --all
+      - name: Export prepared files for review
+        if: always()
+        run: |
+          tar -czf /tmp/issue21-prepared.tgz Cargo.lock fuzz/Cargo.lock crates/lantern-sim/benches/infrastructure.rs crates/lantern-storage/src/backup.rs crates/lantern-storage/src/lib.rs fuzz/fuzz_targets
+          echo PREPARED_BEGIN
+          base64 -w 120 /tmp/issue21-prepared.tgz
+          echo PREPARED_END
+      - name: Compile new benchmark and fuzz targets
+        run: |
+          cargo check --locked -p lantern-sim --benches
+          cargo check --locked --manifest-path fuzz/Cargo.toml --bins

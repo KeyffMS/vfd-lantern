@@ -1,0 +1,168 @@
+name: Reusable staged soak HIL and performance gate
+on:
+  workflow_call:
+    inputs:
+      gate:
+        required: true
+        type: string
+      commit:
+        required: true
+        type: string
+      artifact-name:
+        required: true
+        type: string
+      artifact-run-id:
+        required: true
+        type: string
+      artifact-sha256:
+        required: true
+        type: string
+      profile-path:
+        required: true
+        type: string
+      profile-sha256:
+        required: true
+        type: string
+      scenario-path:
+        required: true
+        type: string
+      scenario-sha256:
+        required: true
+        type: string
+      duration-seconds:
+        type: number
+        default: 86400
+      output-schema-version:
+        type: number
+        default: 1
+      seed:
+        type: string
+        default: '21'
+      demo:
+        type: boolean
+        default: false
+      write-enabled:
+        type: boolean
+        default: false
+    outputs:
+      manifest:
+        value: ${{ jobs.gate-upload.outputs.manifest }}
+      status:
+        value: ${{ jobs.gate-upload.outputs.status }}
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: long-run-${{ inputs.demo && 'demo-amd64' || inputs.gate }}
+  cancel-in-progress: false
+jobs:
+  gate-run:
+    runs-on: ${{ fromJSON(inputs.demo && '["self-hosted","linux","x64","podman","vfd-lantern"]' || (inputs.gate == 'hil' && '["self-hosted","linux","x64","vfd-lantern-hil"]' || (inputs.gate == 'soak' && '["self-hosted","linux","x64","vfd-lantern-soak-amd64"]' || '["self-hosted","linux","x64","vfd-lantern-perf-amd64"]'))) }}
+    timeout-minutes: 3000
+    environment: ${{ inputs.write-enabled && 'hil-write' || 'ci-read-only' }}
+    outputs:
+      runner: ${{ steps.identity.outputs.runner }}
+    env: &gate-env
+      STAGING_ROOT: ${{ vars.VFD_LANTERN_STAGING_ROOT || '/var/lib/vfd-lantern-gates' }}
+      COMMIT_SHA: ${{ inputs.commit }}
+      ARTIFACT_SHA: ${{ inputs.artifact-sha256 }}
+      PROFILE_SHA: ${{ inputs.profile-sha256 }}
+      SCENARIO_SHA: ${{ inputs.scenario-sha256 }}
+      GATE: ${{ inputs.gate }}
+      SEED: ${{ inputs.seed }}
+      DEMO: ${{ inputs.demo }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - name: Verify routing and exact source
+        id: identity
+        env:
+          WRITE_ENABLED: ${{ inputs.write-enabled }}
+          REPO_IS_FORK: ${{ github.event.pull_request.head.repo.fork || false }}
+        run: |
+          set -eu
+          test "$REPO_IS_FORK" = false
+          test "$(git rev-parse HEAD)" = "$COMMIT_SHA"
+          test "$RUNNER_OS" = Linux && test "$RUNNER_ARCH" = X64
+          . /etc/os-release
+          test "$ID" = debian && test "$VERSION_ID" = 13
+          test "$(uname -m)" = x86_64
+          case "$GATE" in soak|hil|performance) ;; *) exit 2;; esac
+          if test "$DEMO" = true; then
+            test "$RUNNER_NAME" = vfd-lantern-podman-01
+            test "$WRITE_ENABLED" = false
+            export STAGING_ROOT="$HOME/.local/state/vfd-lantern-gates"
+          fi
+          test "$WRITE_ENABLED" = false || test "$GATE" = hil
+          echo "STAGING_ROOT=$STAGING_ROOT" >> "$GITHUB_ENV"
+          echo "runner=$RUNNER_NAME" >> "$GITHUB_OUTPUT"
+      - name: Fetch artifact before long execution
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact-name }}
+          run-id: ${{ inputs.artifact-run-id }}
+          github-token: ${{ github.token }}
+          path: gate-input
+      - name: Run without upload token and complete local staging
+        env:
+          ARTIFACT_PATH: ${{ github.workspace }}/gate-input/gate-bundle.tar
+          PROFILE_PATH: ${{ github.workspace }}/${{ inputs.profile-path }}
+          SCENARIO_PATH: ${{ github.workspace }}/${{ inputs.scenario-path }}
+          DURATION_SECONDS: ${{ inputs.duration-seconds }}
+          OUTPUT_SCHEMA_VERSION: ${{ inputs.output-schema-version }}
+          WRITE_ENABLED: ${{ inputs.write-enabled }}
+        run: sh scripts/ci/staging.sh run
+  gate-upload:
+    needs: gate-run
+    # Unique runner names are operator-provisioned labels, not assumed GitHub labels.
+    # Demo uses the sole feature runner; production must provision the name label too.
+    runs-on: ${{ fromJSON(inputs.demo && '["self-hosted","linux","x64","podman","vfd-lantern"]' || format('["self-hosted","linux","x64","{0}"]', needs.gate-run.outputs.runner)) }}
+    timeout-minutes: 30
+    outputs:
+      manifest: ${{ steps.result.outputs.manifest }}
+      status: ${{ steps.result.outputs.status }}
+    env: *gate-env
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - name: Verify same runner and fresh-job evidence
+        id: verify
+        env:
+          EXPECTED_RUNNER: ${{ needs.gate-run.outputs.runner }}
+        run: |
+          set -eu
+          test "$RUNNER_NAME" = "$EXPECTED_RUNNER"
+          test "$(git rev-parse HEAD)" = "$COMMIT_SHA"
+          if test "$DEMO" = true; then
+            export STAGING_ROOT="$HOME/.local/state/vfd-lantern-gates"
+          fi
+          echo "STAGING_ROOT=$STAGING_ROOT" >> "$GITHUB_ENV"
+          sh scripts/ci/staging.sh verify
+      - name: Upload with fresh job token
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gate-${{ inputs.gate }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.verify.outputs.stage }}
+          if-no-files-found: error
+          retention-days: 30
+      - name: Return manifest and gate status
+        id: result
+        env:
+          MANIFEST: ${{ steps.verify.outputs.manifest }}
+        run: |
+          set -eu
+          echo 'manifest=gate-${{ inputs.gate }}-${{ github.run_id }}-${{ github.run_attempt }}/complete.json' >> "$GITHUB_OUTPUT"
+          if jq -e '.exit_code == 0' "$MANIFEST" >/dev/null; then
+            echo 'status=pass' >> "$GITHUB_OUTPUT"
+          else
+            echo 'status=fail' >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+      - name: Clean only after successful upload
+        env:
+          UPLOAD_CONFIRMED: 'true'
+        run: sh scripts/ci/staging.sh clean
