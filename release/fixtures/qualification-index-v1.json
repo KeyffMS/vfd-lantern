@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "reports_by_profile_hash": {
+    "ddddce361a98cc6a21e2bf298c582826f53070595a63f5f6c085d42eff09032b": {
+      "report_id": "pipeline-test-example-vfd-qualification",
+      "profile_hash": "ddddce361a98cc6a21e2bf298c582826f53070595a63f5f6c085d42eff09032b",
+      "evidence_kind": "physical_hardware",
+      "hardware_model": "SYNTHETIC-PIPELINE-FIXTURE-NOT-RELEASE-EVIDENCE",
+      "firmware": "fixture-only",
+      "manual_revision": "fixture-only",
+      "safe_write_scope": "Disposable issue-24 pipeline test only; MUST NOT be accepted for a production candidate"
+    }
+  }
+}

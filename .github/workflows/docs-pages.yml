@@ -1,0 +1,92 @@
+name: Documentation Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact candidate commit whose packaged book will be deployed
+        required: true
+        type: string
+      artifact_run_id:
+        description: Successful release-candidate-build run containing the packaged book
+        required: true
+        type: string
+      artifact_name:
+        required: true
+        default: candidate-product-assets
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+
+      - name: Verify Debian platform and source artifact run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.artifact_run_id }}
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+        run: |
+          set -eu
+          sh scripts/release/ensure-runner-tools.sh github
+          test "$RUNNER_NAME" = vfd-lantern-podman-01
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN")
+          test "$(printf '%s' "$run" | jq -r .head_sha)" = "$EXPECTED_COMMIT"
+          test "$(printf '%s' "$run" | jq -r .conclusion)" = success
+
+      - name: Download existing candidate assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: target/candidate-assets
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.artifact_run_id }}
+
+      - name: Verify and extract the packaged mdBook without rebuilding
+        env:
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+        run: |
+          set -eu
+          cd target/candidate-assets
+          sha256sum -c SHA256SUMS
+          test "$(jq -r .commit BuildManifest-v1.json)" = "$EXPECTED_COMMIT"
+          set -- vfd-lantern-docs-*.tar.xz
+          test "$#" -eq 1 && test -f "$1"
+          mkdir ../book
+          tar -xJf "$1" -C ../book --no-same-owner
+          test -f ../book/index.html
+
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d
+
+      - name: Upload exact packaged book as Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
+        with:
+          path: target/book
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    needs: prepare
+    steps:
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346

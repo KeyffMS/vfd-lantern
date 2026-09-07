@@ -44,6 +44,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Verify release runner environment
+        if: ${{ hashFiles('scripts/release/ensure-runner-tools.sh') != '' }}
+        run: |
+          sh scripts/release/ensure-runner-tools.sh build
+          sh scripts/release/ensure-runner-tools.sh package
+
       - name: Install pinned Rust toolchain
         run: |
           rustup toolchain install 1.97.1 \

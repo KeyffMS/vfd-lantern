@@ -132,6 +132,10 @@ criteria = "safe-to-deploy"
 version = "4.6.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.clap_complete]]
+version = "4.6.0"
+criteria = "safe-to-run"
+
 [[exemptions.clap_derive]]
 version = "4.6.4"
 criteria = "safe-to-deploy"
@@ -139,6 +143,10 @@ criteria = "safe-to-deploy"
 [[exemptions.clap_lex]]
 version = "1.1.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.clap_mangen]]
+version = "0.2.29"
+criteria = "safe-to-run"
 
 [[exemptions.colorchoice]]
 version = "1.0.5"
@@ -747,6 +755,10 @@ criteria = "safe-to-deploy"
 [[exemptions.regex-syntax]]
 version = "0.8.11"
 criteria = "safe-to-deploy"
+
+[[exemptions.roff]]
+version = "0.2.2"
+criteria = "safe-to-run"
 
 [[exemptions.rust_decimal]]
 version = "1.42.1"

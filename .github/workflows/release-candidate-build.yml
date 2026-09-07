@@ -1,0 +1,346 @@
+name: Release candidate build
+
+on:
+  workflow_call:
+    inputs:
+      commit:
+        description: Full candidate commit SHA
+        required: true
+        type: string
+      version:
+        description: Final candidate version (no RC rewrite)
+        required: true
+        type: string
+      qualification_index:
+        description: Repository path to frozen qualification index
+        required: true
+        type: string
+      dry_run:
+        description: Build and validate without creating a GitHub Release
+        required: true
+        type: boolean
+      pipeline_test:
+        description: Permit only a disposable prerelease with synthetic infrastructure evidence
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      draft_release_id:
+        value: ${{ jobs.assemble.outputs.draft_release_id }}
+      draft_version:
+        value: ${{ jobs.assemble.outputs.draft_version }}
+      product_attestation_id:
+        value: ${{ jobs.assemble.outputs.product_attestation_id }}
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full candidate commit SHA
+        required: true
+        type: string
+      version:
+        description: Final candidate version (no RC rewrite)
+        required: true
+        type: string
+      qualification_index:
+        description: Repository path to frozen qualification index
+        required: true
+        default: release/fixtures/qualification-index-v1.json
+        type: string
+      dry_run:
+        description: Build and validate without creating a GitHub Release
+        required: true
+        default: true
+        type: boolean
+      pipeline_test:
+        description: Permit only a disposable prerelease with synthetic infrastructure evidence
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  actions: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-candidate-build-${{ inputs.commit }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_IMAGE_DIGEST: sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
+
+jobs:
+  build:
+    name: Native Trixie package / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            native_uname: x86_64
+            runner: '["self-hosted","linux","x64","podman","vfd-lantern"]'
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    steps:
+      - name: Verify active Debian 13 amd64 platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = vfd-lantern-podman-01
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
+      - name: Verify native Debian Trixie runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_OS" = Linux
+          test "$(uname -m)" = "${{ matrix.native_uname }}"
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
+      - name: Validate immutable inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.commit }}" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]]
+          test -n "${{ inputs.version }}"
+          case "${{ inputs.version }}" in *-rc*|*RC*) echo 'candidate version must already be final' >&2; exit 1;; esac
+
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare release system tools
+        run: |
+          sh scripts/release/ensure-runner-tools.sh build
+          sh scripts/release/ensure-runner-tools.sh package
+
+      - name: Verify frozen qualification input
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${{ inputs.qualification_index }}"
+          test "$(git rev-parse HEAD)" = "${{ inputs.commit }}"
+          test -n "$(git log -1 --format=%H -- "${{ inputs.qualification_index }}")"
+
+      - name: Install pinned Rust and release tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          export CARGO_INSTALL_ROOT="$HOME/.cache/vfd-lantern-cargo-tools"
+          export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
+          sh scripts/install-cargo-tools.sh release
+
+      - name: Build deterministic product stage
+        shell: bash
+        env:
+          VFD_RELEASE_COMMIT: ${{ inputs.commit }}
+          VFD_RELEASE_VERSION: ${{ inputs.version }}
+          VFD_RELEASE_QUALIFICATION_INDEX: ${{ inputs.qualification_index }}
+          VFD_RELEASE_IMAGE_DIGEST: ${{ env.RELEASE_IMAGE_DIGEST }}
+          VFD_RELEASE_ARCH: ${{ matrix.arch }}
+          VFD_RELEASE_TEST_MODE: ${{ inputs.dry_run && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          cargo clean
+          sh scripts/release/build-product.sh
+          test -d "target/release-stage/${{ matrix.arch }}/arch"
+          test -d "target/release-stage/${{ matrix.arch }}/common"
+
+      - name: Verify two clean builds are reproducible
+        shell: bash
+        env:
+          VFD_RELEASE_COMMIT: ${{ inputs.commit }}
+          VFD_RELEASE_VERSION: ${{ inputs.version }}
+          VFD_RELEASE_QUALIFICATION_INDEX: ${{ inputs.qualification_index }}
+          VFD_RELEASE_IMAGE_DIGEST: ${{ env.RELEASE_IMAGE_DIGEST }}
+          VFD_RELEASE_ARCH: ${{ matrix.arch }}
+          VFD_RELEASE_TEST_MODE: ${{ inputs.dry_run && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          rm -rf .issue24-repro-a .issue24-repro-b
+          cp -a "target/release-stage/${{ matrix.arch }}" .issue24-repro-a
+          cargo clean
+          sh scripts/release/build-product.sh
+          cp -a "target/release-stage/${{ matrix.arch }}" .issue24-repro-b
+          (cd .issue24-repro-a && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > /tmp/repro-a.sha256
+          (cd .issue24-repro-b && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > /tmp/repro-b.sha256
+          if ! diff -u /tmp/repro-a.sha256 /tmp/repro-b.sha256; then
+            diff -u .issue24-repro-a/dist-manifest.json .issue24-repro-b/dist-manifest.json || true
+            exit 1
+          fi
+          rm -rf .issue24-repro-a .issue24-repro-b
+
+      - name: Upload architecture stage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-${{ matrix.arch }}
+          path: target/release-stage/${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 14
+
+  package-test:
+    needs: build
+    uses: ./.github/workflows/package-test.yml
+    with:
+      artifact_name: candidate-amd64
+      commit: ${{ inputs.commit }}
+
+  assemble:
+    name: Assemble immutable product snapshot
+    needs: [build, package-test]
+    outputs:
+      draft_release_id: ${{ steps.draft.outputs.release_id }}
+      draft_version: ${{ steps.draft.outputs.version }}
+      product_attestation_id: ${{ steps.attest-product.outputs.attestation-id }}
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - name: Verify active Debian 13 amd64 platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = vfd-lantern-podman-01
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
+      - name: Verify assembler runner
+        run: |
+          set -eu
+          test "$RUNNER_OS" = Linux
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare release system tools
+        run: sh scripts/release/ensure-runner-tools.sh github
+
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+
+      - name: Download amd64 stage
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: candidate-amd64
+          path: target/native/amd64
+
+      - name: Assemble and finalize candidate product assets
+        shell: bash
+        env:
+          VFD_AMD64_STAGE: target/native/amd64
+          VFD_CANDIDATE_PRODUCT_DIR: target/candidate-assets
+          VFD_RELEASE_COMMIT: ${{ inputs.commit }}
+          VFD_RELEASE_VERSION: ${{ inputs.version }}
+          VFD_RELEASE_IMAGE_DIGEST: ${{ env.RELEASE_IMAGE_DIGEST }}
+        run: |
+          set -euo pipefail
+          sh scripts/release/assemble-matrix.sh
+          sh scripts/release/finalize-product-assets.sh
+          (cd target/candidate-assets && sha256sum -c SHA256SUMS)
+          test ! -e target/candidate-assets/candidate-manifest-v1.json
+
+      - name: Attest assembled product snapshot
+        id: attest-product
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: target/candidate-assets/*
+          show-summary: true
+
+      - name: Upload candidate product snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-product-assets
+          path: target/candidate-assets
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create and re-download draft release by immutable release id
+        id: draft
+        if: ${{ !inputs.dry_run || inputs.pipeline_test }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ inputs.version }}"
+          prerelease=false
+          if [[ "${{ inputs.pipeline_test }}" == true ]]; then
+            test "${{ inputs.dry_run }}" = true
+            version="$version-pipeline-test-$GITHUB_RUN_ID"
+            prerelease=true
+            sh scripts/release/generate-test-gates.sh target/candidate-assets "${{ inputs.commit }}" "$GITHUB_RUN_ID"
+          fi
+          tag="v$version"
+          # Create the immutable tag now so publication checks the actual Git object.
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="${{ inputs.commit }}" >/dev/null
+          printf 'Candidate built from %s. Final publication requires #25 gates.\n' "${{ inputs.commit }}" > target/release-notes.txt
+          body=$(cat target/release-notes.txt)
+          release=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$tag" \
+            -f target_commitish="${{ inputs.commit }}" \
+            -f name="VFD Lantern ${{ inputs.version }}" \
+            -f body="$body" \
+            -F draft=true \
+            -F prerelease="$prerelease")
+          release_id=$(printf '%s' "$release" | jq -r '.id')
+          test -n "$release_id"
+          test "$release_id" != null
+          sh scripts/release/github-draft-assets.sh upload-dir "$release_id" target/candidate-assets
+          sh scripts/release/github-draft-assets.sh download-all "$release_id" target/redownloaded
+          (cd target/redownloaded && sha256sum -c SHA256SUMS)
+          printf '%s\n' "$release_id" > target/draft-release-id.txt
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Dry-run draft policy
+        if: ${{ inputs.dry_run && !inputs.pipeline_test }}
+        run: echo 'dry-run validated build/assembly/reproducibility and product attestation; no GitHub Release created'
+
+      - name: Persist candidate build reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/candidate-reference
+          {
+            echo "commit=${{ inputs.commit }}"
+            echo "version=${{ inputs.version }}"
+            echo "product_attestation_id=${{ steps.attest-product.outputs.attestation-id }}"
+            if [ -f target/draft-release-id.txt ]; then
+              echo "draft_release_id=$(cat target/draft-release-id.txt)"
+              echo "tag=v${{ inputs.version }}"
+            else
+              echo 'draft_release_id=DRY_RUN'
+            fi
+          } > target/candidate-reference/reference.txt
+
+      - name: Upload candidate build reference
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-build-reference
+          path: target/candidate-reference/reference.txt
+          if-no-files-found: error
+          retention-days: 14

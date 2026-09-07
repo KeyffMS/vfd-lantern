@@ -1,0 +1,14 @@
+[book]
+title = "VFD Lantern"
+authors = ["VFD Lantern contributors"]
+language = "en"
+multilingual = false
+src = "docs"
+
+[build]
+build-dir = "target/book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/KeyffMS/vfd-lantern"
+site-url = "/vfd-lantern/"

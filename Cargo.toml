@@ -7,6 +7,7 @@ members = [
     "crates/lantern-transport",
     "crates/lantern-tui",
     "crates/lantern-sim",
+    "crates/lantern-release",
     "crates/vfd-lantern",
 ]
 default-members = ["crates/vfd-lantern"]
@@ -75,6 +76,17 @@ proptest = "=1.9.0"
 insta = { version = "=1.43.2", features = ["json", "redactions"] }
 criterion = "=0.7.0"
 rand_chacha = "=0.9.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+overflow-checks = true
+panic = "unwind"
+debug = "line-tables-only"
+strip = "none"
+
+[profile.dist]
+inherits = "release"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

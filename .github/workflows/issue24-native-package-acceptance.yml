@@ -1,0 +1,104 @@
+name: Issue 24 native package acceptance
+
+on:
+  push:
+    branches: [agent/issue-24, main]
+    paths:
+      - '.github/workflows/issue24-native-package-acceptance.yml'
+      - '.github/workflows/release-*.yml'
+      - '.github/workflows/package-test.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'docs/**'
+      - 'scripts/release/**'
+      - 'tools.lock.toml'
+      - 'dist-workspace.toml'
+
+permissions:
+  contents: write
+  actions: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: issue24-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inputs:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: version
+        run: |
+          set -eu
+          version=$(cargo metadata --locked --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "vfd-lantern") | .version')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: inputs
+    uses: ./.github/workflows/release-candidate-build.yml
+    with:
+      commit: ${{ github.sha }}
+      version: ${{ needs.inputs.outputs.version }}
+      qualification_index: release/fixtures/qualification-index-v1.json
+      dry_run: true
+      pipeline_test: true
+
+  finalize:
+    needs: build
+    uses: ./.github/workflows/release-candidate-finalize.yml
+    with:
+      commit: ${{ github.sha }}
+      version: ${{ needs.build.outputs.draft_version }}
+      draft_release_id: ${{ needs.build.outputs.draft_release_id }}
+      product_artifact_name: candidate-product-assets
+      reports_artifact_name: candidate-gate-reports
+      product_attestation_ids: ${{ needs.build.outputs.product_attestation_id }}
+      dry_run: false
+      pipeline_test: true
+
+  publish-validation:
+    needs: [build, finalize]
+    uses: ./.github/workflows/release-publish.yml
+    with:
+      commit: ${{ github.sha }}
+      draft_release_id: ${{ needs.build.outputs.draft_release_id }}
+      finalized_artifact_name: finalized-candidate-draft
+      finalized_artifact_run_id: ${{ github.run_id }}
+      expected_manifest_sha256: ${{ needs.finalize.outputs.manifest_sha256 }}
+      dry_run: true
+
+  cleanup:
+    if: always()
+    needs: [build, finalize, publish-validation]
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Remove disposable release and test tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          sh scripts/release/ensure-runner-tools.sh github
+          version=$(cargo metadata --locked --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "vfd-lantern") | .version')
+          tag="v$version-pipeline-test-$GITHUB_RUN_ID"
+          # Find by the unique tag as well, so failures after creation still clean up.
+          releases=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -s 'add')
+          release_id=$(printf '%s' "$releases" | jq -r --arg tag "$tag" '.[] | select(.tag_name == $tag) | .id')
+          if test -n "$release_id"; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"
+          fi
+          refs=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$tag")
+          if printf '%s' "$refs" | jq -e --arg ref "refs/tags/$tag" 'any(.[]; .ref == $ref)' >/dev/null; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag"
+          fi

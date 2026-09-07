@@ -1,0 +1,357 @@
+name: Release candidate finalize
+
+on:
+  workflow_call:
+    inputs:
+      commit:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      draft_release_id:
+        required: true
+        type: string
+      product_artifact_name:
+        required: true
+        type: string
+      product_artifact_run_id:
+        description: Source workflow run ID for dry-run product artifact
+        required: false
+        default: ''
+        type: string
+      reports_artifact_name:
+        required: true
+        type: string
+      reports_artifact_run_id:
+        description: Source workflow run ID for dry-run gate report artifact
+        required: false
+        default: ''
+        type: string
+      product_attestation_ids:
+        description: Comma-separated GitHub attestation IDs emitted by release-candidate-build; required for non-dry-run
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        required: true
+        type: boolean
+      pipeline_test:
+        description: Permit only a disposable prerelease with synthetic infrastructure evidence
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      manifest_sha256:
+        value: ${{ jobs.finalize.outputs.manifest_sha256 }}
+  workflow_dispatch:
+    inputs:
+      commit:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      draft_release_id:
+        required: true
+        type: string
+      product_artifact_name:
+        required: true
+        default: candidate-product-assets
+        type: string
+      product_artifact_run_id:
+        description: Source workflow run ID for dry-run product artifact
+        required: false
+        default: ''
+        type: string
+      reports_artifact_name:
+        required: true
+        default: candidate-gate-reports
+        type: string
+      reports_artifact_run_id:
+        description: Source workflow run ID for dry-run gate report artifact
+        required: false
+        default: ''
+        type: string
+      product_attestation_ids:
+        description: Comma-separated GitHub attestation IDs emitted by release-candidate-build; required for non-dry-run
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        required: true
+        default: true
+        type: boolean
+      pipeline_test:
+        description: Permit only a disposable prerelease with synthetic infrastructure evidence
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  actions: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-candidate-finalize-${{ inputs.draft_release_id }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    outputs:
+      manifest_sha256: ${{ steps.manifest.outputs.sha256 }}
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    steps:
+      - name: Verify active Debian 13 amd64 platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = vfd-lantern-podman-01
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = debian
+          test "${VERSION_ID%%.*}" = 13
+
+      - name: Validate immutable inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.commit }}" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]]
+          [[ "${{ inputs.draft_release_id }}" =~ ^[1-9][0-9]*$ ]]
+          test -n "${{ inputs.version }}"
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            [[ "${{ inputs.product_artifact_run_id }}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${{ inputs.reports_artifact_run_id }}" =~ ^[1-9][0-9]*$ ]]
+          else
+            test -n "${{ inputs.product_attestation_ids }}"
+          fi
+
+      - name: Check out exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare release system tools
+        run: sh scripts/release/ensure-runner-tools.sh github
+
+      - name: Prepare dry-run product snapshot from explicit source run
+        if: ${{ inputs.dry_run }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.product_artifact_name }}
+          path: target/finalize/assets
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.product_artifact_run_id }}
+
+      - name: Prepare dry-run gate reports from explicit source run
+        if: ${{ inputs.dry_run }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.reports_artifact_name }}
+          path: target/finalize/reports
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.reports_artifact_run_id }}
+
+      - name: Download exact live draft asset set by release id
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/${{ inputs.draft_release_id }}")
+          test "$(printf '%s' "$release" | jq -r '.draft')" = true
+          test "$(printf '%s' "$release" | jq -r '.target_commitish')" = "${{ inputs.commit }}"
+          test "$(printf '%s' "$release" | jq -r '.tag_name')" = "v${{ inputs.version }}"
+          sh scripts/release/github-draft-assets.sh download-all "${{ inputs.draft_release_id }}" target/finalize/assets
+          test ! -e target/finalize/assets/candidate-manifest-v1.json
+          mkdir -p target/finalize/reports
+          for report in target/finalize/assets/gate-report-*.json; do
+            test -f "$report"
+            # The product includes gate-report-v1.schema.json alongside reports.
+            # Keep the schema in snapshot S, but never parse it as gate evidence.
+            case "$report" in *.schema.json) continue ;; esac
+            cp "$report" target/finalize/reports/
+          done
+
+      - name: Derive required candidate HIL scope from packaged manifest
+        id: hil-scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=target/finalize/assets/profiles-v1.json
+          test -f "$manifest"
+          jq -e '.schema_version == 1 and (.profiles | type == "array")' "$manifest" >/dev/null
+          jq -r '.profiles[] | select(.write_capable == true) | .profile_hash' "$manifest" | LC_ALL=C sort -u > target/finalize/required-profile-hashes.txt
+          while IFS= read -r hash; do
+            [[ "$hash" =~ ^[0-9a-f]{64}$ ]]
+          done < target/finalize/required-profile-hashes.txt
+          echo "count=$(wc -l < target/finalize/required-profile-hashes.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Verify report workflow provenance and synthetic evidence boundary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+          PIPELINE_TEST: ${{ inputs.pipeline_test }}
+          RELEASE_ID: ${{ inputs.draft_release_id }}
+          CANDIDATE_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$PIPELINE_TEST" == true ]]; then
+            [[ "$CANDIDATE_VERSION" == *-pipeline-test-"$GITHUB_RUN_ID" ]]
+            release=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")
+            test "$(printf '%s' "$release" | jq -r .draft)" = true
+            test "$(printf '%s' "$release" | jq -r .prerelease)" = true
+            test "$(printf '%s' "$release" | jq -r .tag_name)" = "v$CANDIDATE_VERSION"
+          fi
+          for report in target/finalize/reports/*.json; do
+            test -f "$report"
+            run_id=$(jq -er '.workflow_run_id' "$report")
+            [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
+            if [[ "$PIPELINE_TEST" != true ]] && grep -Ei 'pipeline-test|synthetic' "$report"; then
+              echo 'Synthetic gate evidence cannot finalize a production candidate' >&2
+              exit 1
+            fi
+            source=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")
+            test "$(printf '%s' "$source" | jq -r .head_sha)" = "$EXPECTED_COMMIT"
+            if [[ "$PIPELINE_TEST" != true || "$run_id" != "$GITHUB_RUN_ID" ]]; then
+              test "$(printf '%s' "$source" | jq -r .conclusion)" = success
+            fi
+          done
+
+      - name: Validate immutable gate evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d target/finalize/assets
+          test -d target/finalize/reports
+          args=()
+          while IFS= read -r hash; do
+            [[ -z "$hash" ]] || args+=(--required-profile-hash "$hash")
+          done < target/finalize/required-profile-hashes.txt
+          cargo run --locked -q -p lantern-release --example release_evidence -- \
+            validate-gates \
+            --product-asset-dir target/finalize/assets \
+            --reports-dir target/finalize/reports \
+            --commit "${{ inputs.commit }}" \
+            "${args[@]}"
+
+      - name: Add dry-run gate reports to snapshot S
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for report in target/finalize/reports/*; do
+            test -f "$report"
+            name=$(basename "$report")
+            test ! -e "target/finalize/assets/$name"
+            cp "$report" "target/finalize/assets/$name"
+          done
+
+      - name: Freeze snapshot S and create CandidateManifest
+        id: manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e target/finalize/assets/candidate-manifest-v1.json
+          attestation_args=()
+          if [[ -n "${{ inputs.product_attestation_ids }}" ]]; then
+            IFS=',' read -ra ids <<< "${{ inputs.product_attestation_ids }}"
+            for id in "${ids[@]}"; do
+              test -n "$id"
+              [[ "$id" != *$'\n'* ]]
+              attestation_args+=(--attestation-id "$id")
+            done
+          else
+            attestation_args+=(--attestation-id "workflow-run:${{ github.run_id }}")
+          fi
+          gate_args=()
+          for report in target/finalize/reports/*.json; do
+            gate=$(jq -r '.gate_kind + (if .profile_hash then ":" + .profile_hash else "" end) + "=passed"' "$report")
+            gate_args+=(--gate "$gate")
+          done
+          hash=$(cargo run --locked -q -p lantern-release --example candidate_manifest -- \
+            snapshot \
+            --asset-dir target/finalize/assets \
+            --commit "${{ inputs.commit }}" \
+            --version "${{ inputs.version }}" \
+            --draft-release-id "${{ inputs.draft_release_id }}" \
+            --toolchain 'rustc 1.97.1' \
+            --image-digest 'sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132' \
+            --workflow-revision release-candidate-finalize-v1 \
+            "${attestation_args[@]}" \
+            "${gate_args[@]}" \
+            --output target/finalize/assets/candidate-manifest-v1.json)
+          echo "sha256=$hash" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$hash" > target/finalize/candidate-manifest.sha256
+
+      - name: Verify exact final asset set S plus CandidateManifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked -q -p lantern-release --example candidate_manifest -- \
+            verify \
+            --asset-dir target/finalize/assets \
+            --manifest target/finalize/assets/candidate-manifest-v1.json \
+            --expected-manifest-sha256 "${{ steps.manifest.outputs.sha256 }}"
+
+      - name: Upload CandidateManifest as sole post-snapshot draft asset
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_id="${{ inputs.draft_release_id }}"
+          before=$(sh scripts/release/github-draft-assets.sh count "$release_id")
+          sh scripts/release/github-draft-assets.sh upload "$release_id" target/finalize/assets/candidate-manifest-v1.json
+          after=$(sh scripts/release/github-draft-assets.sh count "$release_id")
+          test "$after" -eq $((before + 1))
+          sh scripts/release/github-draft-assets.sh download-all "$release_id" target/finalize/redownload
+          cargo run --locked -q -p lantern-release --example candidate_manifest -- \
+            verify \
+            --asset-dir target/finalize/redownload \
+            --manifest target/finalize/redownload/candidate-manifest-v1.json \
+            --expected-manifest-sha256 "${{ steps.manifest.outputs.sha256 }}"
+          cmp target/finalize/redownload/candidate-manifest-v1.json target/finalize/assets/candidate-manifest-v1.json
+
+      - name: Attest CandidateManifest external anchor
+        id: attest-manifest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: target/finalize/assets/candidate-manifest-v1.json
+          show-summary: true
+
+      - name: Persist protected approval record payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > target/finalize/approval-record.txt <<EOF
+          draft_release_id=${{ inputs.draft_release_id }}
+          commit=${{ inputs.commit }}
+          version=${{ inputs.version }}
+          candidate_manifest_sha256=${{ steps.manifest.outputs.sha256 }}
+          manifest_attestation_id=${{ steps.attest-manifest.outputs.attestation-id }}
+          required_candidate_hil_profiles=${{ steps.hil-scope.outputs.count }}
+          EOF
+
+      - name: Persist external approval anchor artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: finalized-candidate-draft
+          path: target/finalize
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Dry-run finalizer proof
+        if: ${{ inputs.dry_run }}
+        run: echo 'dry-run froze S, added only CandidateManifest, attested its hash, and derived candidate-HIL scope from packaged manifest'

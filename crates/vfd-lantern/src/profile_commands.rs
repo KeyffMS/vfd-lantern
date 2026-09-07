@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::{io::Write, path::Path, sync::Arc};
 
 use anyhow::{Context, Result, bail};
 use lantern_app::{
@@ -12,7 +12,7 @@ use lantern_storage::{
 
 use crate::cli::{ManifestArgs, ProfileCommand};
 
-const EMBEDDED_MANIFEST_JSON: &str = include_str!("../../../profiles/manifest/profiles-v1.json");
+const EMBEDDED_MANIFEST_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/profiles-v1.json"));
 const MAX_QUALIFICATION_INDEX_BYTES: usize = 4 * 1024 * 1024;
 
 pub(crate) fn embedded_manifest() -> Result<PackagedProfilesManifestV1> {
@@ -50,6 +50,12 @@ pub fn run(command: ProfileCommand, trust_store_path: &Path) -> Result<()> {
             &manual_source,
             &summary,
         ),
+        ProfileCommand::EmbeddedManifest => {
+            std::io::stdout()
+                .lock()
+                .write_all(embedded_manifest_bytes())?;
+            Ok(())
+        }
         ProfileCommand::Manifest(arguments) => build_manifest(arguments),
     }
 }
