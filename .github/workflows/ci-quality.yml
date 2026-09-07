@@ -1,0 +1,65 @@
+name: Reusable Debian 13 quality gate
+
+on:
+  workflow_call:
+    inputs:
+      commit:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      commit:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    timeout-minutes: 120
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - name: Verify runner and immutable input
+        env:
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+        run: |
+          set -eu
+          test "$RUNNER_NAME" = vfd-lantern-podman-01
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+          sh scripts/release/ensure-runner-tools.sh package
+      - name: Install pinned compiler and quality tools
+        run: |
+          set -eu
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy --component llvm-tools-preview
+          rustup default 1.97.1
+          export CARGO_INSTALL_ROOT="$HOME/.cache/vfd-lantern-cargo-tools"
+          export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
+          sh scripts/install-cargo-tools.sh quality
+      - name: Run quality and coverage inside pinned Trixie
+        run: sh scripts/ci/in-container.sh quality
+      - name: Install pinned supply-chain tools
+        run: |
+          export CARGO_INSTALL_ROOT="$HOME/.cache/vfd-lantern-cargo-tools"
+          export CARGO_TARGET_DIR="$HOME/.cache/vfd-lantern-cargo-install-target"
+          sh scripts/install-cargo-tools.sh supply-chain
+      - name: Check dependencies and audit coverage
+        run: sh scripts/check-supply-chain.sh
+      - name: Persist quality evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            target/ci
+            target/llvm-cov-target/nextest/default/junit.xml
+            target/supply-chain
+          if-no-files-found: warn
+          retention-days: 14

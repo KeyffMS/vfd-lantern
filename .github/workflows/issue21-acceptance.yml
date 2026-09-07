@@ -1,0 +1,14 @@
+name: Issue 21 infrastructure acceptance
+on:
+  push:
+    branches: [agent/issue-21]
+permissions:
+  contents: read
+concurrency:
+  group: issue21-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  quality:
+    uses: ./.github/workflows/ci-quality.yml
+    with:
+      commit: ${{ github.sha }}

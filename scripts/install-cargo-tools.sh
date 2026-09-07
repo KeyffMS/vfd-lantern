@@ -45,6 +45,15 @@ install_tool() {
 mkdir -p "$INSTALL_ROOT"
 
 case "$SCOPE" in
+    quality)
+        install_tool cargo-nextest
+        install_tool cargo-hack
+        install_tool cargo-llvm-cov
+        ;;
+    nightly)
+        install_tool cargo-fuzz
+        install_tool cargo-mutants
+        ;;
     supply-chain)
         install_tool cargo-machete
         install_tool cargo-deny
