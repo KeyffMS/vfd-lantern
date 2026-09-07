@@ -85,14 +85,12 @@ Real hardware qualification and the 24-hour candidate gates remain in #25; #21
 and #27 remain independently tracked dependencies, not implied completed work.
 
 
-## Runner acceptance blocker observed on 2026-09-06
+## Runner provisioning and acceptance
 
-The Debian 13 amd64 runner passes application CI, but its container currently lacks
-`gh` and Podman. Attempting ordinary package installation fails because its runtime
-cannot perform `setgroups`, `setegid` or `seteuid` (`Operation not permitted`).
-See [native package preparation run](https://github.com/KeyffMS/vfd-lantern/actions/runs/34022631562)
-and [draft preparation run](https://github.com/KeyffMS/vfd-lantern/actions/runs/34022631556).
-This is an incomplete acceptance result, not a passed package/release gate.
+The administrator resolved the missing tool prerequisites on 2026-09-06.
+All required commands and `podman info` passed on `vfd-lantern-podman-01` in
+[the runner preflight](https://github.com/KeyffMS/vfd-lantern/actions/runs/34051951413/job/101537079934).
+Preflight success alone does not establish package or release acceptance.
 
 The runner image/container deployment is maintained outside this repository.
 Its administrator needs to provide these packages in the image before starting CI:
@@ -113,7 +111,12 @@ sh scripts/release/ensure-runner-tools.sh build
 sh scripts/release/ensure-runner-tools.sh package
 ```
 
-After provisioning, rerun PR #71's current-head native acceptance and general CI.
-Do not close #24 or merge on the basis of the earlier general CI alone. Required
-remaining evidence is two reproducible builds, actual offline package acceptance,
-the three-workflow disposable draft round trip and successful cleanup.
+Acceptance requires current-commit CI, two reproducible builds, actual offline
+package acceptance, the three-workflow disposable draft round trip and successful
+cleanup. The native acceptance workflow enforces these gates before merge.
+
+Before hashing the product snapshot, `normalize-dist-archive.sh` repacks the
+cargo-dist archive with sorted entries, the commit timestamp and numeric root
+ownership, preserving file contents and modes. It refreshes the archive checksum
+in the cargo-dist manifest and sidecar. Full stage comparison remains mandatory;
+the archive and manifest are not excluded from reproducibility checks.

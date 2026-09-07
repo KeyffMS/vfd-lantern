@@ -81,6 +81,7 @@ cargo deb -p vfd-lantern --target "$TARGET" --no-build \
 
 archive=$(find target/distrib -maxdepth 1 -type f -name "*${TARGET}*.tar.xz" | sort | head -n 1)
 test -n "$archive"
+sh scripts/release/normalize-dist-archive.sh "$archive" "$STAGE/dist-manifest.json"
 cp "$archive" "$ARCH_ASSETS/"
 
 

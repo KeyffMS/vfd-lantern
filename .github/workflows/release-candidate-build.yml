@@ -176,7 +176,10 @@ jobs:
           cp -a "target/release-stage/${{ matrix.arch }}" .issue24-repro-b
           (cd .issue24-repro-a && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > /tmp/repro-a.sha256
           (cd .issue24-repro-b && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > /tmp/repro-b.sha256
-          diff -u /tmp/repro-a.sha256 /tmp/repro-b.sha256
+          if ! diff -u /tmp/repro-a.sha256 /tmp/repro-b.sha256; then
+            diff -u .issue24-repro-a/dist-manifest.json .issue24-repro-b/dist-manifest.json || true
+            exit 1
+          fi
           rm -rf .issue24-repro-a .issue24-repro-b
 
       - name: Upload architecture stage
