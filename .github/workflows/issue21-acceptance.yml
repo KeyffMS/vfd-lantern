@@ -8,7 +8,7 @@ permissions:
   actions: read
 concurrency:
   group: issue21-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   quality:
     uses: ./.github/workflows/ci-quality.yml

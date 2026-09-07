@@ -168,6 +168,9 @@ These are production requirements, not prerequisites for the #21 mock demo:
 
 The demo uses `$HOME/.local/state/vfd-lantern-gates` on the existing feature runner,
 separate run/upload jobs, and a short duration. `issue21-acceptance.yml` supports
-manual dispatch, builds its nonproduction bundle and exercises each gate. Its reports are always marked
+manual dispatch, builds its nonproduction bundle and exercises each gate.
+A newer demonstration commit cancels the obsolete acceptance run so the sole
+feature runner tests the current version; incomplete staging remains ineligible
+for acceptance. Its reports are always marked
 `evidence_kind: mock`. Green mock runs do not constitute 24-hour or physical HIL
 qualification.
