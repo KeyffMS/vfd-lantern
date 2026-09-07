@@ -700,6 +700,10 @@ fn run_monitoring_case(simulator_binary: &Path, product_binary: &Path) -> Result
         ("+", "zoom=1"),
         (",", "pan=-1"),
         ("c", "cursor=0"),
+        ("n", "cursor=1"),
+        ("p", "cursor=0"),
+        (".", "pan=0"),
+        ("-", "zoom=0"),
         ("0", "zoom=0"),
     ] {
         product.send(key)?;
@@ -721,6 +725,37 @@ fn run_monitoring_case(simulator_binary: &Path, product_binary: &Path) -> Result
     product.wait_for("Writes are disarmed")?;
     product.send("\rx")?;
     product.wait_for("matches=3")?;
+    for (key, expected) in [
+        ("g", "group=status"),
+        ("g", "group=all"),
+        ("a", "access=ReadOnly"),
+        ("a", "access=WritableWhenStopped"),
+        ("a", "access=Commissioning"),
+        ("a", "access=Dangerous"),
+        ("a", "access=all"),
+        ("y", "quality=Good"),
+        ("y", "quality=Stale"),
+        ("y", "quality=Timeout"),
+        ("y", "quality=ProtocolException"),
+        ("y", "quality=DecodeError"),
+        ("y", "quality=Disconnected"),
+        ("y", "quality=Unavailable"),
+        ("y", "quality=all"),
+        ("u", "unreadable=true"),
+        ("u", "unreadable=false"),
+        ("r", "risk=ReadOnly"),
+        ("r", "risk=Normal"),
+        ("r", "risk=Commissioning"),
+        ("r", "risk=Dangerous"),
+        ("r", "risk=all"),
+        ("t", "quantity=Time"),
+        ("t", "quantity=DigitalState"),
+        ("t", "quantity=Frequency"),
+        ("t", "quantity=all"),
+    ] {
+        product.send(key)?;
+        product.wait_for(expected)?;
+    }
     product.send("6")?;
     product.wait_for("DEMO.01")?;
     product.send("a")?;
@@ -729,6 +764,11 @@ fn run_monitoring_case(simulator_binary: &Path, product_binary: &Path) -> Result
     product.wait_for("No fault events match")?;
     product.send("oe")?;
     product.wait_for("last export:")?;
+    product.send("u")?;
+    product.wait_for("unknown-only=true")?;
+    product.wait_for("No fault events match")?;
+    product.send("u")?;
+    product.wait_for("unknown-only=false")?;
     product.send("8")?;
     product.wait_for("Validated CSV channel catalog:")?;
     product.send("\r")?;
