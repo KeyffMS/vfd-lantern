@@ -679,7 +679,8 @@ fn run_monitoring_case(simulator_binary: &Path, product_binary: &Path) -> Result
     ensure!(report["event"]["acknowledged"] == true);
     ensure!(report["event"]["profile_hash"] == profile.profile_hash().to_hex());
     let digest = sha2::Sha256::digest(serde_jcs::to_vec(&report["event"])?);
-    ensure!(report["sha256"] == format!("{digest:x}"));
+    let digest = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    ensure!(report["sha256"] == digest);
     Ok(())
 }
 
