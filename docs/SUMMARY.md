@@ -12,5 +12,6 @@
 - [CSV, diagnostics and recovery artifacts](data-diagnostics.md)
 - [Profiles, canonicalization and addressing](profiles.md)
 - [Architecture, simulator and CI](architecture-ci.md)
+- [Reusable CI, coverage and long-run gates](development/ci.md)
 - [Threat model](development/threat-model.md)
 - [Release infrastructure](release-infrastructure.md)

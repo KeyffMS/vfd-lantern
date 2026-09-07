@@ -18,7 +18,9 @@ cat > "$root/bundle/gate-driver" <<'DRIVER'
 #!/bin/sh
 set -eu
 test -z "${GITHUB_TOKEN:-}${GH_TOKEN:-}${ACTIONS_RUNTIME_TOKEN:-}"
-jq -n '{schema_version:1,status:"pass",evidence_kind:"mock",elapsed_seconds:1,requested_seconds:1,
+jq -n --arg product "$PRODUCT_SHA256" --arg gate "$GATE" --arg commit "$COMMIT_SHA" \
+    --arg asset "$ARTIFACT_SHA" --arg profile "$PROFILE_SHA" --arg scenario "$SCENARIO_SHA" --arg seed "$SEED" \
+    '{product_sha256:$product,gate:$gate,commit:$commit,artifact_sha256:$asset,profile_sha256:$profile,scenario_sha256:$scenario,seed:$seed,schema_version:1,status:"pass",evidence_kind:"mock",elapsed_seconds:1,requested_seconds:1,
 metrics:{cpu_seconds:0,peak_rss_kib:1,iterations:1,latency_p95_ms:1,drops:0}}' > "$1"
 DRIVER
 for file in vfd-lantern lantern-sim connection_process_acceptance infrastructure; do

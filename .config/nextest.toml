@@ -13,7 +13,7 @@ filesystem-faults = { max-threads = 1 }
 fast = { max-threads = 4 }
 
 [[profile.default.overrides]]
-filter = 'package(lantern-sim) | package(lantern-transport)'
+filter = '(package(lantern-sim) & !kind(lib)) | package(lantern-transport)'
 test-group = 'pty-serial'
 
 [[profile.default.overrides]]

@@ -36,11 +36,11 @@ while :; do
 done
 p95=$(sort -n "$latencies" | awk -v n="$iterations" 'NR == int((n*95+99)/100) {print; exit}')
 jq -n --arg gate "$GATE" --arg seed "$SEED" --arg commit "$COMMIT_SHA" \
-    --arg artifact "$ARTIFACT_SHA" --arg profile "$PROFILE_SHA" --arg scenario "$SCENARIO_SHA" \
+    --arg product "$PRODUCT_SHA256" --arg artifact "$ARTIFACT_SHA" --arg profile "$PROFILE_SHA" --arg scenario "$SCENARIO_SHA" \
     --argjson elapsed "$elapsed" --argjson requested "$DURATION_SECONDS" \
     --argjson iterations "$iterations" --argjson cpu "$cpu" --argjson rss "$rss" --argjson p95 "$p95" \
     '{schema_version:1,status:"pass",evidence_kind:"mock",gate:$gate,commit:$commit,
-      artifact_sha256:$artifact,profile_sha256:$profile,scenario_sha256:$scenario,seed:$seed,
+      product_sha256:$product,artifact_sha256:$artifact,profile_sha256:$profile,scenario_sha256:$scenario,seed:$seed,
       elapsed_seconds:$elapsed,requested_seconds:$requested,
       metrics:{iterations:$iterations,cpu_seconds:$cpu,peak_rss_kib:$rss,latency_p95_ms:$p95,drops:0,
         latency_scope:"complete mock acceptance iteration (PTY or Criterion smoke)",drops_scope:"lossless synchronous harness output"},

@@ -73,3 +73,9 @@ affected-version ranges and advisory bodies are not changed. No advisory is
 ignored. The report records the advisory database commit, the count of removed
 score fields and the SHA-256 of the normalization manifest. This is a
 parser-compatibility normalization, not advisory suppression.
+
+## Quality and nightly tools
+
+The `quality` installer scope pins nextest, cargo-hack and cargo-llvm-cov. The
+`nightly` scope pins cargo-fuzz and cargo-mutants. The dated nightly, offline
+container execution and reusable gate contracts are documented in [CI](ci.md).

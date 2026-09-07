@@ -207,7 +207,7 @@ fn benchmarks(c: &mut Criterion) {
                     parameter_id: parameter.id().clone(),
                     context_hash: None,
                     decision: DecisionOutcome::Cancelled,
-                    at: MonotonicInstant::from_nanos(u128::from(n)),
+                    at: MonotonicInstant::from_nanos(n),
                 }))
                 .unwrap();
         })

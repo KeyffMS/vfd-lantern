@@ -563,6 +563,18 @@ mod tests {
     }
 
     #[test]
+    fn pure_decoder_accepts_fuzz_seed_and_rejects_trailing_and_oversized_bytes() {
+        let seed = include_bytes!("../../../fuzz/corpus/persistent/backup.json");
+        let backup = super::decode_backup(seed).expect("valid corpus seed");
+        assert_eq!(backup.values.len(), 1);
+        let mut trailing = seed.to_vec();
+        trailing.extend_from_slice(b"{}");
+        assert!(super::decode_backup(&trailing).is_err());
+        let oversized = vec![0; super::MAX_BACKUP_FILE_BYTES + 1];
+        assert!(super::decode_backup(&oversized).is_err());
+    }
+
+    #[test]
     fn backup_round_trip_is_private_and_preserves_float_bits_and_decimal() {
         let directory = tempdir().expect("tempdir");
         let path = directory.path().join("backup/demo.vfdlantern-backup.json");

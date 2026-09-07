@@ -98,6 +98,17 @@ jobs:
           test "$WRITE_ENABLED" = false || test "$GATE" = hil
           echo "STAGING_ROOT=$STAGING_ROOT" >> "$GITHUB_ENV"
           echo "runner=$RUNNER_NAME" >> "$GITHUB_OUTPUT"
+      - name: Verify protected Environment before physical writes
+        if: inputs.write-enabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/environments/hil-write" \
+            | jq -e '.protection_rules | any(.type == "required_reviewers" and (.reviewers | length > 0))' >/dev/null
       - name: Fetch artifact before long execution
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
