@@ -114,7 +114,10 @@ async fn closed_data_channel_still_allows_durable_stop() {
     drop(tx);
     // Let the actor observe EOF before delivering the independent Stop command.
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert!(!task.is_finished(), "data EOF must not terminate the writer");
+    assert!(
+        !task.is_finished(),
+        "data EOF must not terminate the writer"
+    );
     handle.stop(stop_request(None)).await.expect("durable stop");
     assert_eq!(handle.status().state, CsvWriterState::Completed);
     let mut reader = csv::Reader::from_path(csv_path).expect("CSV");
