@@ -183,7 +183,7 @@ jobs:
           rm -rf .issue24-repro-a .issue24-repro-b
 
       - name: Upload architecture stage
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: candidate-${{ matrix.arch }}
           path: target/release-stage/${{ matrix.arch }}
@@ -271,7 +271,7 @@ jobs:
           show-summary: true
 
       - name: Upload candidate product snapshot
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: candidate-product-assets
           path: target/candidate-assets
@@ -338,7 +338,7 @@ jobs:
           } > target/candidate-reference/reference.txt
 
       - name: Upload candidate build reference
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: candidate-build-reference
           path: target/candidate-reference/reference.txt
