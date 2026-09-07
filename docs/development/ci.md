@@ -38,7 +38,9 @@ serial PTY/transport tests and filesystem fault tests. JUnit is retained.
 
 Coverage includes the workspace tests and process-level E2E, with both product and
 simulator binaries instrumented. The threshold is **80% of lines globally**; no
-production file is excluded to meet it. HTML and JSON reports are uploaded, also
+production file is excluded to meet it. Instrumented CLI contracts also verify
+normalization/hash stability, approval rejection/creation in isolated XDG paths,
+and backup tamper rejection. HTML and JSON reports are uploaded, also
 on failure. Critical write, trust, audit, restore and state rules retain their
 positive and negative tests irrespective of the aggregate percentage.
 
@@ -55,7 +57,11 @@ lockfiles; formatters and tool commands without a `--locked` option are exceptio
 pure domain and profile hash tests. Five libFuzzer targets cover profile parsers,
 canonical round trips, address/function bounds, register codecs and persistent
 backup decoding. Seeds, logs and crash artifacts are retained. The fuzz workspace
-has its own committed lockfile and pins libfuzzer-sys exactly.
+has its own committed lockfile and pins libfuzzer-sys exactly. cargo-fuzz 0.13.1
+does not forward `--locked`; a scoped Cargo launcher adds it to every child
+build/metadata command and delegates to the exact pinned nightly Cargo binary.
+Unknown child commands fail closed. The launcher preserves arguments and exit
+status; it does not modify the installed tool or generate a replacement lockfile.
 
 The previous unused `cargo-mutants = 26.0.1` pin does not exist in the crates.io
 index. #21 pins the published 27.1.0 release, which supports TOML 1.1. Cargo

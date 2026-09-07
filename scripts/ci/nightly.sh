@@ -9,7 +9,9 @@ cargo +"$nightly" miri test --locked -p lantern-domain --lib
 cargo +"$nightly" miri test --locked -p lantern-profile --test profile_hash
 for target in parser canonical addresses codec persistent; do
     mkdir -p "fuzz/artifacts/$target"
-    cargo +"$nightly" fuzz run "$target" --locked -- \
+    CI_REAL_CARGO=$(rustup which --toolchain "$nightly" cargo) \
+        RUSTUP_TOOLCHAIN="$nightly" CARGO="$PWD/scripts/ci/locked-cargo/cargo" \
+        PATH="$PWD/scripts/ci/locked-cargo:$PATH" cargo-fuzz fuzz run "$target" -- \
         -max_total_time="${FUZZ_SECONDS:-30}" -seed=21 -max_len=65536 \
         -rss_limit_mb=2048 >"target/ci/nightly/fuzz-$target.log" 2>&1
 done

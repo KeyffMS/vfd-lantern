@@ -19,6 +19,9 @@ fuzz_target!(|data: &[u8]| {
         RegisterEncoding::Bcd16,
         RegisterEncoding::Bcd32,
         RegisterEncoding::Enum16,
+        RegisterEncoding::Enum32,
+        RegisterEncoding::Bitfield16,
+        RegisterEncoding::Bitfield32,
         RegisterEncoding::Bitfield64,
     ] {
         for byte in [ByteOrder::BigEndian, ByteOrder::LittleEndian] {

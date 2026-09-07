@@ -25,8 +25,19 @@ rm -rf "$ci_build_cache/llvm-cov-target/nextest"
 podman build --pull=always -f scripts/ci/Containerfile -t "$image" scripts/ci
 # Miri sysroot is prepared once before offline execution.
 miri_sysroot=${MIRI_SYSROOT:-$ci_cargo_home}
+ci_control=$(mktemp -d "${RUNNER_TEMP:-/tmp}/vfd-ci.XXXXXXXX")
+cleanup() {
+    if test -s "$ci_control/container.cid"; then
+        ci_container=$(cat "$ci_control/container.cid")
+        podman rm -f "$ci_container" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$ci_control"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 set +e
-podman run --rm --network=none --cpus=4 --memory=6g --pids-limit=1024 \
+podman run --rm --cidfile "$ci_control/container.cid" --network=none --cpus=4 --memory=6g --pids-limit=1024 \
     -v "$PWD:/work:rw" -v "$ci_build_cache:/work/target:rw" -v "$ci_cargo_home:/cargo:rw" \
     -v "$miri_sysroot:/miri:ro" -v "$ci_rustup_home:/rustup:ro" -v "$ci_tools:/ci-tools:ro" \
     -e CARGO_HOME=/cargo -e RUSTUP_HOME=/rustup -e CARGO_NET_OFFLINE=true \

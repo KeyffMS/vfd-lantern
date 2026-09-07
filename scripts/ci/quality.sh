@@ -14,6 +14,7 @@ cargo test --workspace --all-features --doc --locked
 RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps --locked
 sh scripts/check-architecture.sh
 sh scripts/ci/test-staging.sh
+sh scripts/ci/test-locked-cargo.sh
 sh scripts/ci/benchmark.sh
 
 # Coverage combines nextest with the actual CLI/PTY process harness. No production
@@ -28,6 +29,7 @@ cargo nextest run --workspace --all-features --locked
 # The process harness launches the product and simulator as sibling binaries.
 cargo build --workspace --all-features --bins --locked
 cargo run --locked --all-features -p lantern-sim --example connection_process_acceptance
+sh scripts/ci/test-product-cli.sh "$CARGO_TARGET_DIR/debug/vfd-lantern"
 cargo llvm-cov report --json --summary-only --output-path target/ci/coverage.json
 jq '.data[].files[] | {filename, lines: .summary.lines}' target/ci/coverage.json
 cargo llvm-cov report --html --output-dir target/ci/coverage
