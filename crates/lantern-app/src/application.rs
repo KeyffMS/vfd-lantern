@@ -403,7 +403,7 @@ impl ApplicationState {
                     }
                 }
                 if self.parameters.visible == visible {
-                    self.parameters.error = None;
+                    // Repeated presentation sync must preserve an operator-visible refusal.
                     return Vec::new();
                 }
                 self.parameters.visible = visible.clone();

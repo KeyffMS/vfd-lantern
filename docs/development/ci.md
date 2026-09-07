@@ -40,7 +40,11 @@ Coverage includes the workspace tests and process-level E2E, with both product a
 simulator binaries instrumented. The threshold is **80% of lines globally**; no
 production file is excluded to meet it. Instrumented CLI contracts also verify
 normalization/hash stability, approval rejection/creation in isolated XDG paths,
-and backup tamper rejection. The PTY harness exercises monitoring, completed CSV
+and backup tamper rejection. Acceptance exposed and fixes two product regressions:
+CSV data-channel EOF no longer terminates its writer before durable finalization,
+and unchanged parameter visibility updates preserve operator-visible write refusals.
+The CSV regression checks completed metadata and removal of the runtime checkpoint.
+The PTY harness exercises monitoring, completed CSV
 and its sidecar, fault acknowledgment/export integrity, and read-only write guards.
 The quality gate additionally passes `--write-fixture`: this launches a disposable
 PTY simulator, approves its profile only in temporary XDG directories, and checks
@@ -62,7 +66,8 @@ lockfiles; formatters and tool commands without a `--locked` option are exceptio
 `ci-nightly.yml` is reusable, scheduled and manually dispatchable. The pinned
 `nightly-2026-09-06` has Rust source and Miri available for amd64. Miri checks the
 pure domain and profile hash tests with isolation enabled. Only Miri disables
-Proptest's filesystem failure persistence; its fixed seed and results are retained
+Proptest's filesystem failure persistence; fixed inputs enter the isolated program
+through `-Zmiri-env-set`. Its seed and results are retained
 in the Miri logs, while native tests keep normal persistence. Five libFuzzer targets cover profile parsers,
 canonical round trips, address/function bounds, register codecs and persistent
 backup decoding. Seeds, logs and crash artifacts are retained. The fuzz workspace
