@@ -114,17 +114,10 @@ pub struct ScheduledWriteBehaviorV1 {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WriteBehaviorV1 {
     Accept,
-    Exception {
-        code: u8,
-    },
+    Exception { code: u8 },
     Ignore,
-    Clamp {
-        minimum: String,
-        maximum: String,
-    },
-    DelayedApply {
-        read_backs: u8,
-    },
+    Clamp { minimum: String, maximum: String },
+    DelayedApply { read_backs: u8 },
     ApplyAndDropResponse,
 }
 
