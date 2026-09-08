@@ -623,8 +623,8 @@ async fn case_34_outcome_unknown_disconnect_and_audit_degraded_are_terminal() {
     let session = Arc::new(RestoreSession::new(&profile));
     let audit_dir = TempDir::new().expect("audit dir");
     let audit: Arc<dyn AuditPort> = Arc::new(FilesystemAuditPort::new(audit_dir.path()).expect("audit"));
-    let mut coordinator = coordinator(&stack, Arc::clone(&profile), Arc::clone(&session), audit);
-    let mut permit = permit(&mut coordinator, &profile).await;
+    let mut coordinator = self::coordinator(&stack, Arc::clone(&profile), Arc::clone(&session), audit);
+    let mut permit = self::permit(&mut coordinator, &profile).await;
     let disconnected = coordinator.execute_restore_step(&mut permit, 0).await;
     assert!(matches!(disconnected, Ok(DeviceWriteOutcome::OutcomeUnknown | DeviceWriteOutcome::TransportLost) | Err(WriteCoordinatorError::InvalidRestorePermit)));
     assert!(!session.snapshot().armed);
@@ -632,8 +632,8 @@ async fn case_34_outcome_unknown_disconnect_and_audit_degraded_are_terminal() {
 
     let (stack, profile) = Stack::start(accepted, "").await;
     let session = Arc::new(RestoreSession::new(&profile));
-    let mut coordinator = coordinator(&stack, Arc::clone(&profile), Arc::clone(&session), Arc::new(FinalizeFailAudit));
-    let mut permit = permit(&mut coordinator, &profile).await;
+    let mut coordinator = self::coordinator(&stack, Arc::clone(&profile), Arc::clone(&session), Arc::new(FinalizeFailAudit));
+    let mut permit = self::permit(&mut coordinator, &profile).await;
     assert_eq!(coordinator.execute_restore_step(&mut permit, 0).await.expect("audit degraded"), DeviceWriteOutcome::AuditDegraded);
     assert!(!permit.is_active());
     let snapshot = session.snapshot();
