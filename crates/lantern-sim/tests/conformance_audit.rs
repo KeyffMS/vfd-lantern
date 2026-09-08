@@ -11,11 +11,7 @@ use lantern_storage::FilesystemAuditPort;
 use serde_json::Value;
 use tempfile::tempdir;
 
-fn preparation(
-    plan_id: u128,
-    request_id: u64,
-    context_hash: &str,
-) -> DeviceWritePreparation {
+fn preparation(plan_id: u128, request_id: u64, context_hash: &str) -> DeviceWritePreparation {
     DeviceWritePreparation {
         plan_id: PlanId::new(plan_id),
         operation_id: OperationId::new(plan_id),
@@ -45,8 +41,7 @@ async fn case_22_decision_record_contains_no_prepared_token() {
         .record_decision(DecisionAuditRecord {
             plan_id: PlanId::new(1),
             session_id,
-            fingerprint: DeviceFingerprint::parse("conformance.audit:77")
-                .expect("fingerprint"),
+            fingerprint: DeviceFingerprint::parse("conformance.audit:77").expect("fingerprint"),
             profile_hash: "ab".repeat(32),
             parameter_id: ParameterId::parse("config.acceleration").expect("parameter"),
             context_hash: Some("decision-context".to_owned()),
@@ -57,7 +52,8 @@ async fn case_22_decision_record_contains_no_prepared_token() {
         .expect("decision audit");
 
     let journal = fs::read_to_string(directory.path().join("audit_77.jsonl")).expect("journal");
-    let record: Value = serde_json::from_str(journal.lines().next().expect("record")).expect("JSON");
+    let record: Value =
+        serde_json::from_str(journal.lines().next().expect("record")).expect("JSON");
     assert_eq!(record["kind"], "decision");
     assert!(record["body"].get("token_id").is_none());
     assert!(!journal.contains("PreparedToken"));
