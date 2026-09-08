@@ -437,10 +437,15 @@ async fn case_40_slow_nonblocking_sink_does_not_inflate_rtu_latency() {
             dropped = dropped.saturating_add(1);
         }
     }
-    assert!(dropped > 0, "slow sink must actually exert bounded pressure");
+    assert!(
+        dropped > 0,
+        "slow sink must actually exert bounded pressure"
+    );
     let stats = stack.bus.statistics();
     assert!(
-        stats.round_trip_p95_micros.is_some_and(|value| value < 100_000),
+        stats
+            .round_trip_p95_micros
+            .is_some_and(|value| value < 100_000),
         "slow sink must remain outside RTU latency path: {:?}",
         stats.round_trip_p95_micros
     );
