@@ -3,6 +3,8 @@
 #![forbid(unsafe_code)]
 
 mod conformance;
+mod conformance_runtime;
+mod conformance_service;
 mod error;
 mod identify;
 mod pty;
@@ -12,6 +14,8 @@ mod service;
 mod wire;
 
 pub use conformance::*;
+pub use conformance_runtime::*;
+pub use conformance_service::*;
 pub use error::*;
 pub use identify::*;
 pub use pty::*;
