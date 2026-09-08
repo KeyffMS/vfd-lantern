@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod conformance;
 mod error;
 mod identify;
 mod pty;
@@ -10,6 +11,7 @@ mod scenario;
 mod service;
 mod wire;
 
+pub use conformance::*;
 pub use error::*;
 pub use identify::*;
 pub use pty::*;
