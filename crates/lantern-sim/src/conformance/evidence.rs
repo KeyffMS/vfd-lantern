@@ -290,8 +290,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        AuditEvidenceV1, ConformanceEvidenceError, ConformanceEvidenceV1,
-        CONFORMANCE_EVIDENCE_SCHEMA_VERSION, ModbusRequestEvidenceV1, QueueEvidenceV1,
+        AuditEvidenceV1, CONFORMANCE_EVIDENCE_SCHEMA_VERSION, ConformanceEvidenceError,
+        ConformanceEvidenceV1, ModbusRequestEvidenceV1, QueueEvidenceV1,
     };
 
     const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -341,7 +341,10 @@ mod tests {
     fn verifies_and_hashes_exact_golden_evidence() {
         let evidence = evidence();
         evidence.verify().expect("matching golden evidence");
-        assert_eq!(evidence.hash().expect("hash"), evidence.hash().expect("hash"));
+        assert_eq!(
+            evidence.hash().expect("hash"),
+            evidence.hash().expect("hash")
+        );
     }
 
     #[test]
@@ -355,10 +358,7 @@ mod tests {
 
         evidence.actual_write_count = 0;
         evidence.actual_state_trace.push("armed".to_owned());
-        assert_eq!(
-            evidence.verify(),
-            Err(ConformanceEvidenceError::StateTrace)
-        );
+        assert_eq!(evidence.verify(), Err(ConformanceEvidenceError::StateTrace));
     }
 
     #[test]
