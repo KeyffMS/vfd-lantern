@@ -1,0 +1,469 @@
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    pin::Pin,
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
+
+use lantern_app::MonotonicClock;
+use lantern_domain::{EngineeringValue, ModbusTable, ParameterAccess};
+use lantern_profile::ValidatedDeviceProfile;
+use rust_decimal::Decimal;
+use tokio_modbus::{ExceptionCode, Request, Response, SlaveRequest, server::Service};
+use tokio_util::sync::CancellationToken;
+
+use crate::{
+    LoadedConformanceScenario, LoadedScenario, SimulatorControl, SimulatorError, SimulatorLogRecord,
+    SimulatorService, WriteBehaviorV1, validate_conformance_for_core,
+};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConformanceSimulatorSnapshot {
+    pub request_count: u64,
+    pub write_count: u64,
+    pub log_records: usize,
+}
+
+#[derive(Clone)]
+pub struct ConformanceSimulatorControl {
+    shared: Arc<ConformanceShared>,
+    core: SimulatorControl,
+}
+
+impl ConformanceSimulatorControl {
+    #[must_use]
+    pub fn snapshot(&self) -> ConformanceSimulatorSnapshot {
+        let state = lock_state(&self.shared);
+        ConformanceSimulatorSnapshot {
+            request_count: state.request_count,
+            write_count: state.write_count,
+            log_records: state.log.len(),
+        }
+    }
+
+    #[must_use]
+    pub fn structured_log(&self) -> Vec<SimulatorLogRecord> {
+        lock_state(&self.shared).log.clone()
+    }
+
+    #[must_use]
+    pub const fn core(&self) -> &SimulatorControl {
+        &self.core
+    }
+}
+
+/// Optional #27 service layer. The wrapped core service remains read-only.
+#[derive(Clone)]
+pub struct ConformanceSimulatorService {
+    inner: SimulatorService,
+    profile: Arc<ValidatedDeviceProfile>,
+    conformance: Arc<LoadedConformanceScenario>,
+    shared: Arc<ConformanceShared>,
+}
+
+struct ConformanceShared {
+    state: Mutex<ConformanceState>,
+}
+
+#[derive(Default)]
+struct ConformanceState {
+    request_count: u64,
+    write_count: u64,
+    holding_overrides: BTreeMap<u16, u16>,
+    pending_writes: Vec<PendingWrite>,
+    log: Vec<SimulatorLogRecord>,
+}
+
+struct PendingWrite {
+    address: u16,
+    words: Vec<u16>,
+    remaining_read_backs: u8,
+}
+
+impl ConformanceSimulatorService {
+    pub fn new(
+        profile: Arc<ValidatedDeviceProfile>,
+        core_scenario: Arc<LoadedScenario>,
+        conformance: Arc<LoadedConformanceScenario>,
+        clock: Arc<dyn MonotonicClock>,
+        disconnect: CancellationToken,
+    ) -> Result<(Self, ConformanceSimulatorControl), SimulatorError> {
+        validate_conformance_for_core(
+            &conformance,
+            &conformance.document().core.scenario_path,
+            &core_scenario,
+        )?;
+        let (inner, core) = SimulatorService::new(
+            Arc::clone(&profile),
+            core_scenario,
+            clock,
+            disconnect,
+        )?;
+        let shared = Arc::new(ConformanceShared {
+            state: Mutex::new(ConformanceState::default()),
+        });
+        Ok((
+            Self {
+                inner,
+                profile,
+                conformance,
+                shared: Arc::clone(&shared),
+            },
+            ConformanceSimulatorControl { shared, core },
+        ))
+    }
+
+    fn prepare_write(&self, request: &Request<'_>) -> Result<Option<Response>, ExceptionCode> {
+        let (address, words, success) = write_request(request)?;
+        let parameter = self
+            .profile
+            .parameters()
+            .values()
+            .find(|parameter| {
+                let block = parameter.block();
+                block.table() == ModbusTable::HoldingRegisters
+                    && block.start().get() == address
+                    && usize::from(block.count().get()) == words.len()
+            })
+            .ok_or(ExceptionCode::IllegalDataAddress)?;
+        if parameter.access() == ParameterAccess::ReadOnly {
+            return Err(ExceptionCode::IllegalDataAddress);
+        }
+
+        let behavior = {
+            let mut state = lock_state(&self.shared);
+            state.write_count = state.write_count.saturating_add(1);
+            write_behavior(&self.conformance, state.write_count)
+        }
+        .ok_or(ExceptionCode::IllegalFunction)?;
+
+        match behavior {
+            WriteBehaviorV1::Accept => {
+                apply_override(&self.shared, address, &words);
+                Ok(Some(success))
+            }
+            WriteBehaviorV1::Exception { code } => Err(ExceptionCode::new(code)),
+            WriteBehaviorV1::Ignore => Ok(Some(success)),
+            WriteBehaviorV1::Clamp { minimum, maximum } => {
+                let decoded = parameter
+                    .codec()
+                    .decode(&words)
+                    .map_err(|_| ExceptionCode::IllegalDataValue)?;
+                let EngineeringValue::Fixed(value) = decoded else {
+                    return Err(ExceptionCode::IllegalDataValue);
+                };
+                let minimum = Decimal::from_str(&minimum)
+                    .map_err(|_| ExceptionCode::ServerDeviceFailure)?;
+                let maximum = Decimal::from_str(&maximum)
+                    .map_err(|_| ExceptionCode::ServerDeviceFailure)?;
+                let clamped = value.max(minimum).min(maximum);
+                let encoded = parameter
+                    .codec()
+                    .encode(&EngineeringValue::Fixed(clamped))
+                    .map_err(|_| ExceptionCode::IllegalDataValue)?;
+                apply_override(&self.shared, address, &encoded);
+                Ok(Some(success))
+            }
+            WriteBehaviorV1::DelayedApply { read_backs } => {
+                lock_state(&self.shared).pending_writes.push(PendingWrite {
+                    address,
+                    words,
+                    remaining_read_backs: read_backs,
+                });
+                Ok(Some(success))
+            }
+            WriteBehaviorV1::ApplyAndDropResponse => {
+                apply_override(&self.shared, address, &words);
+                Ok(None)
+            }
+        }
+    }
+}
+
+type ServiceFuture =
+    Pin<Box<dyn Future<Output = Result<Option<Response>, ExceptionCode>> + Send + 'static>>;
+
+impl Service for ConformanceSimulatorService {
+    type Request = SlaveRequest<'static>;
+    type Response = Option<Response>;
+    type Exception = ExceptionCode;
+    type Future = ServiceFuture;
+
+    fn call(&self, request: Self::Request) -> Self::Future {
+        let request_index = {
+            let mut state = lock_state(&self.shared);
+            state.request_count = state.request_count.saturating_add(1);
+            state.request_count
+        };
+        let slave = request.slave;
+        let function = request.request.function_code().value();
+        let (address, quantity) = request_address_quantity(&request.request);
+        let request_pdu_hex = hex(&encode_request_pdu(&request.request));
+        let fingerprint = self.inner_fingerprint();
+
+        if matches!(
+            request.request,
+            Request::WriteSingleRegister(_, _) | Request::WriteMultipleRegisters(_, _)
+        ) {
+            let result = self.prepare_write(&request.request);
+            record_result(
+                &self.shared,
+                request_index,
+                slave,
+                function,
+                address,
+                quantity,
+                request_pdu_hex,
+                fingerprint,
+                &result,
+            );
+            return Box::pin(async move { result });
+        }
+
+        activate_pending_writes(&self.shared, &request.request);
+        let inner = self.inner.clone();
+        let shared = Arc::clone(&self.shared);
+        Box::pin(async move {
+            let result = Service::call(&inner, request.clone()).await.map(|response| {
+                response.map(|value| overlay_read_response(&shared, &request.request, value))
+            });
+            record_result(
+                &shared,
+                request_index,
+                slave,
+                function,
+                address,
+                quantity,
+                request_pdu_hex,
+                fingerprint,
+                &result,
+            );
+            result
+        })
+    }
+}
+
+impl ConformanceSimulatorService {
+    fn inner_fingerprint(&self) -> String {
+        // The core control owns identity mutation. A stable initial fingerprint is sufficient
+        // for write-family golden traces; identity scenarios use the core runtime directly.
+        self.conformance
+            .document()
+            .core
+            .scenario_hash
+            .chars()
+            .take(0)
+            .collect::<String>();
+        String::new()
+    }
+}
+
+fn write_behavior(
+    scenario: &LoadedConformanceScenario,
+    write_index: u64,
+) -> Option<WriteBehaviorV1> {
+    scenario
+        .document()
+        .write_behaviors
+        .iter()
+        .find(|item| {
+            let end = item
+                .start_write
+                .saturating_add(u64::from(item.count).saturating_sub(1));
+            (item.start_write..=end).contains(&write_index)
+        })
+        .map(|item| item.behavior.clone())
+}
+
+fn write_request(request: &Request<'_>) -> Result<(u16, Vec<u16>, Response), ExceptionCode> {
+    match request {
+        Request::WriteSingleRegister(address, value) => Ok((
+            *address,
+            vec![*value],
+            Response::WriteSingleRegister(*address, *value),
+        )),
+        Request::WriteMultipleRegisters(address, words) => {
+            let quantity = u16::try_from(words.len()).map_err(|_| ExceptionCode::IllegalDataValue)?;
+            if quantity == 0 {
+                return Err(ExceptionCode::IllegalDataValue);
+            }
+            Ok((
+                *address,
+                words.to_vec(),
+                Response::WriteMultipleRegisters(*address, quantity),
+            ))
+        }
+        _ => Err(ExceptionCode::IllegalFunction),
+    }
+}
+
+fn activate_pending_writes(shared: &Arc<ConformanceShared>, request: &Request<'_>) {
+    let Request::ReadHoldingRegisters(address, quantity) = request else {
+        return;
+    };
+    let mut state = lock_state(shared);
+    let mut ready = Vec::new();
+    for (index, pending) in state.pending_writes.iter_mut().enumerate() {
+        if pending.address == *address && usize::from(*quantity) == pending.words.len() {
+            pending.remaining_read_backs = pending.remaining_read_backs.saturating_sub(1);
+            if pending.remaining_read_backs == 0 {
+                ready.push(index);
+            }
+        }
+    }
+    for index in ready.into_iter().rev() {
+        let pending = state.pending_writes.remove(index);
+        for (offset, word) in pending.words.into_iter().enumerate() {
+            if let Ok(offset) = u16::try_from(offset)
+                && let Some(current) = pending.address.checked_add(offset)
+            {
+                state.holding_overrides.insert(current, word);
+            }
+        }
+    }
+}
+
+fn apply_override(shared: &Arc<ConformanceShared>, address: u16, words: &[u16]) {
+    let mut state = lock_state(shared);
+    for (offset, word) in words.iter().copied().enumerate() {
+        if let Ok(offset) = u16::try_from(offset)
+            && let Some(current) = address.checked_add(offset)
+        {
+            state.holding_overrides.insert(current, word);
+        }
+    }
+}
+
+fn overlay_read_response(
+    shared: &Arc<ConformanceShared>,
+    request: &Request<'_>,
+    mut response: Response,
+) -> Response {
+    let (Request::ReadHoldingRegisters(address, _), Response::ReadHoldingRegisters(words)) =
+        (request, &mut response)
+    else {
+        return response;
+    };
+    let state = lock_state(shared);
+    for (offset, word) in words.iter_mut().enumerate() {
+        if let Ok(offset) = u16::try_from(offset)
+            && let Some(current) = address.checked_add(offset)
+            && let Some(override_word) = state.holding_overrides.get(&current)
+        {
+            *word = *override_word;
+        }
+    }
+    response
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_result(
+    shared: &Arc<ConformanceShared>,
+    request_index: u64,
+    slave: u8,
+    function: u8,
+    address: Option<u16>,
+    quantity: Option<u16>,
+    request_pdu_hex: String,
+    fingerprint: String,
+    result: &Result<Option<Response>, ExceptionCode>,
+) {
+    let response_pdu_hex = result
+        .as_ref()
+        .ok()
+        .and_then(Option::as_ref)
+        .map(encode_response_pdu)
+        .map(|bytes| hex(&bytes));
+    let outcome = match result {
+        Ok(Some(_)) => "response".to_owned(),
+        Ok(None) => "no_response".to_owned(),
+        Err(code) => format!("exception:{:02x}", u8::from(*code)),
+    };
+    lock_state(shared).log.push(SimulatorLogRecord {
+        request_index,
+        slave,
+        function,
+        address,
+        quantity,
+        request_pdu_hex,
+        response_pdu_hex,
+        outcome,
+        fingerprint,
+    });
+}
+
+fn request_address_quantity(request: &Request<'_>) -> (Option<u16>, Option<u16>) {
+    match request {
+        Request::ReadHoldingRegisters(address, quantity)
+        | Request::ReadInputRegisters(address, quantity) => (Some(*address), Some(*quantity)),
+        Request::WriteSingleRegister(address, _) => (Some(*address), Some(1)),
+        Request::WriteMultipleRegisters(address, words) => {
+            (Some(*address), u16::try_from(words.len()).ok())
+        }
+        _ => (None, None),
+    }
+}
+
+fn encode_request_pdu(request: &Request<'_>) -> Vec<u8> {
+    let mut bytes = vec![request.function_code().value()];
+    match request {
+        Request::ReadHoldingRegisters(address, quantity)
+        | Request::ReadInputRegisters(address, quantity) => {
+            bytes.extend_from_slice(&address.to_be_bytes());
+            bytes.extend_from_slice(&quantity.to_be_bytes());
+        }
+        Request::WriteSingleRegister(address, value) => {
+            bytes.extend_from_slice(&address.to_be_bytes());
+            bytes.extend_from_slice(&value.to_be_bytes());
+        }
+        Request::WriteMultipleRegisters(address, words) => {
+            bytes.extend_from_slice(&address.to_be_bytes());
+            bytes.extend_from_slice(&u16::try_from(words.len()).unwrap_or(u16::MAX).to_be_bytes());
+            bytes.push(u8::try_from(words.len().saturating_mul(2)).unwrap_or(u8::MAX));
+            for word in words.iter() {
+                bytes.extend_from_slice(&word.to_be_bytes());
+            }
+        }
+        _ => {}
+    }
+    bytes
+}
+
+fn encode_response_pdu(response: &Response) -> Vec<u8> {
+    let mut bytes = vec![response.function_code().value()];
+    match response {
+        Response::ReadHoldingRegisters(words) | Response::ReadInputRegisters(words) => {
+            bytes.push(u8::try_from(words.len().saturating_mul(2)).unwrap_or(u8::MAX));
+            for word in words {
+                bytes.extend_from_slice(&word.to_be_bytes());
+            }
+        }
+        Response::WriteSingleRegister(address, value) => {
+            bytes.extend_from_slice(&address.to_be_bytes());
+            bytes.extend_from_slice(&value.to_be_bytes());
+        }
+        Response::WriteMultipleRegisters(address, quantity) => {
+            bytes.extend_from_slice(&address.to_be_bytes());
+            bytes.extend_from_slice(&quantity.to_be_bytes());
+        }
+        _ => {}
+    }
+    bytes
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    output
+}
+
+fn lock_state(shared: &ConformanceShared) -> std::sync::MutexGuard<'_, ConformanceState> {
+    shared
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
