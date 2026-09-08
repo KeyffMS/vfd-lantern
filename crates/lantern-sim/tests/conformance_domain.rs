@@ -2,7 +2,8 @@ use std::{fs, path::PathBuf};
 
 use lantern_app::{
     PackagedProfileEntryV1, PackagedProfilesManifestV1, ProfileOrigin, ProfileRegistry,
-    ProfileRegistryError, ProfileSource, ProfileSourceFormat, ProfileSourceTier, ProfileToolService,
+    ProfileRegistryError, ProfileSource, ProfileSourceFormat, ProfileSourceTier,
+    ProfileToolService,
 };
 use lantern_domain::ParameterAccess;
 use lantern_sim::{ConformanceBoundary, conformance_case};
