@@ -6,10 +6,10 @@ use rust_decimal::Decimal;
 use crate::{LoadedScenario, ScenarioHash, SimulatorError};
 
 use super::model::{
-    CONFORMANCE_SCENARIO_SCHEMA_VERSION, AuditFailurePointV1, ConformanceScenarioV1,
-    CsvBehaviorV1, FaultEventKindV1, MAX_CONFORMANCE_SCENARIO_BYTES, PressureBehaviorV1,
-    PressureEventKindV1, RestoreBehaviorV1, ScheduledAuditFailureV1, ScheduledFaultEventV1,
-    ScheduledWriteBehaviorV1, TrustCaseV1, WriteBehaviorV1,
+    CONFORMANCE_SCENARIO_SCHEMA_VERSION, ConformanceScenarioV1, CsvBehaviorV1, FaultEventKindV1,
+    MAX_CONFORMANCE_SCENARIO_BYTES, PressureBehaviorV1, PressureEventKindV1, RestoreBehaviorV1,
+    ScheduledAuditFailureV1, ScheduledFaultEventV1, ScheduledWriteBehaviorV1, TrustCaseV1,
+    WriteBehaviorV1,
 };
 
 const MAX_FAULT_EVENTS: usize = 256;
@@ -125,7 +125,11 @@ fn validate_conformance_document(document: &ConformanceScenarioV1) -> Result<(),
     validate_lower_hex_hash("core profile_hash", &document.core.profile_hash)?;
     validate_seed(&document.core.seed)?;
 
-    validate_len("fault_events", document.fault_events.len(), MAX_FAULT_EVENTS)?;
+    validate_len(
+        "fault_events",
+        document.fault_events.len(),
+        MAX_FAULT_EVENTS,
+    )?;
     validate_fault_events(&document.fault_events)?;
 
     if let Some(csv) = &document.csv {
@@ -146,11 +150,7 @@ fn validate_conformance_document(document: &ConformanceScenarioV1) -> Result<(),
     )?;
     validate_audit_failures(&document.audit_failures)?;
 
-    validate_len(
-        "trust_cases",
-        document.trust_cases.len(),
-        MAX_TRUST_CASES,
-    )?;
+    validate_len("trust_cases", document.trust_cases.len(), MAX_TRUST_CASES)?;
     validate_trust_cases(&document.trust_cases)?;
 
     if let Some(restore) = &document.restore {
@@ -185,8 +185,9 @@ fn validate_fault_events(events: &[ScheduledFaultEventV1]) -> Result<(), Simulat
         }
 
         match &event.event {
-            FaultEventKindV1::ScalarRaised { code }
-            | FaultEventKindV1::ScalarChanged { code } => validate_text("fault code", code)?,
+            FaultEventKindV1::ScalarRaised { code } | FaultEventKindV1::ScalarChanged { code } => {
+                validate_text("fault code", code)?
+            }
             FaultEventKindV1::ScalarCleared | FaultEventKindV1::ScalarUnknown => {}
             FaultEventKindV1::Bitset {
                 raised,
@@ -246,9 +247,7 @@ fn validate_csv(csv: &CsvBehaviorV1) -> Result<(), SimulatorError> {
     Ok(())
 }
 
-fn validate_write_behaviors(
-    behaviors: &[ScheduledWriteBehaviorV1],
-) -> Result<(), SimulatorError> {
+fn validate_write_behaviors(behaviors: &[ScheduledWriteBehaviorV1]) -> Result<(), SimulatorError> {
     let mut previous_end = 0_u64;
 
     for item in behaviors {
@@ -276,9 +275,7 @@ fn validate_write_behaviors(
                 let minimum = parse_decimal("clamp minimum", minimum)?;
                 let maximum = parse_decimal("clamp maximum", maximum)?;
                 if minimum > maximum {
-                    return Err(invalid(
-                        "write clamp minimum must not exceed maximum",
-                    ));
+                    return Err(invalid("write clamp minimum must not exceed maximum"));
                 }
             }
             WriteBehaviorV1::DelayedApply { read_backs } if !(1..=3).contains(read_backs) => {
@@ -305,11 +302,6 @@ fn validate_audit_failures(failures: &[ScheduledAuditFailureV1]) -> Result<(), S
             ));
         }
         previous = failure.operation_index;
-        match failure.point {
-            AuditFailurePointV1::Decision
-            | AuditFailurePointV1::Prepare
-            | AuditFailurePointV1::Finalize => {}
-        }
     }
 
     Ok(())
@@ -330,7 +322,10 @@ fn validate_trust_cases(cases: &[TrustCaseV1]) -> Result<(), SimulatorError> {
                 "embedded_manifest_profile_hash",
                 &case.embedded_manifest_profile_hash,
             ),
-            ("disk_manifest_profile_hash", &case.disk_manifest_profile_hash),
+            (
+                "disk_manifest_profile_hash",
+                &case.disk_manifest_profile_hash,
+            ),
             ("approval_hash", &case.approval_hash),
         ] {
             if let Some(hash) = value {
@@ -387,9 +382,7 @@ fn validate_pressure(pressure: &PressureBehaviorV1) -> Result<(), SimulatorError
             } => {
                 validate_text("queue", queue)?;
                 if *capacity == 0 || depth > capacity {
-                    return Err(invalid(
-                        "queue depth must be within a non-zero capacity",
-                    ));
+                    return Err(invalid("queue depth must be within a non-zero capacity"));
                 }
             }
             PressureEventKindV1::Suspend { timer } => {
@@ -467,8 +460,7 @@ fn validate_seed(value: &str) -> Result<(), SimulatorError> {
 }
 
 fn parse_decimal(name: &str, value: &str) -> Result<Decimal, SimulatorError> {
-    Decimal::from_str(value)
-        .map_err(|error| invalid(format!("invalid {name} {value:?}: {error}")))
+    Decimal::from_str(value).map_err(|error| invalid(format!("invalid {name} {value:?}: {error}")))
 }
 
 fn invalid(message: impl Into<String>) -> SimulatorError {
