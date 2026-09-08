@@ -7,14 +7,16 @@ use std::{
 };
 
 use lantern_app::MonotonicClock;
-use lantern_domain::{EngineeringValue, ModbusTable, ParameterAccess};
+use lantern_domain::{
+    EngineeringValue, ModbusTable, ParameterAccess, ParameterId, RegisterEncoding,
+};
 use lantern_profile::ValidatedDeviceProfile;
 use rust_decimal::Decimal;
 use tokio_modbus::{ExceptionCode, Request, Response, SlaveRequest, server::Service};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    LoadedConformanceScenario, LoadedScenario, SimulatorControl, SimulatorError,
+    FaultEventKindV1, LoadedConformanceScenario, LoadedScenario, SimulatorControl, SimulatorError,
     SimulatorLogRecord, SimulatorService, WriteBehaviorV1, validate_conformance_for_core,
 };
 
@@ -72,6 +74,9 @@ struct ConformanceState {
     write_count: u64,
     fingerprint: String,
     holding_overrides: BTreeMap<u16, u16>,
+    input_overrides: BTreeMap<u16, u16>,
+    fault_raw: BTreeMap<String, u64>,
+    next_fault_event: usize,
     pending_writes: Vec<PendingWrite>,
     log: Vec<SimulatorLogRecord>,
 }
@@ -140,7 +145,7 @@ impl ConformanceSimulatorService {
 
         match behavior {
             WriteBehaviorV1::Accept => {
-                apply_override(&self.shared, address, &words);
+                apply_holding_override(&self.shared, address, &words);
                 Ok(Some(success))
             }
             WriteBehaviorV1::Exception { code } => Err(ExceptionCode::new(code)),
@@ -162,7 +167,7 @@ impl ConformanceSimulatorService {
                     .codec()
                     .encode(&EngineeringValue::Fixed(clamped))
                     .map_err(|_| ExceptionCode::IllegalDataValue)?;
-                apply_override(&self.shared, address, &encoded);
+                apply_holding_override(&self.shared, address, &encoded);
                 Ok(Some(success))
             }
             WriteBehaviorV1::DelayedApply { read_backs } => {
@@ -174,7 +179,7 @@ impl ConformanceSimulatorService {
                 Ok(Some(success))
             }
             WriteBehaviorV1::ApplyAndDropResponse => {
-                apply_override(&self.shared, address, &words);
+                apply_holding_override(&self.shared, address, &words);
                 Ok(None)
             }
         }
@@ -202,6 +207,27 @@ impl Service for ConformanceSimulatorService {
         let request_pdu_hex = hex(&encode_request_pdu(&request.request));
         let fingerprint = lock_state(&self.shared).fingerprint.clone();
 
+        if let Err(code) = apply_fault_events(
+            &self.profile,
+            &self.conformance,
+            &self.shared,
+            request_index,
+        ) {
+            let result = Err(code);
+            record_result(
+                &self.shared,
+                request_index,
+                slave,
+                function,
+                address,
+                quantity,
+                request_pdu_hex,
+                fingerprint,
+                &result,
+            );
+            return Box::pin(async move { result });
+        }
+
         if matches!(
             &request.request,
             Request::WriteSingleRegister(_, _) | Request::WriteMultipleRegisters(_, _)
@@ -222,15 +248,18 @@ impl Service for ConformanceSimulatorService {
         }
 
         activate_pending_writes(&self.shared, &request.request);
-        let holding_address = match &request.request {
-            Request::ReadHoldingRegisters(address, _) => Some(*address),
+        let read = match &request.request {
+            Request::ReadHoldingRegisters(address, _) => {
+                Some((ModbusTable::HoldingRegisters, *address))
+            }
+            Request::ReadInputRegisters(address, _) => Some((ModbusTable::InputRegisters, *address)),
             _ => None,
         };
         let inner = self.inner.clone();
         let shared = Arc::clone(&self.shared);
         Box::pin(async move {
             let result = Service::call(&inner, request).await.map(|response| {
-                response.map(|value| overlay_read_response(&shared, holding_address, value))
+                response.map(|value| overlay_read_response(&shared, read, value))
             });
             record_result(
                 &shared,
@@ -246,6 +275,112 @@ impl Service for ConformanceSimulatorService {
             result
         })
     }
+}
+
+fn apply_fault_events(
+    profile: &ValidatedDeviceProfile,
+    scenario: &LoadedConformanceScenario,
+    shared: &Arc<ConformanceShared>,
+    request_index: u64,
+) -> Result<(), ExceptionCode> {
+    loop {
+        let scheduled = {
+            let state = lock_state(shared);
+            scenario
+                .document()
+                .fault_events
+                .get(state.next_fault_event)
+                .cloned()
+        };
+        let Some(scheduled) = scheduled else {
+            return Ok(());
+        };
+        if scheduled.at_request > request_index {
+            return Ok(());
+        }
+        if scheduled.at_request < request_index {
+            return Err(ExceptionCode::ServerDeviceFailure);
+        }
+
+        let parameter_id = ParameterId::parse(scheduled.parameter_id.clone())
+            .map_err(|_| ExceptionCode::ServerDeviceFailure)?;
+        let parameter = profile
+            .parameter(&parameter_id)
+            .ok_or(ExceptionCode::ServerDeviceFailure)?;
+        let fault_source = profile
+            .fault_source()
+            .filter(|source| source.parameter_id == parameter_id);
+        let no_fault = fault_source.map_or(0, |source| source.no_fault);
+
+        let raw = {
+            let mut state = lock_state(shared);
+            let previous = state
+                .fault_raw
+                .get(parameter_id.as_str())
+                .copied()
+                .unwrap_or(no_fault);
+            let value = match &scheduled.event {
+                FaultEventKindV1::ScalarRaised { code }
+                | FaultEventKindV1::ScalarChanged { code } => profile
+                    .faults()
+                    .values()
+                    .find(|fault| fault.code == *code)
+                    .map(|fault| fault.raw)
+                    .ok_or(ExceptionCode::ServerDeviceFailure)?,
+                FaultEventKindV1::ScalarCleared => no_fault,
+                FaultEventKindV1::ScalarUnknown => first_unknown_fault_raw(profile, no_fault),
+                FaultEventKindV1::Bitset {
+                    raised,
+                    cleared,
+                    unknown,
+                } => {
+                    let mut value = previous;
+                    for bit in raised.iter().chain(unknown) {
+                        value |= 1_u64
+                            .checked_shl(u32::from(*bit))
+                            .ok_or(ExceptionCode::ServerDeviceFailure)?;
+                    }
+                    for bit in cleared {
+                        value &= !1_u64
+                            .checked_shl(u32::from(*bit))
+                            .ok_or(ExceptionCode::ServerDeviceFailure)?;
+                    }
+                    value
+                }
+            };
+            state
+                .fault_raw
+                .insert(parameter_id.as_str().to_owned(), value);
+            state.next_fault_event = state.next_fault_event.saturating_add(1);
+            value
+        };
+
+        let engineering = match parameter.codec().encoding() {
+            RegisterEncoding::Enum16 | RegisterEncoding::Enum32 => EngineeringValue::EnumRaw(
+                i64::try_from(raw).map_err(|_| ExceptionCode::ServerDeviceFailure)?,
+            ),
+            RegisterEncoding::Bitfield16
+            | RegisterEncoding::Bitfield32
+            | RegisterEncoding::Bitfield64 => EngineeringValue::BitfieldRaw(raw),
+            _ => EngineeringValue::Fixed(Decimal::from(raw)),
+        };
+        let words = parameter
+            .codec()
+            .encode(&engineering)
+            .map_err(|_| ExceptionCode::ServerDeviceFailure)?;
+        apply_table_override(shared, parameter.block().table(), parameter.block().start().get(), &words);
+    }
+}
+
+fn first_unknown_fault_raw(profile: &ValidatedDeviceProfile, no_fault: u64) -> u64 {
+    let mut candidate = 1_u64;
+    while candidate == no_fault || profile.faults().contains_key(&candidate) {
+        candidate = candidate.saturating_add(1);
+        if candidate == u64::MAX {
+            return u64::MAX;
+        }
+    }
+    candidate
 }
 
 fn write_behavior(
@@ -314,31 +449,52 @@ fn activate_pending_writes(shared: &Arc<ConformanceShared>, request: &Request<'_
     }
 }
 
-fn apply_override(shared: &Arc<ConformanceShared>, address: u16, words: &[u16]) {
+fn apply_holding_override(shared: &Arc<ConformanceShared>, address: u16, words: &[u16]) {
+    apply_table_override(shared, ModbusTable::HoldingRegisters, address, words);
+}
+
+fn apply_table_override(
+    shared: &Arc<ConformanceShared>,
+    table: ModbusTable,
+    address: u16,
+    words: &[u16],
+) {
     let mut state = lock_state(shared);
+    let registers = match table {
+        ModbusTable::HoldingRegisters => &mut state.holding_overrides,
+        ModbusTable::InputRegisters => &mut state.input_overrides,
+    };
     for (offset, word) in words.iter().copied().enumerate() {
         if let Ok(offset) = u16::try_from(offset)
             && let Some(current) = address.checked_add(offset)
         {
-            state.holding_overrides.insert(current, word);
+            registers.insert(current, word);
         }
     }
 }
 
 fn overlay_read_response(
     shared: &Arc<ConformanceShared>,
-    holding_address: Option<u16>,
+    read: Option<(ModbusTable, u16)>,
     mut response: Response,
 ) -> Response {
-    let (Some(address), Response::ReadHoldingRegisters(words)) = (holding_address, &mut response)
-    else {
+    let Some((table, address)) = read else {
         return response;
     };
+    let words = match (&table, &mut response) {
+        (ModbusTable::HoldingRegisters, Response::ReadHoldingRegisters(words))
+        | (ModbusTable::InputRegisters, Response::ReadInputRegisters(words)) => words,
+        _ => return response,
+    };
     let state = lock_state(shared);
+    let registers = match table {
+        ModbusTable::HoldingRegisters => &state.holding_overrides,
+        ModbusTable::InputRegisters => &state.input_overrides,
+    };
     for (offset, word) in words.iter_mut().enumerate() {
         if let Ok(offset) = u16::try_from(offset)
             && let Some(current) = address.checked_add(offset)
-            && let Some(override_word) = state.holding_overrides.get(&current)
+            && let Some(override_word) = registers.get(&current)
         {
             *word = *override_word;
         }
