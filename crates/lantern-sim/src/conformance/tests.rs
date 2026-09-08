@@ -176,10 +176,7 @@ fn rejects_empty_behavioral_ids() {
     let empty_fault_code = valid_document().replace("code = \"E01\"", "code = \"\"");
     assert!(parse_conformance_scenario(empty_fault_code.as_bytes()).is_err());
 
-    let empty_queue = valid_document().replace(
-        "queue = \"telemetry-critical\"",
-        "queue = \"\"",
-    );
+    let empty_queue = valid_document().replace("queue = \"telemetry-critical\"", "queue = \"\"");
     assert!(parse_conformance_scenario(empty_queue.as_bytes()).is_err());
 }
 
