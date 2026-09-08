@@ -70,6 +70,7 @@ struct ConformanceShared {
 struct ConformanceState {
     request_count: u64,
     write_count: u64,
+    fingerprint: String,
     holding_overrides: BTreeMap<u16, u16>,
     pending_writes: Vec<PendingWrite>,
     log: Vec<SimulatorLogRecord>,
@@ -94,6 +95,7 @@ impl ConformanceSimulatorService {
             &conformance.document().core.scenario_path,
             &core_scenario,
         )?;
+        let fingerprint = core_scenario.fingerprint().to_string();
         let (inner, core) = SimulatorService::new(
             Arc::clone(&profile),
             core_scenario,
@@ -101,7 +103,10 @@ impl ConformanceSimulatorService {
             disconnect,
         )?;
         let shared = Arc::new(ConformanceShared {
-            state: Mutex::new(ConformanceState::default()),
+            state: Mutex::new(ConformanceState {
+                fingerprint,
+                ..ConformanceState::default()
+            }),
         });
         Ok((
             Self {
@@ -116,6 +121,12 @@ impl ConformanceSimulatorService {
 
     fn prepare_write(&self, request: &Request<'_>) -> Result<Option<Response>, ExceptionCode> {
         let (address, words, success) = write_request(request)?;
+        let behavior = {
+            let mut state = lock_state(&self.shared);
+            state.write_count = state.write_count.saturating_add(1);
+            write_behavior(&self.conformance, state.write_count)
+        }
+        .ok_or(ExceptionCode::IllegalFunction)?;
         let parameter = self
             .profile
             .parameters()
@@ -130,13 +141,6 @@ impl ConformanceSimulatorService {
         if parameter.access() == ParameterAccess::ReadOnly {
             return Err(ExceptionCode::IllegalDataAddress);
         }
-
-        let behavior = {
-            let mut state = lock_state(&self.shared);
-            state.write_count = state.write_count.saturating_add(1);
-            write_behavior(&self.conformance, state.write_count)
-        }
-        .ok_or(ExceptionCode::IllegalFunction)?;
 
         match behavior {
             WriteBehaviorV1::Accept => {
@@ -200,10 +204,10 @@ impl Service for ConformanceSimulatorService {
         let function = request.request.function_code().value();
         let (address, quantity) = request_address_quantity(&request.request);
         let request_pdu_hex = hex(&encode_request_pdu(&request.request));
-        let fingerprint = self.inner_fingerprint();
+        let fingerprint = lock_state(&self.shared).fingerprint.clone();
 
         if matches!(
-            request.request,
+            &request.request,
             Request::WriteSingleRegister(_, _) | Request::WriteMultipleRegisters(_, _)
         ) {
             let result = self.prepare_write(&request.request);
@@ -222,11 +226,15 @@ impl Service for ConformanceSimulatorService {
         }
 
         activate_pending_writes(&self.shared, &request.request);
+        let holding_address = match &request.request {
+            Request::ReadHoldingRegisters(address, _) => Some(*address),
+            _ => None,
+        };
         let inner = self.inner.clone();
         let shared = Arc::clone(&self.shared);
         Box::pin(async move {
-            let result = Service::call(&inner, request.clone()).await.map(|response| {
-                response.map(|value| overlay_read_response(&shared, &request.request, value))
+            let result = Service::call(&inner, request).await.map(|response| {
+                response.map(|value| overlay_read_response(&shared, holding_address, value))
             });
             record_result(
                 &shared,
@@ -241,21 +249,6 @@ impl Service for ConformanceSimulatorService {
             );
             result
         })
-    }
-}
-
-impl ConformanceSimulatorService {
-    fn inner_fingerprint(&self) -> String {
-        // The core control owns identity mutation. A stable initial fingerprint is sufficient
-        // for write-family golden traces; identity scenarios use the core runtime directly.
-        self.conformance
-            .document()
-            .core
-            .scenario_hash
-            .chars()
-            .take(0)
-            .collect::<String>();
-        String::new()
     }
 }
 
@@ -337,11 +330,10 @@ fn apply_override(shared: &Arc<ConformanceShared>, address: u16, words: &[u16]) 
 
 fn overlay_read_response(
     shared: &Arc<ConformanceShared>,
-    request: &Request<'_>,
+    holding_address: Option<u16>,
     mut response: Response,
 ) -> Response {
-    let (Request::ReadHoldingRegisters(address, _), Response::ReadHoldingRegisters(words)) =
-        (request, &mut response)
+    let (Some(address), Response::ReadHoldingRegisters(words)) = (holding_address, &mut response)
     else {
         return response;
     };
