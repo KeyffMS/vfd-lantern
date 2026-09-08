@@ -14,8 +14,8 @@ use tokio_modbus::{ExceptionCode, Request, Response, SlaveRequest, server::Servi
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    LoadedConformanceScenario, LoadedScenario, SimulatorControl, SimulatorError, SimulatorLogRecord,
-    SimulatorService, WriteBehaviorV1, validate_conformance_for_core,
+    LoadedConformanceScenario, LoadedScenario, SimulatorControl, SimulatorError,
+    SimulatorLogRecord, SimulatorService, WriteBehaviorV1, validate_conformance_for_core,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -96,12 +96,8 @@ impl ConformanceSimulatorService {
             &core_scenario,
         )?;
         let fingerprint = core_scenario.fingerprint().to_string();
-        let (inner, core) = SimulatorService::new(
-            Arc::clone(&profile),
-            core_scenario,
-            clock,
-            disconnect,
-        )?;
+        let (inner, core) =
+            SimulatorService::new(Arc::clone(&profile), core_scenario, clock, disconnect)?;
         let shared = Arc::new(ConformanceShared {
             state: Mutex::new(ConformanceState {
                 fingerprint,
@@ -157,10 +153,10 @@ impl ConformanceSimulatorService {
                 let EngineeringValue::Fixed(value) = decoded else {
                     return Err(ExceptionCode::IllegalDataValue);
                 };
-                let minimum = Decimal::from_str(&minimum)
-                    .map_err(|_| ExceptionCode::ServerDeviceFailure)?;
-                let maximum = Decimal::from_str(&maximum)
-                    .map_err(|_| ExceptionCode::ServerDeviceFailure)?;
+                let minimum =
+                    Decimal::from_str(&minimum).map_err(|_| ExceptionCode::ServerDeviceFailure)?;
+                let maximum =
+                    Decimal::from_str(&maximum).map_err(|_| ExceptionCode::ServerDeviceFailure)?;
                 let clamped = value.max(minimum).min(maximum);
                 let encoded = parameter
                     .codec()
@@ -277,7 +273,8 @@ fn write_request(request: &Request<'_>) -> Result<(u16, Vec<u16>, Response), Exc
             Response::WriteSingleRegister(*address, *value),
         )),
         Request::WriteMultipleRegisters(address, words) => {
-            let quantity = u16::try_from(words.len()).map_err(|_| ExceptionCode::IllegalDataValue)?;
+            let quantity =
+                u16::try_from(words.len()).map_err(|_| ExceptionCode::IllegalDataValue)?;
             if quantity == 0 {
                 return Err(ExceptionCode::IllegalDataValue);
             }
