@@ -27,8 +27,7 @@ const fn one() -> u32 {
     1
 }
 
-/// Versioned, data-only extension of [`crate::SimulatorScenarioV1`] used by full-product
-/// conformance tests.
+/// Versioned, data-only extension of the core simulator scenario.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConformanceScenarioV1 {
@@ -50,7 +49,7 @@ pub struct ConformanceScenarioV1 {
     pub pressure: Option<PressureBehaviorV1>,
 }
 
-/// Exact core simulator input that a conformance scenario extends.
+/// Exact core simulator input extended by a conformance scenario.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConformanceCoreRefV1 {
@@ -60,7 +59,6 @@ pub struct ConformanceCoreRefV1 {
     pub seed: String,
 }
 
-/// One deterministic fault transition injected at a one-based request index.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ScheduledFaultEventV1 {
     pub at_request: u64,
@@ -69,7 +67,6 @@ pub struct ScheduledFaultEventV1 {
     pub event: FaultEventKindV1,
 }
 
-/// Scalar and bitset fault transitions required by the conformance matrix.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FaultEventKindV1 {
@@ -87,7 +84,6 @@ pub enum FaultEventKindV1 {
     },
 }
 
-/// Deterministic CSV sink latency and one optional storage failure point.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CsvBehaviorV1 {
@@ -114,7 +110,6 @@ pub enum CsvFailurePointV1 {
     Checkpoint,
 }
 
-/// Behavior applied to a one-based range of write requests.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ScheduledWriteBehaviorV1 {
     pub start_write: u64,
@@ -124,7 +119,6 @@ pub struct ScheduledWriteBehaviorV1 {
     pub behavior: WriteBehaviorV1,
 }
 
-/// Device-side write outcomes. Retry policy remains product code, not simulator code.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WriteBehaviorV1 {
@@ -136,7 +130,6 @@ pub enum WriteBehaviorV1 {
     ApplyAndDropResponse,
 }
 
-/// One deterministic AuditPort failure for a one-based operation index.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScheduledAuditFailureV1 {
@@ -152,7 +145,6 @@ pub enum AuditFailurePointV1 {
     Finalize,
 }
 
-/// Input case for the profile trust boundary. Hashes are compared as exact values.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrustCaseV1 {
@@ -178,7 +170,6 @@ pub enum ProfileOriginV1 {
     Local,
 }
 
-/// Restore execution shape and one optional injected stop/failure step.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RestoreBehaviorV1 {
@@ -203,7 +194,6 @@ pub enum RestoreFailureKindV1 {
     AuditDegraded,
 }
 
-/// Queue pressure, timer suspension/latency and slow non-RTU sinks.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PressureBehaviorV1 {
@@ -249,7 +239,7 @@ pub enum SlowSinkV1 {
     Log,
 }
 
-/// Parsed conformance document with a hash of the exact source bytes.
+/// Parsed conformance document and the hash of its exact source bytes.
 #[derive(Clone, Debug)]
 pub struct LoadedConformanceScenario {
     document: ConformanceScenarioV1,
@@ -354,35 +344,29 @@ fn validate_conformance_document(document: &ConformanceScenarioV1) -> Result<(),
 
     validate_len("fault_events", document.fault_events.len(), MAX_FAULT_EVENTS)?;
     validate_fault_events(&document.fault_events)?;
-
     if let Some(csv) = &document.csv {
         validate_csv(csv)?;
     }
-
     validate_len(
         "write_behaviors",
         document.write_behaviors.len(),
         MAX_WRITE_BEHAVIORS,
     )?;
     validate_write_behaviors(&document.write_behaviors)?;
-
     validate_len(
         "audit_failures",
         document.audit_failures.len(),
         MAX_AUDIT_FAILURES,
     )?;
     validate_audit_failures(&document.audit_failures)?;
-
     validate_len("trust_cases", document.trust_cases.len(), MAX_TRUST_CASES)?;
     validate_trust_cases(&document.trust_cases)?;
-
     if let Some(restore) = &document.restore {
         validate_restore(restore)?;
     }
     if let Some(pressure) = &document.pressure {
         validate_pressure(pressure)?;
     }
-
     Ok(())
 }
 
@@ -396,20 +380,17 @@ fn validate_fault_events(events: &[ScheduledFaultEventV1]) -> Result<(), Simulat
             ));
         }
         previous_request = event.at_request;
-        ParameterId::parse(&event.parameter_id)
+        ParameterId::parse(event.parameter_id.as_str())
             .map_err(|error| SimulatorError::InvalidScenario(error.to_string()))?;
-        if !seen.insert((event.at_request, event.parameter_id.as_str())) {
+        if !seen.insert((event.at_request, event.parameter_id.clone())) {
             return Err(SimulatorError::InvalidScenario(format!(
                 "duplicate fault event for {} at request {}",
                 event.parameter_id, event.at_request
             )));
         }
-
         match &event.event {
             FaultEventKindV1::ScalarRaised { code }
-            | FaultEventKindV1::ScalarChanged { code } => {
-                validate_text("fault code", code)?;
-            }
+            | FaultEventKindV1::ScalarChanged { code } => validate_text("fault code", code)?,
             FaultEventKindV1::ScalarCleared | FaultEventKindV1::ScalarUnknown => {}
             FaultEventKindV1::Bitset {
                 raised,
@@ -438,7 +419,6 @@ fn validate_bitset_fault(
             previous = Some(*bit);
         }
     }
-
     let mut seen = BTreeSet::new();
     for bit in raised.iter().chain(cleared).chain(unknown) {
         if !seen.insert(*bit) {
@@ -486,7 +466,6 @@ fn validate_write_behaviors(
             ));
         }
         previous_end = end;
-
         match &item.behavior {
             WriteBehaviorV1::Exception { code } if *code == 0 => {
                 return Err(SimulatorError::InvalidScenario(
@@ -536,7 +515,7 @@ fn validate_trust_cases(cases: &[TrustCaseV1]) -> Result<(), SimulatorError> {
     let mut ids = BTreeSet::new();
     for case in cases {
         validate_text("trust case id", &case.id)?;
-        if !ids.insert(case.id.as_str()) {
+        if !ids.insert(case.id.clone()) {
             return Err(SimulatorError::InvalidScenario(format!(
                 "duplicate trust case id {}",
                 case.id
@@ -601,7 +580,7 @@ fn validate_pressure(pressure: &PressureBehaviorV1) -> Result<(), SimulatorError
                 capacity,
             } => {
                 validate_text("queue", queue)?;
-                if *capacity == 0 || depth > capacity {
+                if *capacity == 0 || *depth > *capacity {
                     return Err(SimulatorError::InvalidScenario(
                         "queue depth must be within a non-zero capacity".to_owned(),
                     ));
@@ -609,7 +588,7 @@ fn validate_pressure(pressure: &PressureBehaviorV1) -> Result<(), SimulatorError
             }
             PressureEventKindV1::Suspend { timer } => {
                 validate_text("timer", timer)?;
-                if !suspended.insert(timer.as_str()) {
+                if !suspended.insert(timer.clone()) {
                     return Err(SimulatorError::InvalidScenario(format!(
                         "timer {timer} is already suspended"
                     )));
@@ -617,7 +596,7 @@ fn validate_pressure(pressure: &PressureBehaviorV1) -> Result<(), SimulatorError
             }
             PressureEventKindV1::Resume { timer } => {
                 validate_text("timer", timer)?;
-                if !suspended.remove(timer.as_str()) {
+                if !suspended.remove(timer) {
                     return Err(SimulatorError::InvalidScenario(format!(
                         "timer {timer} resumes without a matching suspend"
                     )));
@@ -696,11 +675,14 @@ fn parse_decimal(name: &str, value: &str) -> Result<Decimal, SimulatorError> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    use crate::parse_scenario;
+
     use super::{
         FaultEventKindV1, PressureEventKindV1, WriteBehaviorV1, parse_conformance_scenario,
         validate_conformance_for_core,
     };
-    use crate::parse_scenario;
 
     const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const HASH_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -807,16 +789,16 @@ delay_millis = 25
         let document = loaded.document();
         assert_eq!(document.fault_events.len(), 2);
         assert!(matches!(
-            document.fault_events[1].event,
+            &document.fault_events[1].event,
             FaultEventKindV1::Bitset { .. }
         ));
         assert_eq!(document.write_behaviors.len(), 2);
         assert!(matches!(
-            document.write_behaviors[1].behavior,
+            &document.write_behaviors[1].behavior,
             WriteBehaviorV1::DelayedApply { read_backs: 3 }
         ));
         assert!(matches!(
-            document.pressure.as_ref().expect("pressure").events[0].event,
+            &document.pressure.as_ref().expect("pressure").events[0].event,
             PressureEventKindV1::QueueDepth {
                 depth: 7,
                 capacity: 10,
@@ -826,7 +808,7 @@ delay_millis = 25
     }
 
     #[test]
-    fn rejects_ambiguous_or_unbounded_behavior() {
+    fn rejects_ambiguous_and_out_of_range_behavior() {
         let overlapping_bits = valid_document().replace(
             "raised = [0, 3]\ncleared = [1]\nunknown = [2]",
             "raised = [0, 3]\ncleared = [1, 3]\nunknown = [2]",
@@ -838,7 +820,18 @@ delay_millis = 25
     }
 
     #[test]
-    fn rejects_mismatched_core_identity() {
+    fn rejects_collection_over_limit() {
+        let mut source = valid_document();
+        for operation_index in 3..=130 {
+            source.push_str(&format!(
+                "\n[[audit_failures]]\noperation_index = {operation_index}\npoint = \"finalize\"\n"
+            ));
+        }
+        assert!(parse_conformance_scenario(source.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn verifies_exact_core_identity() {
         let core_source = format!(
             r#"
 schema_version = 1
@@ -867,6 +860,4 @@ tick_micros = 10000
             validate_conformance_for_core(&wrong, Path::new("scenarios/core.toml"), &core).is_err()
         );
     }
-
-    use std::path::Path;
 }
