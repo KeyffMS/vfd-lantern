@@ -252,15 +252,17 @@ impl Service for ConformanceSimulatorService {
             Request::ReadHoldingRegisters(address, _) => {
                 Some((ModbusTable::HoldingRegisters, *address))
             }
-            Request::ReadInputRegisters(address, _) => Some((ModbusTable::InputRegisters, *address)),
+            Request::ReadInputRegisters(address, _) => {
+                Some((ModbusTable::InputRegisters, *address))
+            }
             _ => None,
         };
         let inner = self.inner.clone();
         let shared = Arc::clone(&self.shared);
         Box::pin(async move {
-            let result = Service::call(&inner, request).await.map(|response| {
-                response.map(|value| overlay_read_response(&shared, read, value))
-            });
+            let result = Service::call(&inner, request)
+                .await
+                .map(|response| response.map(|value| overlay_read_response(&shared, read, value)));
             record_result(
                 &shared,
                 request_index,
@@ -368,7 +370,12 @@ fn apply_fault_events(
             .codec()
             .encode(&engineering)
             .map_err(|_| ExceptionCode::ServerDeviceFailure)?;
-        apply_table_override(shared, parameter.block().table(), parameter.block().start().get(), &words);
+        apply_table_override(
+            shared,
+            parameter.block().table(),
+            parameter.block().start().get(),
+            &words,
+        );
     }
 }
 
