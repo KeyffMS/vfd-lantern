@@ -720,8 +720,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        AuditHead, AuditTimeSource, AuditVerification, FilesystemAuditPort, head_path, journal_path,
-        read_head, verify_audit_session, write_head,
+        AuditHead, AuditTimeSource, AuditVerification, FilesystemAuditPort, head_path,
+        journal_path, read_head, verify_audit_session, write_head,
     };
 
     fn fingerprint() -> DeviceFingerprint {
@@ -890,7 +890,11 @@ mod tests {
         let first = run().await;
         let second = run().await;
         assert_eq!(first, second);
-        assert!(String::from_utf8(first.0).expect("utf8").contains("\"at\":\"42\""));
+        assert!(
+            String::from_utf8(first.0)
+                .expect("utf8")
+                .contains("\"at\":\"42\"")
+        );
     }
 
     #[tokio::test]
