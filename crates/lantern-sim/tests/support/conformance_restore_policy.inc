@@ -29,6 +29,21 @@ response_timeout_ms = 100
 default_slave_id = 1
 rs485_mode = "adapter_managed"
 [[parameters]]
+id = "status.drive_state"
+code = "D1"
+name = "Drive state"
+table = "holding_registers"
+address = {{ notation = "pdu_zero_based", value = 2 }}
+encoding = "enum16"
+quantity = "digital_state"
+unit = "bool"
+enum_values = {{ "0" = "Stopped", "1" = "Running", "2" = "Faulted" }}
+[drive_state_source]
+parameter_id = "status.drive_state"
+stopped_raw = [[0]]
+running_raw = [[1]]
+faulted_raw = [[2]]
+[[parameters]]
 id = "config.value"
 code = "P1"
 name = "Value"
