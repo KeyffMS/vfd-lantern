@@ -205,8 +205,8 @@ impl TelemetryPipelineHandle {
         self.shared.changed.notify_one();
     }
 
-    #[cfg(test)]
-    pub(crate) fn ingest_test_result(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn ingest_test_result(
         &self,
         plan_version: u64,
         block_index: u32,
