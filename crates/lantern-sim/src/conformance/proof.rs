@@ -254,7 +254,7 @@ mod tests {
             assert_eq!(proof.case_id, expected_id);
             assert!(!proof.test.is_empty());
             assert!(!proof.source.is_empty());
-            assert!(proof_matches_boundary(case, *proof), "case {expected_id}");
+            assert!(proof_matches_boundary(*case, *proof), "case {expected_id}");
             tests.insert((proof.source, proof.test));
         }
         assert!(
