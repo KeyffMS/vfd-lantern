@@ -12,8 +12,9 @@ fn capture_restore_goldens_into_ci_artifact() {
     );
 
     let stdout = String::from_utf8(output.stdout).expect("generator stdout is UTF-8");
-    let output_dir = std::path::Path::new("target/ci/restore-golden");
-    std::fs::create_dir_all(output_dir).expect("create restore golden evidence directory");
+    let output_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/ci/restore-golden");
+    std::fs::create_dir_all(&output_dir).expect("create restore golden evidence directory");
 
     let mut count = 0_usize;
     for line in stdout.lines() {
