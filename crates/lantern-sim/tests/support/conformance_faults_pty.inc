@@ -494,7 +494,7 @@ code = "F1"
 
 #[tokio::test]
 async fn case_8_freeze_frame_complete_partial_and_unavailable_use_real_bus_failures() {
-    assert_eq!(conformance_case(8).expect("case").boundary, ConformanceBoundary::RtuPtyWithInjectedPort);
+    assert_eq!(conformance_case(8).expect("case").boundary, ConformanceBoundary::RtuPty);
     freeze_case("", FreezeFrameCompleteness::Complete).await;
     freeze_case(
         r#"[[read_behaviors]]
