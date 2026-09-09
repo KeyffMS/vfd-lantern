@@ -1,7 +1,5 @@
-use sha2::Digest as _;
-
 #[derive(serde::Deserialize)]
-struct RestoreGoldenAuditRecord {
+struct RestoreVerifyAuditRecord {
     sequence: u64,
     previous_hash: Option<String>,
     kind: String,
@@ -9,19 +7,35 @@ struct RestoreGoldenAuditRecord {
 }
 
 #[derive(serde::Deserialize)]
-struct RestoreGoldenAuditHead {
+struct RestoreVerifyAuditHead {
     head_hash: String,
 }
 
-struct RestoreGoldenAuditTime;
+struct RestoreVerifyTime;
 
-impl lantern_storage::AuditTimeSource for RestoreGoldenAuditTime {
+impl lantern_storage::AuditTimeSource for RestoreVerifyTime {
     fn now_nanos(&self) -> u128 {
         42
     }
 }
 
-fn restore_golden_audit(root: &std::path::Path) -> lantern_sim::AuditEvidenceV1 {
+fn committed_restore_golden(name: &str) -> lantern_sim::ConformanceEvidenceV1 {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden/conformance")
+        .join(name);
+    let bytes = std::fs::read(&path).expect("committed restore golden");
+    let evidence: lantern_sim::ConformanceEvidenceV1 =
+        serde_json::from_slice(&bytes).expect("restore golden JSON");
+    evidence.verify().expect("restore golden verifies");
+    assert_eq!(
+        evidence.deterministic_json().expect("canonical restore golden"),
+        bytes,
+        "restore golden must be byte-canonical: {name}"
+    );
+    evidence
+}
+
+fn restore_verify_audit(root: &std::path::Path) -> lantern_sim::AuditEvidenceV1 {
     let journal_path = root.join("audit_88.jsonl");
     let head_path = root.join("audit_88.head.json");
     if !journal_path.exists() {
@@ -31,7 +45,7 @@ fn restore_golden_audit(root: &std::path::Path) -> lantern_sim::AuditEvidenceV1 
     let records = journal
         .lines()
         .map(|line| {
-            let record: RestoreGoldenAuditRecord =
+            let record: RestoreVerifyAuditRecord =
                 serde_json::from_str(line).expect("restore audit record");
             lantern_sim::AuditRecordEvidenceV1 {
                 sequence: record.sequence,
@@ -41,7 +55,7 @@ fn restore_golden_audit(root: &std::path::Path) -> lantern_sim::AuditEvidenceV1 
             }
         })
         .collect();
-    let head: RestoreGoldenAuditHead = serde_json::from_slice(
+    let head: RestoreVerifyAuditHead = serde_json::from_slice(
         &std::fs::read(head_path).expect("restore audit head"),
     )
     .expect("restore audit head JSON");
@@ -51,7 +65,7 @@ fn restore_golden_audit(root: &std::path::Path) -> lantern_sim::AuditEvidenceV1 
     }
 }
 
-fn restore_golden_artifacts(
+fn restore_verify_artifacts(
     root: &std::path::Path,
 ) -> std::collections::BTreeMap<String, String> {
     ["audit_88.head.json", "audit_88.jsonl"]
@@ -66,31 +80,7 @@ fn restore_golden_artifacts(
         .collect()
 }
 
-fn restore_golden_core(profile: &ValidatedDeviceProfile, extra_events: &str) -> Arc<LoadedScenario> {
-    core_scenario(profile, extra_events)
-}
-
-fn restore_domain_core(profile: &ValidatedDeviceProfile) -> Arc<LoadedScenario> {
-    Arc::new(
-        parse_scenario(
-            format!(
-                r#"schema_version = 1
-profile_path = "inline-restore-domain-profile.toml"
-profile_hash = "{}"
-slave_id = 1
-fingerprint = "{FINGERPRINT}"
-seed = "{SEED}"
-tick_micros = 1000
-"#,
-                profile.profile_hash().to_hex()
-            )
-            .as_bytes(),
-        )
-        .expect("restore domain core"),
-    )
-}
-
-fn restore_golden_scenario(
+fn restore_verify_scenario(
     profile: &ValidatedDeviceProfile,
     core: &LoadedScenario,
     write_behaviors: &str,
@@ -115,19 +105,19 @@ seed = "{SEED}"
             )
             .as_bytes(),
         )
-        .expect("restore golden conformance scenario"),
+        .expect("restore verifier conformance scenario"),
     )
 }
 
-async fn start_restore_golden_stack(
+async fn start_restore_verify_stack(
     write_behaviors: &str,
     extra_events: &str,
     restore_block: &str,
     audit_failures: &str,
 ) -> (Stack, Arc<ValidatedDeviceProfile>) {
     let profile = profile();
-    let core = restore_golden_core(&profile, extra_events);
-    let conformance = restore_golden_scenario(
+    let core = core_scenario(&profile, extra_events);
+    let conformance = restore_verify_scenario(
         &profile,
         &core,
         write_behaviors,
@@ -135,13 +125,13 @@ async fn start_restore_golden_stack(
         audit_failures,
     );
     let runtime = ConformanceSimulatorRuntime::spawn(Arc::clone(&profile), core, conformance)
-        .expect("restore golden runtime");
+        .expect("restore verifier runtime");
     let (bus, bus_task) = open_serial_bus(
         serial_request(runtime.client_path(), &profile),
         profile.protocol().minimum_inter_frame_delay(),
     )
     .await
-    .expect("restore golden bus");
+    .expect("restore verifier bus");
     let bus = Arc::new(bus);
     let identification = identify_profile_via_bus(
         bus.as_ref(),
@@ -151,7 +141,7 @@ async fn start_restore_golden_stack(
         Duration::from_secs(1),
     )
     .await
-    .expect("restore golden identification");
+    .expect("restore verifier identification");
     assert!(identification.verified.is_some());
     (
         Stack {
@@ -163,171 +153,48 @@ async fn start_restore_golden_stack(
     )
 }
 
-fn restore_golden_observation(
+fn assert_restore_runtime_golden(
+    name: &str,
+    case_id: u8,
     stack: &Stack,
+    profile: &ValidatedDeviceProfile,
     state_trace: Vec<String>,
     audit_root: &std::path::Path,
-) -> lantern_sim::ConformanceObservationV1 {
-    lantern_sim::ConformanceObservationV1::from_simulator_log(
+) {
+    let golden = committed_restore_golden(name);
+    assert_eq!(golden.case_id, case_id);
+    let handshake = stack.runtime.handshake();
+    assert_eq!(golden.scenario_hash, handshake.conformance_scenario_hash);
+    assert_eq!(golden.profile_hash, profile.profile_hash().to_hex());
+    assert_eq!(golden.seed, handshake.seed);
+    let actual = lantern_sim::ConformanceObservationV1::from_simulator_log(
         state_trace,
         &stack.runtime.control().structured_log(),
         stack.write_count(),
-        restore_golden_audit(audit_root),
-        restore_golden_artifacts(audit_root),
+        restore_verify_audit(audit_root),
+        restore_verify_artifacts(audit_root),
         Vec::new(),
     )
-    .expect("restore golden observation")
-}
-
-fn restore_domain_observation(state_trace: Vec<String>) -> lantern_sim::ConformanceObservationV1 {
-    lantern_sim::ConformanceObservationV1 {
-        state_trace,
-        ..lantern_sim::ConformanceObservationV1::default()
-    }
-}
-
-fn restore_golden_evidence(
-    case_id: u8,
-    scenario: &LoadedConformanceScenario,
-    profile: &ValidatedDeviceProfile,
-    observation: lantern_sim::ConformanceObservationV1,
-) -> lantern_sim::ConformanceEvidenceV1 {
-    lantern_sim::ConformanceEvidenceV1::from_observations(
-        case_id,
-        scenario.hash().to_hex(),
-        profile.profile_hash().to_hex(),
-        SEED.to_owned(),
-        observation.clone(),
-        observation,
-    )
-    .expect("restore golden evidence")
-}
-
-fn restore_runtime_evidence(
-    case_id: u8,
-    stack: &Stack,
-    profile: &ValidatedDeviceProfile,
-    observation: lantern_sim::ConformanceObservationV1,
-) -> lantern_sim::ConformanceEvidenceV1 {
-    let handshake = stack.runtime.handshake().clone();
-    lantern_sim::ConformanceEvidenceV1::from_observations(
-        case_id,
-        handshake.conformance_scenario_hash,
-        profile.profile_hash().to_hex(),
-        handshake.seed,
-        observation.clone(),
-        observation,
-    )
-    .expect("restore runtime evidence")
-}
-
-fn emit_restore_golden(name: &str, evidence: &lantern_sim::ConformanceEvidenceV1) {
-    evidence.verify().expect("valid restore golden");
-    let json = String::from_utf8(evidence.deterministic_json().expect("restore golden JSON"))
-        .expect("UTF-8 restore golden");
-    println!("RESTORE_GOLDEN::{name}::{json}");
-}
-
-fn ordered_restore_plan_hash() -> String {
-    let mut hash = sha2::Sha256::new();
-    for (index, id, old, target) in [
-        (0_u64, "config.a", 10_u16, 20_u16),
-        (1_u64, "config.b", 11_u16, 21_u16),
-        (2_u64, "config.c", 12_u16, 22_u16),
-    ] {
-        hash.update(index.to_be_bytes());
-        hash.update((id.len() as u64).to_be_bytes());
-        hash.update(id.as_bytes());
-        hash.update(1_u64.to_be_bytes());
-        hash.update(old.to_be_bytes());
-        hash.update(1_u64.to_be_bytes());
-        hash.update(target.to_be_bytes());
-    }
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-fn restore_policy_matrix_profile() -> ValidatedDeviceProfile {
-    let mut text = format!(
-        r#"schema_version = 1
-profile_id = "conformance.restore.policy-matrix"
-revision = 1
-vendor = "Test"
-family = "Conformance"
-model = "Restore policy matrix"
-restore_order = ["config.normal", "config.link", "config.restart", "config.manual", "config.commissioning", "config.dangerous"]
-[hardware_verification]
-firmware = ["test"]
-method = "deterministic"
-qualification_report_id = "CONFORMANCE-27"
-[protocol]
-default_baud_rate = 9600
-allowed_baud_rates = [9600]
-default_parity = "none"
-allowed_parities = ["none"]
-default_data_bits = 8
-allowed_data_bits = [8]
-default_stop_bits = 1
-allowed_stop_bits = [1]
-response_timeout_ms = 100
-default_slave_id = 1
-rs485_mode = "adapter_managed"
-[[parameters]]
-id = "status.drive_state"
-code = "STATE"
-name = "Drive state"
-table = "holding_registers"
-address = {{ notation = "pdu_zero_based", value = 1 }}
-encoding = "enum16"
-quantity = "digital_state"
-unit = "bool"
-enum_values = {{ "0" = "Stopped", "1" = "Running" }}
-[drive_state_source]
-parameter_id = "status.drive_state"
-stopped_raw = [[0]]
-running_raw = [[1]]
-"#
+    .expect("restore runtime observation");
+    assert_eq!(golden.actual_state_trace, actual.state_trace, "state trace drift: {name}");
+    assert_eq!(
+        golden.actual_modbus_requests, actual.modbus_requests,
+        "Modbus trace drift: {name}"
     );
-    for (index, id, code, access, policy) in [
-        (10, "config.normal", "N", "writable_when_stopped", "normal"),
-        (11, "config.link", "L", "writable_when_stopped", "link_critical"),
-        (12, "config.restart", "R", "writable_when_stopped", "restart_required"),
-        (13, "config.manual", "M", "writable_when_stopped", "manual_only"),
-        (14, "config.commissioning", "C", "commissioning", "normal"),
-        (15, "config.dangerous", "D", "dangerous", "normal"),
-    ] {
-        text.push_str(&format!(
-            r#"[[parameters]]
-id = "{id}"
-code = "{code}"
-name = "{id}"
-table = "holding_registers"
-address = {{ notation = "pdu_zero_based", value = {index} }}
-encoding = "unsigned16"
-quantity = "time"
-unit = "s"
-minimum = "1"
-maximum = "100"
-step = "1"
-access = "{access}"
-restore_policy = "{policy}"
-required_drive_state = "stopped"
-write_function = "write_single_register"
-backup = true
-read_back = {{ kind = "accepted_raw_set", values = [[20]], documentation_source = "test", hil_report_id = "CONFORMANCE-27" }}
-"#
-        ));
-    }
-    parse_and_validate_profile(text.as_bytes(), ProfileFormat::Toml).expect("restore policy matrix")
+    assert_eq!(golden.actual_write_count, actual.write_count, "write count drift: {name}");
+    assert_eq!(golden.actual_audit, actual.audit, "audit drift: {name}");
+    assert_eq!(
+        golden.actual_artifact_hashes, actual.artifact_hashes,
+        "artifact hash drift: {name}"
+    );
+    assert_eq!(golden.actual_queue_stats, actual.queue_stats, "queue stats drift: {name}");
 }
 
-struct RestoreGoldenFinalizeFailAudit {
+struct RestoreVerifyFinalizeFailAudit {
     inner: FilesystemAuditPort,
 }
 
-impl AuditPort for RestoreGoldenFinalizeFailAudit {
+impl AuditPort for RestoreVerifyFinalizeFailAudit {
     fn is_available(&self) -> bool {
         self.inner.is_available()
     }
@@ -345,7 +212,11 @@ impl AuditPort for RestoreGoldenFinalizeFailAudit {
         _outcome: DeviceWriteOutcome,
         _read_back: ReadBackEvidence,
     ) -> PortFuture<'_, Result<(), AuditError>> {
-        Box::pin(async { Err(AuditError::Persistence("injected restore finalize failure".to_owned())) })
+        Box::pin(async {
+            Err(AuditError::Persistence(
+                "injected restore finalize failure".to_owned(),
+            ))
+        })
     }
 
     fn begin_operation(
@@ -364,7 +235,7 @@ impl AuditPort for RestoreGoldenFinalizeFailAudit {
     }
 }
 
-fn restore_outcome_label(outcome: DeviceWriteOutcome) -> &'static str {
+fn restore_verify_outcome(outcome: DeviceWriteOutcome) -> &'static str {
     match outcome {
         DeviceWriteOutcome::Verified => "verified",
         DeviceWriteOutcome::DeviceRejected => "device_rejected",
@@ -375,112 +246,28 @@ fn restore_outcome_label(outcome: DeviceWriteOutcome) -> &'static str {
     }
 }
 
+#[test]
+fn cases_29_through_31_have_canonical_domain_goldens() {
+    for (name, case_id) in [
+        ("029-restore-approved-plan-hash-order.json", 29),
+        ("030-restore-permit-binds-step-target-order.json", 30),
+        ("031-restore-omits-non-normal-parameters.json", 31),
+    ] {
+        let golden = committed_restore_golden(name);
+        assert_eq!(golden.case_id, case_id);
+        assert!(golden.actual_modbus_requests.is_empty());
+        assert_eq!(golden.actual_write_count, 0);
+        assert!(golden.actual_audit.records.is_empty());
+        assert!(golden.actual_artifact_hashes.is_empty());
+        assert!(golden.actual_queue_stats.is_empty());
+    }
+}
+
 #[tokio::test]
-async fn generate_restore_goldens_for_cases_29_through_35() {
-    {
-        let profile = profile();
-        let core = restore_domain_core(&profile);
-        let scenario = restore_golden_scenario(
-            &profile,
-            &core,
-            "",
-            "[restore]\ntotal_steps = 3",
-            "",
-        );
-        let plan_hash = ordered_restore_plan_hash();
-        let state = vec![
-            format!("plan_hash:{plan_hash}"),
-            "order:config.a,config.b,config.c".to_owned(),
-            "step:0:config.a:10>20".to_owned(),
-            "step:1:config.b:11>21".to_owned(),
-            "step:2:config.c:12>22".to_owned(),
-            format!("challenge:restore:{}:3", &plan_hash[..12]),
-        ];
-        let evidence = restore_golden_evidence(
-            29,
-            &scenario,
-            &profile,
-            restore_domain_observation(state),
-        );
-        emit_restore_golden("029-restore-approved-plan-hash-order.json", &evidence);
-    }
-
-    {
-        let profile = profile();
-        let core = restore_domain_core(&profile);
-        let scenario = restore_golden_scenario(
-            &profile,
-            &core,
-            "",
-            "[restore]\ntotal_steps = 3",
-            "",
-        );
-        let plan_hash = ordered_restore_plan_hash();
-        let start = OperationAuditStart {
-            operation_id: OperationId::new(1),
-            backup_id: BackupId::new(1),
-            plan_hash: plan_hash.clone(),
-            session_id: SessionId::new(88),
-            fingerprint: DeviceFingerprint::parse(FINGERPRINT).expect("fingerprint"),
-            profile_hash: profile.profile_hash().to_hex(),
-            at: MonotonicInstant::from_nanos(1),
-        };
-        let token = OperationToken::for_start(1, &start);
-        assert!(token.matches_start(&start));
-        let state = vec![
-            "permit:token_matches_plan_context".to_owned(),
-            format!("operation:{}", token.operation_id().get()),
-            format!("backup:{}", token.backup_id().get()),
-            format!("plan_hash:{}", token.plan_hash()),
-            format!("session:{}", token.session_id().get()),
-            "next_index:0".to_owned(),
-            "targets:config.a=20,config.b=21,config.c=22".to_owned(),
-        ];
-        let evidence = restore_golden_evidence(
-            30,
-            &scenario,
-            &profile,
-            restore_domain_observation(state),
-        );
-        emit_restore_golden("030-restore-permit-binds-step-target-order.json", &evidence);
-    }
-
-    {
-        let profile = restore_policy_matrix_profile();
-        let core = restore_domain_core(&profile);
-        let scenario = restore_golden_scenario(
-            &profile,
-            &core,
-            "",
-            "[restore]\ntotal_steps = 1",
-            "",
-        );
-        let mut state = Vec::new();
-        for id in [
-            "config.normal",
-            "config.link",
-            "config.restart",
-            "config.manual",
-            "config.commissioning",
-            "config.dangerous",
-        ] {
-            let parameter = profile
-                .parameter(&ParameterId::parse(id).expect("policy id"))
-                .expect("policy parameter");
-            state.push(format!("{id}:{:?}", lantern_app::restore_eligibility(parameter)));
-        }
-        let evidence = restore_golden_evidence(
-            31,
-            &scenario,
-            &profile,
-            restore_domain_observation(state),
-        );
-        emit_restore_golden("031-restore-omits-non-normal-parameters.json", &evidence);
-    }
-
+async fn cases_32_through_35_match_committed_restore_goldens() {
     {
         let writes = "[[write_behaviors]]\nstart_write = 1\ncount = 3\nkind = \"accept\"\n";
-        let (stack, profile) = start_restore_golden_stack(
+        let (stack, profile) = start_restore_verify_stack(
             writes,
             "",
             "[restore]\ntotal_steps = 3",
@@ -492,7 +279,7 @@ async fn generate_restore_goldens_for_cases_29_through_35() {
         let audit: Arc<dyn AuditPort> = Arc::new(
             FilesystemAuditPort::new_with_time_source(
                 audit_dir.path(),
-                Arc::new(RestoreGoldenAuditTime),
+                Arc::new(RestoreVerifyTime),
             )
             .expect("audit"),
         );
@@ -505,14 +292,19 @@ async fn generate_restore_goldens_for_cases_29_through_35() {
                 .execute_restore_step(&mut permit, index)
                 .await
                 .expect("restore step");
-            state.push(format!("step:{index}:{}", restore_outcome_label(outcome)));
+            state.push(format!("step:{index}:{}", restore_verify_outcome(outcome)));
         }
         coordinator.finish_restore(permit).await.expect("finish restore");
         state.push("finish:completed".to_owned());
         state.push(format!("armed:{}", session.snapshot().armed));
-        let observation = restore_golden_observation(&stack, state, audit_dir.path());
-        let evidence = restore_runtime_evidence(32, &stack, &profile, observation);
-        emit_restore_golden("032-restore-all-normal-steps-success.json", &evidence);
+        assert_restore_runtime_golden(
+            "032-restore-all-normal-steps-success.json",
+            32,
+            &stack,
+            &profile,
+            state,
+            audit_dir.path(),
+        );
         stack.stop().await;
     }
 
@@ -529,13 +321,13 @@ async fn generate_restore_goldens_for_cases_29_through_35() {
             "[restore]\ntotal_steps = 3\n[restore.failure]\nstep = {}\nkind = \"device_exception\"",
             failed_index + 1
         );
-        let (stack, profile) = start_restore_golden_stack(&writes, "", &restore_block, "").await;
+        let (stack, profile) = start_restore_verify_stack(&writes, "", &restore_block, "").await;
         let session = Arc::new(RestoreSession::new(&profile));
         let audit_dir = TempDir::new().expect("audit dir");
         let audit: Arc<dyn AuditPort> = Arc::new(
             FilesystemAuditPort::new_with_time_source(
                 audit_dir.path(),
-                Arc::new(RestoreGoldenAuditTime),
+                Arc::new(RestoreVerifyTime),
             )
             .expect("audit"),
         );
@@ -547,26 +339,35 @@ async fn generate_restore_goldens_for_cases_29_through_35() {
                 .execute_restore_step(&mut permit, index)
                 .await
                 .expect("verified restore step");
-            state.push(format!("step:{index}:{}", restore_outcome_label(outcome)));
+            state.push(format!("step:{index}:{}", restore_verify_outcome(outcome)));
         }
         let outcome = coordinator
             .execute_restore_step(&mut permit, failed_index)
             .await
             .expect("failed restore step");
-        state.push(format!("step:{failed_index}:{}", restore_outcome_label(outcome)));
+        state.push(format!(
+            "step:{failed_index}:{}",
+            restore_verify_outcome(outcome)
+        ));
         state.push(format!("permit_active:{}", permit.is_active()));
         state.push(format!("armed:{}", session.snapshot().armed));
-        let observation = restore_golden_observation(&stack, state, audit_dir.path());
-        let evidence = restore_runtime_evidence(33, &stack, &profile, observation);
-        emit_restore_golden(
-            &format!("033{}-restore-failure-step-{}.json", failed_index + 1, failed_index + 1),
-            &evidence,
+        assert_restore_runtime_golden(
+            &format!(
+                "033{}-restore-failure-step-{}.json",
+                failed_index + 1,
+                failed_index + 1
+            ),
+            33,
+            &stack,
+            &profile,
+            state,
+            audit_dir.path(),
         );
         stack.stop().await;
     }
 
     {
-        let (stack, profile) = start_restore_golden_stack(
+        let (stack, profile) = start_restore_verify_stack(
             "[[write_behaviors]]\nstart_write = 1\nkind = \"apply_and_drop_response\"\n",
             "",
             "[restore]\ntotal_steps = 3\n[restore.failure]\nstep = 1\nkind = \"outcome_unknown\"",
@@ -578,7 +379,7 @@ async fn generate_restore_goldens_for_cases_29_through_35() {
         let audit: Arc<dyn AuditPort> = Arc::new(
             FilesystemAuditPort::new_with_time_source(
                 audit_dir.path(),
-                Arc::new(RestoreGoldenAuditTime),
+                Arc::new(RestoreVerifyTime),
             )
             .expect("audit"),
         );
@@ -590,18 +391,23 @@ async fn generate_restore_goldens_for_cases_29_through_35() {
             .expect("outcome unknown");
         let state = vec![
             format!("plan_hash:{}", permit.plan().plan_hash()),
-            format!("step:0:{}", restore_outcome_label(outcome)),
+            format!("step:0:{}", restore_verify_outcome(outcome)),
             format!("permit_active:{}", permit.is_active()),
             format!("armed:{}", session.snapshot().armed),
         ];
-        let observation = restore_golden_observation(&stack, state, audit_dir.path());
-        let evidence = restore_runtime_evidence(34, &stack, &profile, observation);
-        emit_restore_golden("0341-restore-outcome-unknown-terminal.json", &evidence);
+        assert_restore_runtime_golden(
+            "0341-restore-outcome-unknown-terminal.json",
+            34,
+            &stack,
+            &profile,
+            state,
+            audit_dir.path(),
+        );
         stack.stop().await;
     }
 
     {
-        let (stack, profile) = start_restore_golden_stack(
+        let (stack, profile) = start_restore_verify_stack(
             "[[write_behaviors]]\nstart_write = 1\nkind = \"accept\"\n",
             "[[events]]\nat_request = 11\nkind = \"disconnect\"\n",
             "[restore]\ntotal_steps = 3\n[restore.failure]\nstep = 1\nkind = \"disconnect\"",
@@ -613,7 +419,7 @@ async fn generate_restore_goldens_for_cases_29_through_35() {
         let audit: Arc<dyn AuditPort> = Arc::new(
             FilesystemAuditPort::new_with_time_source(
                 audit_dir.path(),
-                Arc::new(RestoreGoldenAuditTime),
+                Arc::new(RestoreVerifyTime),
             )
             .expect("audit"),
         );
@@ -622,7 +428,7 @@ async fn generate_restore_goldens_for_cases_29_through_35() {
         let plan_hash = permit.plan().plan_hash().to_owned();
         let result = coordinator.execute_restore_step(&mut permit, 0).await;
         let terminal = match result {
-            Ok(outcome) => restore_outcome_label(outcome).to_owned(),
+            Ok(outcome) => restore_verify_outcome(outcome).to_owned(),
             Err(WriteCoordinatorError::InvalidRestorePermit) => "invalid_restore_permit".to_owned(),
             Err(error) => format!("error:{error}"),
         };
@@ -632,14 +438,19 @@ async fn generate_restore_goldens_for_cases_29_through_35() {
             format!("permit_active:{}", permit.is_active()),
             format!("armed:{}", session.snapshot().armed),
         ];
-        let observation = restore_golden_observation(&stack, state, audit_dir.path());
-        let evidence = restore_runtime_evidence(34, &stack, &profile, observation);
-        emit_restore_golden("0342-restore-disconnect-terminal.json", &evidence);
+        assert_restore_runtime_golden(
+            "0342-restore-disconnect-terminal.json",
+            34,
+            &stack,
+            &profile,
+            state,
+            audit_dir.path(),
+        );
         stack.stop().await;
     }
 
     {
-        let (stack, profile) = start_restore_golden_stack(
+        let (stack, profile) = start_restore_verify_stack(
             "[[write_behaviors]]\nstart_write = 1\nkind = \"accept\"\n",
             "",
             "[restore]\ntotal_steps = 3\n[restore.failure]\nstep = 1\nkind = \"audit_degraded\"",
@@ -648,10 +459,10 @@ async fn generate_restore_goldens_for_cases_29_through_35() {
         .await;
         let session = Arc::new(RestoreSession::new(&profile));
         let audit_dir = TempDir::new().expect("audit dir");
-        let audit: Arc<dyn AuditPort> = Arc::new(RestoreGoldenFinalizeFailAudit {
+        let audit: Arc<dyn AuditPort> = Arc::new(RestoreVerifyFinalizeFailAudit {
             inner: FilesystemAuditPort::new_with_time_source(
                 audit_dir.path(),
-                Arc::new(RestoreGoldenAuditTime),
+                Arc::new(RestoreVerifyTime),
             )
             .expect("audit"),
         });
@@ -665,21 +476,25 @@ async fn generate_restore_goldens_for_cases_29_through_35() {
         let snapshot = session.snapshot();
         let state = vec![
             format!("plan_hash:{plan_hash}"),
-            format!("step:0:{}", restore_outcome_label(outcome)),
+            format!("step:0:{}", restore_verify_outcome(outcome)),
             format!("permit_active:{}", permit.is_active()),
             format!("armed:{}", snapshot.armed),
             format!("audit_healthy:{}", snapshot.audit_healthy),
         ];
-        let observation = restore_golden_observation(&stack, state, audit_dir.path());
-        let evidence = restore_runtime_evidence(34, &stack, &profile, observation);
-        emit_restore_golden("0343-restore-audit-degraded-terminal.json", &evidence);
+        assert_restore_runtime_golden(
+            "0343-restore-audit-degraded-terminal.json",
+            34,
+            &stack,
+            &profile,
+            state,
+            audit_dir.path(),
+        );
         stack.stop().await;
     }
 
     {
-        let writes = "[[write_behaviors]]\nstart_write = 1\nkind = \"accept\"\n[[write_behaviors]]\nstart_write = 2\nkind = \"exception\"\ncode = 2\n";
-        let (stack, profile) = start_restore_golden_stack(
-            writes,
+        let (stack, profile) = start_restore_verify_stack(
+            "[[write_behaviors]]\nstart_write = 1\nkind = \"accept\"\n[[write_behaviors]]\nstart_write = 2\nkind = \"exception\"\ncode = 2\n",
             "",
             "[restore]\ntotal_steps = 3\n[restore.failure]\nstep = 2\nkind = \"device_exception\"",
             "",
@@ -690,7 +505,7 @@ async fn generate_restore_goldens_for_cases_29_through_35() {
         let audit: Arc<dyn AuditPort> = Arc::new(
             FilesystemAuditPort::new_with_time_source(
                 audit_dir.path(),
-                Arc::new(RestoreGoldenAuditTime),
+                Arc::new(RestoreVerifyTime),
             )
             .expect("audit"),
         );
@@ -724,20 +539,28 @@ async fn generate_restore_goldens_for_cases_29_through_35() {
         assert!(matches!(after, Err(WriteCoordinatorError::InvalidRestorePermit)));
         let state = vec![
             format!("plan_hash:{plan_hash}"),
-            format!("step:0:{}", restore_outcome_label(first)),
-            format!("step:1:{}", restore_outcome_label(second)),
-            format!("registers:a={}:b={}:c={}", a.as_slice()[0], b.as_slice()[0], c.as_slice()[0]),
+            format!("step:0:{}", restore_verify_outcome(first)),
+            format!("step:1:{}", restore_verify_outcome(second)),
+            format!(
+                "registers:a={}:b={}:c={}",
+                a.as_slice()[0],
+                b.as_slice()[0],
+                c.as_slice()[0]
+            ),
             "retry:false".to_owned(),
             "rollback:false".to_owned(),
             "auto_resume:false".to_owned(),
             format!("permit_active:{}", permit.is_active()),
             format!("armed:{}", session.snapshot().armed),
         ];
-        let observation = restore_golden_observation(&stack, state, audit_dir.path());
-        let evidence = restore_runtime_evidence(35, &stack, &profile, observation);
-        emit_restore_golden("035-restore-no-retry-rollback-auto-resume.json", &evidence);
+        assert_restore_runtime_golden(
+            "035-restore-no-retry-rollback-auto-resume.json",
+            35,
+            &stack,
+            &profile,
+            state,
+            audit_dir.path(),
+        );
         stack.stop().await;
     }
-
-    panic!("restore golden generator complete; commit emitted RESTORE_GOLDEN records and replace generator with verifier");
 }
