@@ -20,7 +20,7 @@ use lantern_sim::{
     parse_conformance_scenario, parse_scenario,
 };
 use lantern_storage::{RuntimeProfileTrust, approve_local_profile};
-use lantern_transport::{BusActorHandle, open_serial_bus};
+use lantern_transport::open_serial_bus;
 use tempfile::tempdir;
 
 const SEED: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
@@ -155,7 +155,7 @@ async fn case_28_local_profile_requires_exact_hash_approval_before_any_physical_
     let profile_path = directory.path().join("local.toml");
     std::fs::write(
         &profile_path,
-        include_bytes!("../../../profiles/example-vfd.toml"),
+        include_bytes!("../../../../profiles/example-vfd.toml"),
     )
     .expect("local profile");
     let profile = Arc::new(load_profile(&profile_path).expect("validated profile"));
