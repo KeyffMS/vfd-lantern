@@ -351,9 +351,7 @@ fn validate_audit(audit: &AuditEvidenceV1) -> Result<(), ConformanceEvidenceErro
                 validate_lower_hex("audit previous_hash", previous)?;
             }
             _ => {
-                return Err(invalid(
-                    "audit previous_hash does not link to prior record",
-                ));
+                return Err(invalid("audit previous_hash does not link to prior record"));
             }
         }
         validate_lower_hex("audit hash", &record.hash)?;
@@ -559,7 +557,10 @@ mod tests {
         let loaded = ConformanceEvidenceV1::read_verified_json(&path).expect("read evidence");
         assert_eq!(loaded, evidence);
         assert_eq!(written_hash, evidence.hash().expect("evidence hash"));
-        assert_eq!(sha256_file(&path).expect("file hash"), written_hash.to_hex());
+        assert_eq!(
+            sha256_file(&path).expect("file hash"),
+            written_hash.to_hex()
+        );
     }
 
     #[test]
