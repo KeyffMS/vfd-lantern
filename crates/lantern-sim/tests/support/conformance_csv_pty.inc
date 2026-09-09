@@ -13,8 +13,8 @@ use lantern_sim::{
     parse_scenario,
 };
 use lantern_storage::{
-    CsvBusStatisticsV1, CsvChannelV1, CsvFaultSummaryV1, CsvLinkSettingsV1, CsvSessionSidecarV1,
-    CsvWriterActor, CsvWriterStart, CsvWriterStop,
+    CsvBusStatisticsV1, CsvChannelV1, CsvFaultSummaryV1, CsvLinkSettingsV1, CsvScaleV1,
+    CsvSessionSidecarV1, CsvWriterActor, CsvWriterStart, CsvWriterStop,
 };
 use lantern_transport::{BusActorHandle, open_serial_bus};
 use tempfile::tempdir;
@@ -140,7 +140,13 @@ fn sidecar(profile: &ValidatedDeviceProfile, csv_name: &str) -> CsvSessionSideca
             unit_id: "hz".to_owned(),
             unit_label: "Hz".to_owned(),
             encoding: "unsigned16".to_owned(),
-            scale: Some("1/100".to_owned()),
+            scale: Some(CsvScaleV1 {
+                multiplier: "1".to_owned(),
+                divisor: "100".to_owned(),
+                offset: "0".to_owned(),
+                decimal_places: 2,
+                rounding: "midpoint_nearest_even".to_owned(),
+            }),
         }],
         CsvBusStatisticsV1::default(),
     )
