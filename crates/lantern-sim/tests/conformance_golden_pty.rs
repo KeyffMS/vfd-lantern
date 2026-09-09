@@ -110,9 +110,8 @@ async fn case_1_identity_match_is_exactly_equal_to_committed_golden_evidence() {
     let profile = profile();
     let core = core_scenario(&profile);
     let conformance = conformance_scenario(&profile, &core);
-    let mut runtime =
-        ConformanceSimulatorRuntime::spawn(Arc::clone(&profile), core, conformance)
-            .expect("runtime");
+    let mut runtime = ConformanceSimulatorRuntime::spawn(Arc::clone(&profile), core, conformance)
+        .expect("runtime");
     let (bus, bus_task) = open_serial_bus(
         serial_request(runtime.client_path(), &profile),
         profile.protocol().minimum_inter_frame_delay(),
@@ -151,14 +150,20 @@ async fn case_1_identity_match_is_exactly_equal_to_committed_golden_evidence() {
     )
     .expect("matching evidence");
     assert_eq!(evidence, golden);
-    assert_eq!(evidence.hash().expect("evidence hash").to_hex(), GOLDEN_HASH);
+    assert_eq!(
+        evidence.hash().expect("evidence hash").to_hex(),
+        GOLDEN_HASH
+    );
 
     let directory = tempdir().expect("tempdir");
     let evidence_path = directory.path().join("case-1.json");
     evidence
         .write_verified_json(&evidence_path)
         .expect("persist evidence");
-    assert_eq!(std::fs::read(&evidence_path).expect("evidence file"), GOLDEN);
+    assert_eq!(
+        std::fs::read(&evidence_path).expect("evidence file"),
+        GOLDEN
+    );
     assert_eq!(
         ConformanceEvidenceV1::read_verified_json(&evidence_path).expect("reload evidence"),
         golden
