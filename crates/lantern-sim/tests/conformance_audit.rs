@@ -125,3 +125,5 @@ async fn case_25_prepared_token_is_single_use_and_context_bound() {
         "context mismatch consumes the storage binding and cannot be retried"
     );
 }
+
+include!("support/conformance_audit_golden.inc");
