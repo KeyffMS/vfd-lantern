@@ -267,10 +267,7 @@ async fn verify_confirmed_committed_golden(
             .expect("committed golden write"),
         expected_outcome
     );
-    assert_eq!(
-        conformance_case(case_id).expect("matrix case").case_id,
-        case_id
-    );
+    assert_eq!(conformance_case(case_id).expect("matrix case").id, case_id);
     assert_stack_matches_committed_golden(name, &stack, state_trace, audit_dir.path());
     stack.stop().await;
 }
