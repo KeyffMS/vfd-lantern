@@ -634,6 +634,7 @@ fn run_guarded_write_case(
     product.wait_for("STAGED WRITE INTENT")?;
     product.send("w")?;
     product.wait_for("guarded plan prepared; exact operator confirmation required")?;
+    product.wait_for("challenge=")?;
     let screen = product.screen_text();
     let challenge = screen
         .split("challenge=")
