@@ -43,6 +43,40 @@ seed = "{AUDIT_GOLDEN_SEED}"
     .expect("domain audit conformance scenario")
 }
 
+fn domain_audit_golden_path(name: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden/conformance")
+        .join(name)
+}
+
+fn load_domain_audit_golden(name: &str) -> (Vec<u8>, lantern_sim::ConformanceEvidenceV1) {
+    let bytes = fs::read(domain_audit_golden_path(name)).expect("committed domain audit golden");
+    let golden: lantern_sim::ConformanceEvidenceV1 =
+        serde_json::from_slice(&bytes).expect("domain audit golden JSON");
+    golden.verify().expect("valid domain audit golden");
+    assert_eq!(
+        golden
+            .deterministic_json()
+            .expect("canonical domain audit golden"),
+        bytes,
+        "committed domain audit golden must be canonical byte-for-byte"
+    );
+    (bytes, golden)
+}
+
+fn domain_audit_expected_observation(
+    golden: &lantern_sim::ConformanceEvidenceV1,
+) -> lantern_sim::ConformanceObservationV1 {
+    lantern_sim::ConformanceObservationV1 {
+        state_trace: golden.expected_state_trace.clone(),
+        modbus_requests: golden.expected_modbus_requests.clone(),
+        write_count: golden.expected_write_count,
+        audit: golden.expected_audit.clone(),
+        artifact_hashes: golden.expected_artifact_hashes.clone(),
+        queue_stats: golden.expected_queue_stats.clone(),
+    }
+}
+
 fn domain_audit_evidence(root: &std::path::Path) -> lantern_sim::AuditEvidenceV1 {
     let journal = fs::read_to_string(root.join("audit_77.jsonl")).expect("audit journal");
     let records = journal
@@ -82,14 +116,17 @@ fn domain_audit_artifact_hashes(
         .collect()
 }
 
-fn emit_domain_audit_golden(
+fn assert_domain_audit_matches_golden(
     case_id: u8,
     name: &str,
     scenario: &lantern_sim::LoadedConformanceScenario,
     state_trace: Vec<String>,
     root: &std::path::Path,
 ) {
-    let observation = lantern_sim::ConformanceObservationV1 {
+    let (bytes, golden) = load_domain_audit_golden(name);
+    assert_eq!(golden.case_id, case_id);
+    assert_eq!(conformance_case(case_id).expect("matrix case").id, case_id);
+    let actual = lantern_sim::ConformanceObservationV1 {
         state_trace,
         modbus_requests: Vec::new(),
         write_count: 0,
@@ -102,19 +139,22 @@ fn emit_domain_audit_golden(
         scenario.hash().to_hex(),
         AUDIT_GOLDEN_PROFILE_HASH.to_owned(),
         AUDIT_GOLDEN_SEED.to_owned(),
-        observation.clone(),
-        observation,
+        domain_audit_expected_observation(&golden),
+        actual,
     )
-    .expect("domain audit evidence");
-    println!(
-        "AUDIT_GOLDEN::{name}::{}",
-        String::from_utf8(evidence.deterministic_json().expect("evidence JSON"))
-            .expect("evidence utf8")
+    .expect("domain audit runtime evidence matches committed expectations");
+    assert_eq!(evidence, golden, "domain audit runtime drifted for {name}");
+    assert_eq!(
+        evidence
+            .deterministic_json()
+            .expect("domain audit runtime JSON"),
+        bytes,
+        "domain audit runtime bytes drifted for {name}"
     );
 }
 
 #[tokio::test]
-async fn generate_cases_22_and_25_domain_audit_goldens() {
+async fn cases_22_and_25_match_committed_domain_audit_goldens() {
     {
         let scenario = domain_audit_scenario(22);
         let directory = tempdir().expect("tempdir");
@@ -137,7 +177,7 @@ async fn generate_cases_22_and_25_domain_audit_goldens() {
             })
             .await
             .expect("decision audit");
-        emit_domain_audit_golden(
+        assert_domain_audit_matches_golden(
             22,
             "022-audit-decision-no-prepared-token.json",
             &scenario,
@@ -207,7 +247,7 @@ async fn generate_cases_22_and_25_domain_audit_goldens() {
                 .await
                 .is_err()
         );
-        emit_domain_audit_golden(
+        assert_domain_audit_matches_golden(
             25,
             "025-audit-prepared-token-single-use-context-bound.json",
             &scenario,
@@ -221,6 +261,4 @@ async fn generate_cases_22_and_25_domain_audit_goldens() {
             directory.path(),
         );
     }
-
-    panic!("generated domain audit goldens; commit emitted AUDIT_GOLDEN records");
 }
