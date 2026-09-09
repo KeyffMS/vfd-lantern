@@ -4,7 +4,7 @@ use std::{
     io::Write,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use lantern_app::{AuditError, AuditPort, PortFuture};
@@ -23,6 +23,20 @@ use crate::atomic::atomic_write;
 pub const AUDIT_SCHEMA_VERSION: u32 = 1;
 const PRIVATE_FILE_MODE: u32 = 0o600;
 const PRIVATE_DIR_MODE: u32 = 0o700;
+
+/// Time source used only for audit events whose timestamp is owned by the storage adapter.
+pub trait AuditTimeSource: Send + Sync {
+    fn now_nanos(&self) -> u128;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SystemAuditTimeSource;
+
+impl AuditTimeSource for SystemAuditTimeSource {
+    fn now_nanos(&self) -> u128 {
+        system_time_nanos()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuditVerification {
@@ -127,10 +141,18 @@ struct AuditState {
 pub struct FilesystemAuditPort {
     root: PathBuf,
     state: Mutex<AuditState>,
+    time_source: Arc<dyn AuditTimeSource>,
 }
 
 impl FilesystemAuditPort {
     pub fn new(root: impl Into<PathBuf>) -> Result<Self, AuditStorageError> {
+        Self::new_with_time_source(root, Arc::new(SystemAuditTimeSource))
+    }
+
+    pub fn new_with_time_source(
+        root: impl Into<PathBuf>,
+        time_source: Arc<dyn AuditTimeSource>,
+    ) -> Result<Self, AuditStorageError> {
         let root = root.into();
         fs::create_dir_all(&root).map_err(|error| AuditStorageError::io(&root, error))?;
         fs::set_permissions(&root, Permissions::from_mode(PRIVATE_DIR_MODE))
@@ -142,6 +164,7 @@ impl FilesystemAuditPort {
                 prepared: BTreeMap::new(),
                 operations: BTreeMap::new(),
             }),
+            time_source,
         })
     }
 
@@ -256,7 +279,7 @@ impl AuditPort for FilesystemAuditPort {
             {
                 self.append(
                     SessionId::new(binding.session_id),
-                    system_time_nanos(),
+                    self.time_source.now_nanos(),
                     "device_write_finalized",
                     finalize_body(token.token_id(), outcome, &read_back),
                 )
@@ -685,7 +708,7 @@ pub fn verify_audit_session(root: &Path, session_id: SessionId) -> AuditVerifica
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, os::unix::fs::PermissionsExt};
+    use std::{fs, os::unix::fs::PermissionsExt, sync::Arc};
 
     use lantern_app::{AuditError, AuditPort};
     use lantern_domain::{
@@ -697,8 +720,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        AuditHead, AuditVerification, FilesystemAuditPort, head_path, journal_path, read_head,
-        verify_audit_session, write_head,
+        AuditHead, AuditTimeSource, AuditVerification, FilesystemAuditPort, head_path, journal_path,
+        read_head, verify_audit_session, write_head,
     };
 
     fn fingerprint() -> DeviceFingerprint {
@@ -711,6 +734,14 @@ mod tests {
 
     fn raw(value: u16) -> RawRegisters {
         RawRegisters::new(vec![value]).expect("raw")
+    }
+
+    struct FixedAuditTime(u128);
+
+    impl AuditTimeSource for FixedAuditTime {
+        fn now_nanos(&self) -> u128 {
+            self.0
+        }
     }
 
     fn preparation(session_id: SessionId) -> DeviceWritePreparation {
@@ -823,6 +854,43 @@ mod tests {
                 & 0o777,
             0o600
         );
+    }
+
+    #[tokio::test]
+    async fn injected_finalize_time_makes_journal_and_head_byte_deterministic() {
+        async fn run() -> (Vec<u8>, Vec<u8>) {
+            let directory = tempdir().expect("tempdir");
+            let audit = FilesystemAuditPort::new_with_time_source(
+                directory.path(),
+                Arc::new(FixedAuditTime(42)),
+            )
+            .expect("audit");
+            let session = SessionId::new(70);
+            let token = audit
+                .prepare_device_write(preparation(session))
+                .await
+                .expect("prepare");
+            audit
+                .finalize_device_write(
+                    token,
+                    DeviceWriteOutcome::Verified,
+                    ReadBackEvidence::Verified {
+                        attempts: 1,
+                        raw: raw(100),
+                    },
+                )
+                .await
+                .expect("finalize");
+            (
+                fs::read(journal_path(directory.path(), session)).expect("journal"),
+                fs::read(head_path(directory.path(), session)).expect("head"),
+            )
+        }
+
+        let first = run().await;
+        let second = run().await;
+        assert_eq!(first, second);
+        assert!(String::from_utf8(first.0).expect("utf8").contains("\"at\":\"42\""));
     }
 
     #[tokio::test]
