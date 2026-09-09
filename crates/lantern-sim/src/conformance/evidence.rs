@@ -1,9 +1,10 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fs, io, path::Path};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::ScenarioHash;
+use crate::{ScenarioHash, SimulatorLogRecord};
 
 use super::matrix::conformance_case;
 
@@ -32,6 +33,40 @@ pub struct ConformanceEvidenceV1 {
     pub actual_queue_stats: Vec<QueueEvidenceV1>,
 }
 
+/// One side of the expected/actual evidence comparison.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ConformanceObservationV1 {
+    pub state_trace: Vec<String>,
+    pub modbus_requests: Vec<ModbusRequestEvidenceV1>,
+    pub write_count: u64,
+    pub audit: AuditEvidenceV1,
+    pub artifact_hashes: BTreeMap<String, String>,
+    pub queue_stats: Vec<QueueEvidenceV1>,
+}
+
+impl ConformanceObservationV1 {
+    /// Builds an observation from the simulator's complete service-level RTU trace.
+    pub fn from_simulator_log(
+        state_trace: Vec<String>,
+        log: &[SimulatorLogRecord],
+        write_count: u64,
+        audit: AuditEvidenceV1,
+        artifact_hashes: BTreeMap<String, String>,
+        queue_stats: Vec<QueueEvidenceV1>,
+    ) -> Result<Self, ConformanceEvidenceError> {
+        let observation = Self {
+            state_trace,
+            modbus_requests: modbus_requests_from_log(log)?,
+            write_count,
+            audit,
+            artifact_hashes,
+            queue_stats,
+        };
+        validate_observation(&observation)?;
+        Ok(observation)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModbusRequestEvidenceV1 {
@@ -54,7 +89,7 @@ pub struct AuditEvidenceV1 {
 #[serde(deny_unknown_fields)]
 pub struct AuditRecordEvidenceV1 {
     pub sequence: u64,
-    pub previous_hash: String,
+    pub previous_hash: Option<String>,
     pub hash: String,
     pub kind: String,
 }
@@ -92,7 +127,48 @@ pub enum ConformanceEvidenceError {
     QueueStats,
 }
 
+#[derive(Debug, Error)]
+pub enum ConformanceEvidenceFileError {
+    #[error(transparent)]
+    Evidence(#[from] ConformanceEvidenceError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+
 impl ConformanceEvidenceV1 {
+    pub fn from_observations(
+        case_id: u8,
+        scenario_hash: String,
+        profile_hash: String,
+        seed: String,
+        expected: ConformanceObservationV1,
+        actual: ConformanceObservationV1,
+    ) -> Result<Self, ConformanceEvidenceError> {
+        let evidence = Self {
+            schema_version: CONFORMANCE_EVIDENCE_SCHEMA_VERSION,
+            case_id,
+            scenario_hash,
+            profile_hash,
+            seed,
+            expected_state_trace: expected.state_trace,
+            actual_state_trace: actual.state_trace,
+            expected_modbus_requests: expected.modbus_requests,
+            actual_modbus_requests: actual.modbus_requests,
+            expected_write_count: expected.write_count,
+            actual_write_count: actual.write_count,
+            expected_audit: expected.audit,
+            actual_audit: actual.audit,
+            expected_artifact_hashes: expected.artifact_hashes,
+            actual_artifact_hashes: actual.artifact_hashes,
+            expected_queue_stats: expected.queue_stats,
+            actual_queue_stats: actual.queue_stats,
+        };
+        evidence.verify()?;
+        Ok(evidence)
+    }
+
     /// Checks both evidence shape and exact equality with the expected golden values.
     pub fn verify(&self) -> Result<(), ConformanceEvidenceError> {
         if self.schema_version != CONFORMANCE_EVIDENCE_SCHEMA_VERSION {
@@ -148,6 +224,90 @@ impl ConformanceEvidenceV1 {
         self.deterministic_json()
             .map(|bytes| ScenarioHash::digest(&bytes))
     }
+
+    /// Persists only evidence that already matches its golden expectations.
+    pub fn write_verified_json(
+        &self,
+        path: &Path,
+    ) -> Result<ScenarioHash, ConformanceEvidenceFileError> {
+        self.verify()?;
+        let bytes = self.deterministic_json()?;
+        fs::write(path, &bytes)?;
+        Ok(ScenarioHash::digest(&bytes))
+    }
+
+    /// Reads persisted evidence and re-applies all shape and equality checks.
+    pub fn read_verified_json(path: &Path) -> Result<Self, ConformanceEvidenceFileError> {
+        let bytes = fs::read(path)?;
+        let evidence: Self = serde_json::from_slice(&bytes)?;
+        evidence.verify()?;
+        Ok(evidence)
+    }
+}
+
+/// Converts the exact service log into the protocol portion of golden evidence.
+pub fn modbus_requests_from_log(
+    log: &[SimulatorLogRecord],
+) -> Result<Vec<ModbusRequestEvidenceV1>, ConformanceEvidenceError> {
+    log.iter()
+        .enumerate()
+        .map(|(index, record)| {
+            let sequence = u64::try_from(index)
+                .expect("request trace length fits u64")
+                .saturating_add(1);
+            if record.request_index != sequence {
+                return Err(invalid(format!(
+                    "simulator request index {} is not contiguous at index {index}",
+                    record.request_index
+                )));
+            }
+            let address = record
+                .address
+                .ok_or_else(|| invalid("simulator request is missing an address"))?;
+            let quantity = record
+                .quantity
+                .ok_or_else(|| invalid("simulator request is missing a quantity"))?;
+            if quantity == 0 {
+                return Err(invalid("simulator request quantity must be non-zero"));
+            }
+            let function_prefix = format!("{:02x}", record.function);
+            let payload_hex = record
+                .request_pdu_hex
+                .strip_prefix(&function_prefix)
+                .ok_or_else(|| invalid("request PDU function does not match log function"))?
+                .to_owned();
+            if payload_hex.is_empty() {
+                return Err(invalid("request PDU payload must not be empty"));
+            }
+            validate_hex_bytes("request payload_hex", &payload_hex)?;
+            validate_text("request outcome", &record.outcome)?;
+            Ok(ModbusRequestEvidenceV1 {
+                sequence,
+                function: record.function,
+                address,
+                quantity,
+                payload_hex,
+                outcome: record.outcome.clone(),
+            })
+        })
+        .collect()
+}
+
+/// Computes the SHA-256 used for file-artifact evidence.
+pub fn sha256_file(path: &Path) -> Result<String, io::Error> {
+    fs::read(path).map(|bytes| hex_sha256(&bytes))
+}
+
+fn validate_observation(
+    observation: &ConformanceObservationV1,
+) -> Result<(), ConformanceEvidenceError> {
+    for state in &observation.state_trace {
+        validate_text("state trace entry", state)?;
+    }
+    validate_request_trace(&observation.modbus_requests)?;
+    validate_audit(&observation.audit)?;
+    validate_artifacts(&observation.artifact_hashes)?;
+    validate_queues(&observation.queue_stats)
 }
 
 fn validate_request_trace(
@@ -185,15 +345,19 @@ fn validate_audit(audit: &AuditEvidenceV1) -> Result<(), ConformanceEvidenceErro
                 record.sequence
             )));
         }
-        validate_lower_hex("audit previous_hash", &record.previous_hash)?;
+        match (&record.previous_hash, previous_hash) {
+            (None, None) => {}
+            (Some(previous), Some(expected)) if previous == expected => {
+                validate_lower_hex("audit previous_hash", previous)?;
+            }
+            _ => {
+                return Err(invalid(
+                    "audit previous_hash does not link to prior record",
+                ));
+            }
+        }
         validate_lower_hex("audit hash", &record.hash)?;
         validate_text("audit kind", &record.kind)?;
-
-        if let Some(previous) = previous_hash
-            && record.previous_hash != previous
-        {
-            return Err(invalid("audit previous_hash does not link to prior record"));
-        }
         previous_hash = Some(record.hash.as_str());
     }
 
@@ -264,10 +428,16 @@ fn validate_lower_hex(name: &str, value: &str) -> Result<(), ConformanceEvidence
 }
 
 fn validate_hex_bytes(name: &str, value: &str) -> Result<(), ConformanceEvidenceError> {
-    if value.len().is_multiple_of(2) && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if value.len().is_multiple_of(2)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
         Ok(())
     } else {
-        Err(invalid(format!("{name} must contain hexadecimal bytes")))
+        Err(invalid(format!(
+            "{name} must contain lowercase hexadecimal bytes"
+        )))
     }
 }
 
@@ -281,6 +451,13 @@ fn validate_text(name: &str, value: &str) -> Result<(), ConformanceEvidenceError
     }
 }
 
+fn hex_sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn invalid(message: impl Into<String>) -> ConformanceEvidenceError {
     ConformanceEvidenceError::Invalid(message.into())
 }
@@ -289,22 +466,27 @@ fn invalid(message: impl Into<String>) -> ConformanceEvidenceError {
 mod tests {
     use std::collections::BTreeMap;
 
+    use tempfile::tempdir;
+
     use super::{
-        AuditEvidenceV1, CONFORMANCE_EVIDENCE_SCHEMA_VERSION, ConformanceEvidenceError,
-        ConformanceEvidenceV1, ModbusRequestEvidenceV1, QueueEvidenceV1,
+        AuditEvidenceV1, AuditRecordEvidenceV1, CONFORMANCE_EVIDENCE_SCHEMA_VERSION,
+        ConformanceEvidenceError, ConformanceEvidenceV1, ConformanceObservationV1,
+        ModbusRequestEvidenceV1, QueueEvidenceV1, modbus_requests_from_log, sha256_file,
     };
+    use crate::SimulatorLogRecord;
 
     const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const HASH_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const SEED: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 
-    fn evidence() -> ConformanceEvidenceV1 {
+    fn observation() -> ConformanceObservationV1 {
         let request = ModbusRequestEvidenceV1 {
             sequence: 1,
             function: 3,
             address: 16,
             quantity: 1,
             payload_hex: "00100001".to_owned(),
-            outcome: "success".to_owned(),
+            outcome: "response".to_owned(),
         };
         let queue = QueueEvidenceV1 {
             queue: "telemetry-critical".to_owned(),
@@ -316,25 +498,27 @@ mod tests {
         };
         let artifacts = BTreeMap::from([("trace.json".to_owned(), HASH.to_owned())]);
 
-        ConformanceEvidenceV1 {
-            schema_version: CONFORMANCE_EVIDENCE_SCHEMA_VERSION,
-            case_id: 6,
-            scenario_hash: HASH.to_owned(),
-            profile_hash: HASH.to_owned(),
-            seed: SEED.to_owned(),
-            expected_state_trace: vec!["verified".to_owned()],
-            actual_state_trace: vec!["verified".to_owned()],
-            expected_modbus_requests: vec![request.clone()],
-            actual_modbus_requests: vec![request],
-            expected_write_count: 0,
-            actual_write_count: 0,
-            expected_audit: AuditEvidenceV1::default(),
-            actual_audit: AuditEvidenceV1::default(),
-            expected_artifact_hashes: artifacts.clone(),
-            actual_artifact_hashes: artifacts,
-            expected_queue_stats: vec![queue.clone()],
-            actual_queue_stats: vec![queue],
+        ConformanceObservationV1 {
+            state_trace: vec!["verified".to_owned()],
+            modbus_requests: vec![request],
+            write_count: 0,
+            audit: AuditEvidenceV1::default(),
+            artifact_hashes: artifacts,
+            queue_stats: vec![queue],
         }
+    }
+
+    fn evidence() -> ConformanceEvidenceV1 {
+        let observation = observation();
+        ConformanceEvidenceV1::from_observations(
+            6,
+            HASH.to_owned(),
+            HASH.to_owned(),
+            SEED.to_owned(),
+            observation.clone(),
+            observation,
+        )
+        .expect("evidence")
     }
 
     #[test]
@@ -362,11 +546,76 @@ mod tests {
     }
 
     #[test]
-    fn deterministic_json_is_byte_stable() {
+    fn deterministic_json_is_byte_stable_and_round_trips_from_disk() {
         let evidence = evidence();
         assert_eq!(
             evidence.deterministic_json().expect("json"),
             evidence.deterministic_json().expect("json")
         );
+
+        let directory = tempdir().expect("tempdir");
+        let path = directory.path().join("evidence.json");
+        let written_hash = evidence.write_verified_json(&path).expect("write evidence");
+        let loaded = ConformanceEvidenceV1::read_verified_json(&path).expect("read evidence");
+        assert_eq!(loaded, evidence);
+        assert_eq!(written_hash, evidence.hash().expect("evidence hash"));
+        assert_eq!(sha256_file(&path).expect("file hash"), written_hash.to_hex());
+    }
+
+    #[test]
+    fn converts_complete_simulator_log_to_protocol_evidence() {
+        let log = vec![SimulatorLogRecord {
+            request_index: 1,
+            slave: 1,
+            function: 3,
+            address: Some(16),
+            quantity: Some(1),
+            request_pdu_hex: "0300100001".to_owned(),
+            response_pdu_hex: Some("0302002a".to_owned()),
+            outcome: "response".to_owned(),
+            fingerprint: "example:1".to_owned(),
+        }];
+        assert_eq!(
+            modbus_requests_from_log(&log).expect("request evidence"),
+            vec![ModbusRequestEvidenceV1 {
+                sequence: 1,
+                function: 3,
+                address: 16,
+                quantity: 1,
+                payload_hex: "00100001".to_owned(),
+                outcome: "response".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn audit_chain_accepts_null_genesis_and_rejects_wrong_link() {
+        let mut evidence = evidence();
+        let records = vec![
+            AuditRecordEvidenceV1 {
+                sequence: 1,
+                previous_hash: None,
+                hash: HASH.to_owned(),
+                kind: "device_write_prepared".to_owned(),
+            },
+            AuditRecordEvidenceV1 {
+                sequence: 2,
+                previous_hash: Some(HASH.to_owned()),
+                hash: HASH_B.to_owned(),
+                kind: "device_write_finalized".to_owned(),
+            },
+        ];
+        evidence.expected_audit = AuditEvidenceV1 {
+            records: records.clone(),
+            head_hash: Some(HASH_B.to_owned()),
+        };
+        evidence.actual_audit = evidence.expected_audit.clone();
+        evidence.verify().expect("linked audit");
+
+        evidence.actual_audit.records[1].previous_hash = Some(HASH_B.to_owned());
+        assert!(matches!(
+            evidence.verify(),
+            Err(ConformanceEvidenceError::Invalid(_))
+        ));
     }
 }
