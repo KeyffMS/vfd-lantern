@@ -467,9 +467,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        AuditEvidenceV1, AuditRecordEvidenceV1, CONFORMANCE_EVIDENCE_SCHEMA_VERSION,
-        ConformanceEvidenceError, ConformanceEvidenceV1, ConformanceObservationV1,
-        ModbusRequestEvidenceV1, QueueEvidenceV1, modbus_requests_from_log, sha256_file,
+        AuditEvidenceV1, AuditRecordEvidenceV1, ConformanceEvidenceError, ConformanceEvidenceV1,
+        ConformanceObservationV1, ModbusRequestEvidenceV1, QueueEvidenceV1,
+        modbus_requests_from_log, sha256_file,
     };
     use crate::SimulatorLogRecord;
 
