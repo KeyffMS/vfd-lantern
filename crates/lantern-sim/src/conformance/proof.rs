@@ -1,4 +1,4 @@
-use super::matrix::{ConformanceBoundary, ConformanceCase, conformance_case};
+use super::matrix::{ConformanceBoundary, ConformanceCase};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ConformanceProof {
@@ -241,6 +241,7 @@ pub fn proof_matches_boundary(case: ConformanceCase, proof: ConformanceProof) ->
 mod tests {
     use std::collections::BTreeSet;
 
+    use super::super::matrix::conformance_case;
     use super::*;
 
     #[test]
