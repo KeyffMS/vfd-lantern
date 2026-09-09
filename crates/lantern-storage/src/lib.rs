@@ -23,8 +23,8 @@ use lantern_app::{ArtifactStoragePort, ProfileSource, ProfileSourceError};
 pub use artifacts::{StorageError, read_bounded, write_new};
 pub use atomic::{AtomicWriteError, atomic_create_new, atomic_write, create_new_synced};
 pub use audit::{
-    AUDIT_SCHEMA_VERSION, AuditStorageError, AuditVerification, FilesystemAuditPort,
-    verify_audit_session,
+    AUDIT_SCHEMA_VERSION, AuditStorageError, AuditTimeSource, AuditVerification,
+    FilesystemAuditPort, SystemAuditTimeSource, verify_audit_session,
 };
 pub use backup::{
     BACKUP_SCHEMA_VERSION, BACKUP_SUFFIX, BackupEnvelopeV1, BackupPayloadV1, BackupStorageError,
