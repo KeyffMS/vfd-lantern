@@ -16,10 +16,7 @@ use crate::{
 
 use crate::application as legacy;
 
-pub use legacy::{
-    ApplicationEffectError, AuditHealthView, AuthorizationView, OperationView, SessionPhaseView,
-    SessionView,
-};
+pub use legacy::{ApplicationEffectError, SessionPhaseView, SessionView};
 
 #[derive(Clone, Debug)]
 pub enum ApplicationAction {
@@ -30,7 +27,7 @@ pub enum ApplicationAction {
     Parameters(ParameterAction),
     Faults(FaultAction),
     Session(SessionInput),
-    Backup(BackupAction),
+    Backup(Box<BackupAction>),
 }
 
 #[derive(Clone, Debug)]
@@ -40,7 +37,7 @@ pub enum ApplicationEffect {
     Faults(crate::FaultEffect),
     Write(crate::WriteEffect),
     Session(crate::SessionEffect),
-    Backup(BackupEffect),
+    Backup(Box<BackupEffect>),
 }
 
 impl From<legacy::ApplicationEffect> for ApplicationEffect {
@@ -150,7 +147,7 @@ impl ApplicationState {
 
     pub fn reduce(&mut self, action: ApplicationAction) -> Vec<ApplicationEffect> {
         if let ApplicationAction::Backup(action) = action {
-            return self.reduce_backup(action);
+            return self.reduce_backup(*action);
         }
 
         let previous_session = self.inner.view().active_session();
@@ -188,7 +185,9 @@ impl ApplicationState {
             BackupAction::RefreshCatalog => {
                 self.backup.status = Some("refreshing backup catalog".to_owned());
                 self.backup.error = None;
-                vec![ApplicationEffect::Backup(BackupEffect::RefreshCatalog)]
+                vec![ApplicationEffect::Backup(Box::new(
+                    BackupEffect::RefreshCatalog,
+                ))]
             }
             BackupAction::CatalogRefreshed(result) => {
                 match result {
@@ -211,7 +210,9 @@ impl ApplicationState {
                 Ok(context) => {
                     self.backup.status = Some("capturing complete profile backup".to_owned());
                     self.backup.error = None;
-                    vec![ApplicationEffect::Backup(BackupEffect::Capture { context })]
+                    vec![ApplicationEffect::Backup(Box::new(BackupEffect::Capture {
+                        context,
+                    }))]
                 }
                 Err(error) => {
                     self.backup.status = None;
@@ -241,7 +242,9 @@ impl ApplicationState {
                 self.backup.invalidate_prepared_operation();
                 self.backup.status = Some(format!("loading backup {}", path.display()));
                 self.backup.error = None;
-                vec![ApplicationEffect::Backup(BackupEffect::LoadSource { path })]
+                vec![ApplicationEffect::Backup(Box::new(
+                    BackupEffect::LoadSource { path },
+                ))]
             }
             BackupAction::SourceLoaded { path, result } => {
                 match result {
@@ -284,10 +287,12 @@ impl ApplicationState {
                                 .to_owned(),
                         );
                         self.backup.error = None;
-                        vec![ApplicationEffect::Backup(BackupEffect::PrepareRestore {
-                            source,
-                            context,
-                        })]
+                        vec![ApplicationEffect::Backup(Box::new(
+                            BackupEffect::PrepareRestore {
+                                source: Box::new(source),
+                                context,
+                            },
+                        ))]
                     }
                     Err(error) => {
                         self.backup.status = None;
@@ -297,7 +302,7 @@ impl ApplicationState {
                 }
             }
             BackupAction::RestorePrepared(result) => {
-                match result {
+                match *result {
                     Ok(PreparedRestoreBundle {
                         pre_restore,
                         diff,
@@ -338,12 +343,14 @@ impl ApplicationState {
                     .expect("prepared plan checked above");
                 self.backup.status = Some("executing guarded restore".to_owned());
                 self.backup.error = None;
-                vec![ApplicationEffect::Backup(BackupEffect::ExecuteRestore {
-                    confirmation: RestoreConfirmation::Confirm {
-                        challenge: operator_text,
+                vec![ApplicationEffect::Backup(Box::new(
+                    BackupEffect::ExecuteRestore {
+                        confirmation: RestoreConfirmation::Confirm {
+                            challenge: operator_text,
+                        },
+                        plan,
                     },
-                    plan,
-                })]
+                ))]
             }
             BackupAction::RestoreCompleted(result) => {
                 self.backup.prepared_plan = None;
@@ -422,19 +429,10 @@ fn utc_now() -> UtcTimestamp {
     UtcTimestamp::from_unix_nanos(nanos)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ApplicationView {
     inner: legacy::ApplicationView,
     backup: BackupRestoreView,
-}
-
-impl Default for ApplicationView {
-    fn default() -> Self {
-        Self {
-            inner: legacy::ApplicationView::default(),
-            backup: BackupRestoreView::default(),
-        }
-    }
 }
 
 impl ApplicationView {
