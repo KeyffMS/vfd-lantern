@@ -6,10 +6,7 @@ test "$(uname -m)" = x86_64
 rustc --version | grep '^rustc 1.97.1 '
 mkdir -p target/ci
 cargo metadata --locked --format-version 1 --no-deps > target/ci/workspace.json
-cargo fmt --all
-mkdir -p target/ci/formatted-conformance
-cp crates/lantern-sim/tests/conformance_trust_golden_generate.rs target/ci/formatted-conformance/
-cp crates/lantern-sim/tests/conformance_pressure_golden_generate.rs target/ci/formatted-conformance/
+cargo fmt --all -- --check
 rustfmt --check --edition 2024 crates/lantern-app/src/write_coordinator_restore_tests.rs
 cargo fmt --manifest-path fuzz/Cargo.toml --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
