@@ -4,6 +4,7 @@
 
 mod application;
 mod backup;
+#[cfg(not(test))]
 mod backup_flow;
 mod bus;
 mod clock;
@@ -18,6 +19,7 @@ mod monitoring_projection;
 mod parameters;
 mod poll;
 mod ports;
+#[cfg(not(test))]
 mod product_application;
 mod profile_registry;
 mod restore;
@@ -31,7 +33,15 @@ mod write_flow;
 
 #[cfg(test)]
 pub use application::*;
+#[cfg(not(test))]
+pub use application::{AuditHealthView, AuthorizationView, OperationView};
+#[cfg(not(test))]
+#[doc(hidden)]
+pub use application::{
+    ApplicationRuntime as LegacyApplicationRuntime, EffectRunner as LegacyEffectRunner,
+};
 pub use backup::*;
+#[cfg(not(test))]
 pub use backup_flow::*;
 pub use bus::*;
 pub use clock::*;
