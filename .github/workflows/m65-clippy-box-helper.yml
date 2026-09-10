@@ -11,69 +11,94 @@ permissions:
 jobs:
   fix:
     runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Check out feature branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: agent/m6.5-backup-restore-ui
           fetch-depth: 0
-      - name: Install pinned rustfmt
+      - name: Install pinned toolchain
         run: |
           set -eu
-          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
           rustup default 1.97.1
-      - name: Apply enum indirection, format, self-clean, and commit
+      - name: Apply minimal enum indirection, verify, self-clean, and commit
         run: |
           set -eu
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def replace_exact(path: str, old: str, new: str, count: int = 1) -> None:
-              p = Path(path)
-              text = p.read_text()
-              actual = text.count(old)
-              if actual != count:
-                  raise SystemExit(f"{path}: expected {count} occurrences, found {actual}: {old!r}")
-              p.write_text(text.replace(old, new))
-
-          flow = "crates/lantern-app/src/backup_restore_flow.rs"
-          app = "crates/lantern-app/src/application.rs"
-          keymap = "crates/lantern-tui/src/keymap.rs"
-          runtime = "crates/vfd-lantern/src/write_runtime.rs"
-
-          replace_exact(flow, "    CaptureFinished(Result<BackupCaptureResult, String>),\n", "    CaptureFinished(Box<Result<BackupCaptureResult, String>>),\n")
-          replace_exact(flow, "    SourceLoaded(Result<BackupSnapshot, String>),\n", "    SourceLoaded(Box<Result<BackupSnapshot, String>>),\n")
-          replace_exact(flow, "    RestorePrepared(Result<PreparedRestoreResult, String>),\n", "    RestorePrepared(Box<Result<PreparedRestoreResult, String>>),\n")
-          replace_exact(flow, "        plan: ApprovedRestorePlan,\n", "        plan: Box<ApprovedRestorePlan>,\n")
-
-          replace_exact(app, "            ApplicationAction::BackupRestore(action) => self.reduce_backup_restore(action),\n", "            ApplicationAction::BackupRestore(action) => self.reduce_backup_restore(*action),\n")
-          replace_exact(app, "                self.backup_restore.capture_finished(result);\n", "                self.backup_restore.capture_finished(*result);\n")
-          replace_exact(app, "                self.backup_restore.source_loaded(result);\n", "                self.backup_restore.source_loaded(*result);\n")
-          replace_exact(app, "                self.backup_restore.restore_prepared(result);\n", "                self.backup_restore.restore_prepared(*result);\n")
-          replace_exact(app, "                        plan,\n                        confirmation,\n                        snapshot,\n", "                        plan: Box::new(plan),\n                        confirmation,\n                        snapshot,\n")
-          replace_exact(app, "    BackupRestore(BackupRestoreAction),\n", "    BackupRestore(Box<BackupRestoreAction>),\n")
-          replace_exact(app, "                .reduce(ApplicationAction::BackupRestore(\n                    BackupRestoreAction::Capture\n                ))\n", "                .reduce(ApplicationAction::BackupRestore(Box::new(\n                    BackupRestoreAction::Capture,\n                )))\n")
-          replace_exact(app, "        let effects = state.reduce(ApplicationAction::BackupRestore(\n            BackupRestoreAction::LoadSource(PathBuf::from(\"source.vfdlantern-backup.json\")),\n        ));\n", "        let effects = state.reduce(ApplicationAction::BackupRestore(Box::new(\n            BackupRestoreAction::LoadSource(PathBuf::from(\"source.vfdlantern-backup.json\")),\n        )));\n")
-
-          replace_exact(keymap, "                    application: Box::new(ApplicationAction::BackupRestore(\n                        BackupRestoreAction::LoadSource(PathBuf::from(ui.form.value())),\n                    )),\n", "                    application: Box::new(ApplicationAction::BackupRestore(Box::new(\n                        BackupRestoreAction::LoadSource(PathBuf::from(ui.form.value())),\n                    ))),\n")
-          replace_exact(keymap, "                    application: Box::new(ApplicationAction::BackupRestore(\n                        BackupRestoreAction::ConfirmRestore {\n                            operator_text: ui.form.value().to_owned(),\n                        },\n                    )),\n", "                    application: Box::new(ApplicationAction::BackupRestore(Box::new(\n                        BackupRestoreAction::ConfirmRestore {\n                            operator_text: ui.form.value().to_owned(),\n                        },\n                    ))),\n")
-          replace_exact(keymap, "    MappedAction::Application(Box::new(ApplicationAction::BackupRestore(action)))\n", "    MappedAction::Application(Box::new(ApplicationAction::BackupRestore(Box::new(action))))\n")
-
-          replace_exact(runtime, "                    let _ = sender.send(ApplicationAction::BackupRestore(\n                        BackupRestoreAction::CaptureFinished(result),\n                    ));\n", "                    let _ = sender.send(ApplicationAction::BackupRestore(Box::new(\n                        BackupRestoreAction::CaptureFinished(Box::new(result)),\n                    )));\n")
-          replace_exact(runtime, "                    let _ = sender.send(ApplicationAction::BackupRestore(\n                        BackupRestoreAction::SourceLoaded(result),\n                    ));\n", "                    let _ = sender.send(ApplicationAction::BackupRestore(Box::new(\n                        BackupRestoreAction::SourceLoaded(Box::new(result)),\n                    )));\n")
-          replace_exact(runtime, "                    let _ = sender.send(ApplicationAction::BackupRestore(\n                        BackupRestoreAction::RestorePrepared(result),\n                    ));\n", "                    let _ = sender.send(ApplicationAction::BackupRestore(Box::new(\n                        BackupRestoreAction::RestorePrepared(Box::new(result)),\n                    )));\n")
-          replace_exact(runtime, "                            .begin_restore(plan, confirmation)\n", "                            .begin_restore(*plan, confirmation)\n")
-          replace_exact(runtime, "                    let _ = sender.send(ApplicationAction::BackupRestore(\n                        BackupRestoreAction::RestoreFinished(result),\n                    ));\n", "                    let _ = sender.send(ApplicationAction::BackupRestore(Box::new(\n                        BackupRestoreAction::RestoreFinished(result),\n                    )));\n")
-          PY
+          git apply <<'PATCH'
+          diff --git a/crates/lantern-app/src/backup_restore_flow.rs b/crates/lantern-app/src/backup_restore_flow.rs
+          --- a/crates/lantern-app/src/backup_restore_flow.rs
+          +++ b/crates/lantern-app/src/backup_restore_flow.rs
+          @@ -286,7 +286,7 @@ pub enum BackupRestoreAction {
+               LoadSource(PathBuf),
+               SourceLoaded(Result<BackupSnapshot, String>),
+               PrepareRestore,
+          -    RestorePrepared(Result<PreparedRestoreResult, String>),
+          +    RestorePrepared(Box<Result<PreparedRestoreResult, String>>),
+               ConfirmRestore { operator_text: String },
+               ClearPrepared,
+               RestoreFinished(Result<RestoreExecutionSummary, String>),
+          @@ -305,7 +305,7 @@ pub enum BackupRestoreEffect {
+                   request: Box<BackupCaptureRequest>,
+               },
+               ExecuteRestore {
+          -        plan: ApprovedRestorePlan,
+          +        plan: Box<ApprovedRestorePlan>,
+                   confirmation: RestoreConfirmation,
+                   snapshot: WriteSessionSnapshot,
+               },
+          diff --git a/crates/lantern-app/src/application.rs b/crates/lantern-app/src/application.rs
+          --- a/crates/lantern-app/src/application.rs
+          +++ b/crates/lantern-app/src/application.rs
+          @@ -365,7 +365,7 @@ impl ApplicationState {
+                   )]
+               }
+               BackupRestoreAction::RestorePrepared(result) => {
+          -        self.backup_restore.restore_prepared(result);
+          +        self.backup_restore.restore_prepared(*result);
+                   Vec::new()
+               }
+               BackupRestoreAction::ConfirmRestore { operator_text } => {
+          @@ -397,7 +397,7 @@ impl ApplicationState {
+                   self.backup_restore.begin_execute();
+                   vec![ApplicationEffect::BackupRestore(
+                       BackupRestoreEffect::ExecuteRestore {
+          -                plan,
+          +                plan: Box::new(plan),
+                           confirmation,
+                           snapshot,
+                       },
+          diff --git a/crates/vfd-lantern/src/write_runtime.rs b/crates/vfd-lantern/src/write_runtime.rs
+          --- a/crates/vfd-lantern/src/write_runtime.rs
+          +++ b/crates/vfd-lantern/src/write_runtime.rs
+          @@ -269,7 +269,7 @@ impl ProductionWriteRuntime {
+                       }
+                       .await;
+                       let _ = sender.send(ApplicationAction::BackupRestore(
+          -                BackupRestoreAction::RestorePrepared(result),
+          +                BackupRestoreAction::RestorePrepared(Box::new(result)),
+                       ));
+                   });
+                   Ok(())
+          @@ -291,7 +291,7 @@ impl ProductionWriteRuntime {
+                           })?;
+                           let step_count = plan.steps().len();
+                           let mut permit = coordinator
+          -                    .begin_restore(plan, confirmation)
+          +                    .begin_restore(*plan, confirmation)
+                               .await
+                               .map_err(|error| error.to_string())?;
+                           for index in 0..step_count {
+          PATCH
           cargo fmt --all
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
           git rm .github/workflows/m65-clippy-box-helper.yml
           git add \
             crates/lantern-app/src/application.rs \
             crates/lantern-app/src/backup_restore_flow.rs \
-            crates/lantern-tui/src/keymap.rs \
             crates/vfd-lantern/src/write_runtime.rs
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git commit -m "refactor: box large backup restore action payloads"
+          git commit -m "refactor: box large backup restore payloads"
           git push origin HEAD:agent/m6.5-backup-restore-ui
