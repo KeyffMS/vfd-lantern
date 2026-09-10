@@ -34,12 +34,12 @@ mod write_flow;
 #[cfg(test)]
 pub use application::*;
 #[cfg(not(test))]
-pub use application::{AuditHealthView, AuthorizationView, OperationView};
-#[cfg(not(test))]
 #[doc(hidden)]
 pub use application::{
     ApplicationRuntime as LegacyApplicationRuntime, EffectRunner as LegacyEffectRunner,
 };
+#[cfg(not(test))]
+pub use application::{AuditHealthView, AuthorizationView, OperationView};
 pub use backup::*;
 #[cfg(not(test))]
 pub use backup_flow::*;
