@@ -6,29 +6,29 @@ on:
       - agent/m6.5-backup-restore-ui
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   format:
     runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
     timeout-minutes: 20
     steps:
-      - name: Check out exact source
+      - name: Check out feature branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
+          ref: agent/m6.5-backup-restore-ui
+          fetch-depth: 0
       - name: Install pinned rustfmt
         run: |
           set -eu
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt
           rustup default 1.97.1
-      - name: Generate formatted source artifact
+      - name: Format, self-clean, and commit
         run: |
           set -eu
           cargo fmt --all
-          mkdir -p target/m65-rustfmt
-          cp --parents \
+          git rm .github/workflows/m65-rustfmt-helper.yml
+          git add \
             crates/lantern-app/src/application.rs \
             crates/lantern-app/src/backup_restore_flow.rs \
             crates/lantern-app/src/lib.rs \
@@ -38,11 +38,8 @@ jobs:
             crates/lantern-tui/src/ui_state.rs \
             crates/vfd-lantern/src/connection_runtime.rs \
             crates/vfd-lantern/src/main.rs \
-            crates/vfd-lantern/src/write_runtime.rs \
-            target/m65-rustfmt/
-      - name: Upload formatted sources
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: m65-rustfmt-${{ github.sha }}
-          path: target/m65-rustfmt
-          retention-days: 1
+            crates/vfd-lantern/src/write_runtime.rs
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "style: apply rustfmt to M6.5 integration"
+          git push origin HEAD:agent/m6.5-backup-restore-ui
