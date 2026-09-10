@@ -7,11 +7,11 @@ use std::{
 use lantern_domain::{DriveState, ProfileId, SlaveId, UtcTimestamp};
 
 use crate::{
-    backup_flow::{BackupRestoreState, PreparedRestoreBundle},
     BackupAction, BackupCaptureContext, BackupEffect, BackupRestoreView, ConnectionAction,
     ConnectionWizardView, FaultAction, FaultTimelineView, MonitoringAction, MonitoringView,
     ParameterAction, ParameterBrowserView, ProfileRegistry, RestoreConfirmation, SessionInput,
     SessionStateMachine,
+    backup_flow::{BackupRestoreState, PreparedRestoreBundle},
 };
 
 use crate::application as legacy;
@@ -155,8 +155,12 @@ impl ApplicationState {
 
         let previous_session = self.inner.view().active_session();
         let legacy_action = match action {
-            ApplicationAction::ReplaceRegistry(value) => legacy::ApplicationAction::ReplaceRegistry(value),
-            ApplicationAction::SelectProfile(value) => legacy::ApplicationAction::SelectProfile(value),
+            ApplicationAction::ReplaceRegistry(value) => {
+                legacy::ApplicationAction::ReplaceRegistry(value)
+            }
+            ApplicationAction::SelectProfile(value) => {
+                legacy::ApplicationAction::SelectProfile(value)
+            }
             ApplicationAction::Connection(value) => legacy::ApplicationAction::Connection(value),
             ApplicationAction::Monitoring(value) => legacy::ApplicationAction::Monitoring(value),
             ApplicationAction::Parameters(value) => legacy::ApplicationAction::Parameters(value),
@@ -262,15 +266,22 @@ impl ApplicationState {
                 Vec::new()
             }
             BackupAction::PrepareRestore => {
-                let Some(source) = self.backup.source.as_ref().map(|stored| stored.snapshot.clone()) else {
-                    self.backup.error = Some("select a source backup before preparing restore".to_owned());
+                let Some(source) = self
+                    .backup
+                    .source
+                    .as_ref()
+                    .map(|stored| stored.snapshot.clone())
+                else {
+                    self.backup.error =
+                        Some("select a source backup before preparing restore".to_owned());
                     return Vec::new();
                 };
                 match self.backup_capture_context() {
                     Ok(context) => {
                         self.backup.invalidate_prepared_operation();
                         self.backup.status = Some(
-                            "capturing fresh pre-restore backup and building guarded plan".to_owned(),
+                            "capturing fresh pre-restore backup and building guarded plan"
+                                .to_owned(),
                         );
                         self.backup.error = None;
                         vec![ApplicationEffect::Backup(BackupEffect::PrepareRestore {
@@ -358,7 +369,8 @@ impl ApplicationState {
 
     fn backup_capture_context(&self) -> Result<BackupCaptureContext, String> {
         let view = self.inner.view();
-        if view.session().phase() != SessionPhaseView::Connected || view.active_session().is_none() {
+        if view.session().phase() != SessionPhaseView::Connected || view.active_session().is_none()
+        {
             return Err("backup/restore requires a connected Verified session".to_owned());
         }
         let profile_hash = view
@@ -380,7 +392,11 @@ impl ApplicationState {
             app_version: env!("CARGO_PKG_VERSION").to_owned(),
             build_id: self.build_id.clone(),
             profile_origin: format!("{:?}", entry.origin()),
-            adapter: view.session().port().unwrap_or("unknown-adapter").to_owned(),
+            adapter: view
+                .session()
+                .port()
+                .unwrap_or("unknown-adapter")
+                .to_owned(),
             link_settings: format!(
                 "baud={} parity={:?} data={:?} stop={:?} slave={} timeout_ms={} rs485={:?}",
                 link.current.baud_rate.get(),
