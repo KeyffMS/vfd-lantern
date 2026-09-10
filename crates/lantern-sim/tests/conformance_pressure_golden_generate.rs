@@ -1,6 +1,11 @@
 #![cfg(feature = "test-support")]
 
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::{Duration, Instant}};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use lantern_app::{
     BusControlPort, BusError, BusRequestContext, FrequencyClass, ManualMonotonicClock,
@@ -12,8 +17,8 @@ use lantern_domain::{ModbusFunction, ModbusTable, OperationId, ParameterId, Requ
 use lantern_profile::ValidatedDeviceProfile;
 use lantern_sim::{
     AuditEvidenceV1, ConformanceBoundary, ConformanceEvidenceV1, ConformanceObservationV1,
-    LoadedConformanceScenario, LoadedScenario, QueueEvidenceV1, SimulatorRuntime,
-    conformance_case, load_profile, parse_conformance_scenario, parse_scenario,
+    LoadedConformanceScenario, LoadedScenario, QueueEvidenceV1, SimulatorRuntime, conformance_case,
+    load_profile, parse_conformance_scenario, parse_scenario,
 };
 use lantern_transport::{BusActorHandle, open_serial_bus};
 use tokio::sync::mpsc;
@@ -59,23 +64,28 @@ fn pressure_conformance(
     core: &LoadedScenario,
 ) -> LoadedConformanceScenario {
     let events = match case_id {
-        36 => r#"
+        36 => {
+            r#"
 [[pressure.events]]
 at_tick = 1
 kind = "queue_depth"
 queue = "poll-plan"
 depth = 71
 capacity = 100
-"#,
-        37 => r#"
+"#
+        }
+        37 => {
+            r#"
 [[pressure.events]]
 at_tick = 1
 kind = "queue_depth"
 queue = "bus-safety"
 depth = 16
 capacity = 16
-"#,
-        38 => r#"
+"#
+        }
+        38 => {
+            r#"
 [[pressure.events]]
 at_tick = 1
 kind = "queue_depth"
@@ -88,8 +98,10 @@ kind = "queue_depth"
 queue = "bus-interactive"
 depth = 1
 capacity = 64
-"#,
-        39 => r#"
+"#
+        }
+        39 => {
+            r#"
 [[pressure.events]]
 at_tick = 1
 kind = "suspend"
@@ -103,8 +115,10 @@ at_tick = 3
 kind = "late_timer"
 timer = "fast-poll"
 late_by_micros = 900000
-"#,
-        40 => r#"
+"#
+        }
+        40 => {
+            r#"
 [[pressure.events]]
 at_tick = 1
 kind = "slow_sink"
@@ -115,7 +129,8 @@ at_tick = 2
 kind = "slow_sink"
 sink = "log"
 delay_millis = 50
-"#,
+"#
+        }
         _ => panic!("unsupported pressure golden case {case_id}"),
     };
     parse_conformance_scenario(
@@ -162,7 +177,9 @@ impl Stack {
     async fn start(case_id: u8, extra: &str) -> Self {
         let profile = profile();
         let core = core_scenario(&profile, extra);
-        let scenario_hash = pressure_conformance(case_id, &profile, &core).hash().to_hex();
+        let scenario_hash = pressure_conformance(case_id, &profile, &core)
+            .hash()
+            .to_hex();
         let runtime = SimulatorRuntime::spawn(Arc::clone(&profile), core).expect("runtime");
         let (bus, task) = open_serial_bus(
             serial_request(runtime.client_path(), &profile),
@@ -231,8 +248,7 @@ fn subscription(
     ReadSubscription::new(
         ParameterId::parse(parameter).expect("parameter"),
         frequency,
-        SubscriberId::parse(format!("case27-golden-{parameter}-{reason:?}"))
-            .expect("subscriber"),
+        SubscriberId::parse(format!("case27-golden-{parameter}-{reason:?}")).expect("subscriber"),
         reason,
         false,
         maximum_age,
@@ -248,7 +264,7 @@ fn observation(
     ConformanceObservationV1::from_simulator_log(
         state_trace,
         &stack.runtime.control().structured_log(),
-        stack.runtime.control().snapshot().write_count,
+        0,
         AuditEvidenceV1::default(),
         BTreeMap::new(),
         queue_stats,
@@ -256,7 +272,12 @@ fn observation(
     .expect("pressure observation")
 }
 
-fn write_generated_golden(name: &str, case_id: u8, stack: &Stack, actual: ConformanceObservationV1) {
+fn write_generated_golden(
+    name: &str,
+    case_id: u8,
+    stack: &Stack,
+    actual: ConformanceObservationV1,
+) {
     assert_eq!(conformance_case(case_id).expect("matrix case").id, case_id);
     let evidence = ConformanceEvidenceV1::from_observations(
         case_id,
@@ -303,7 +324,12 @@ async fn generate_case_36_budget_degradation_golden() {
         Duration::from_secs(1),
     )];
     let first = PollPlanner::new()
-        .build(&stack.profile, subscriptions.clone(), config, Instant::now())
+        .build(
+            &stack.profile,
+            subscriptions.clone(),
+            config,
+            Instant::now(),
+        )
         .expect("plan");
     let second = PollPlanner::new()
         .build(&stack.profile, subscriptions, config, first.created_at())
@@ -652,10 +678,15 @@ async fn generate_case_40_slow_sink_rtu_latency_budget_golden() {
             dropped += 1;
         }
     }
-    assert_eq!(dropped, 23, "stalled nonblocking sink must fill exactly once");
+    assert_eq!(
+        dropped, 23,
+        "stalled nonblocking sink must fill exactly once"
+    );
     let stats = stack.bus.statistics();
     assert!(
-        stats.round_trip_p95_micros.is_some_and(|value| value < 100_000),
+        stats
+            .round_trip_p95_micros
+            .is_some_and(|value| value < 100_000),
         "slow sink must remain outside RTU latency path: {:?}",
         stats.round_trip_p95_micros
     );
