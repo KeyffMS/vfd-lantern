@@ -401,7 +401,10 @@ fn backup_catalog(directory: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(paths)
 }
 
-fn persist_backup(directory: &Path, snapshot: lantern_app::BackupSnapshot) -> Result<StoredBackup, String> {
+fn persist_backup(
+    directory: &Path,
+    snapshot: lantern_app::BackupSnapshot,
+) -> Result<StoredBackup, String> {
     let path = directory.join(format!(
         "backup-{}-{}{}",
         snapshot.backup_id.get(),
@@ -430,8 +433,16 @@ impl ClockPort for RuntimeWriteClock {
     }
 }
 
+#[derive(Clone, Debug)]
+struct RuntimeRestoreState {
+    operation_id: OperationId,
+    plan_hash: String,
+    next_index: usize,
+}
+
 struct RuntimeSessionControl {
     snapshot: Mutex<WriteSessionSnapshot>,
+    restore: Mutex<Option<RuntimeRestoreState>>,
     action_tx: mpsc::UnboundedSender<ApplicationAction>,
 }
 
@@ -439,11 +450,15 @@ impl RuntimeSessionControl {
     fn new(action_tx: mpsc::UnboundedSender<ApplicationAction>) -> Self {
         Self {
             snapshot: Mutex::new(unavailable_snapshot()),
+            restore: Mutex::new(None),
             action_tx,
         }
     }
 
     fn sync(&self, snapshot: WriteSessionSnapshot) {
+        if snapshot.operation_idle {
+            *lock_restore(&self.restore) = None;
+        }
         *lock_snapshot(&self.snapshot) = snapshot;
     }
 }
@@ -511,6 +526,156 @@ impl SessionControlPort for RuntimeSessionControl {
             }));
     }
 
+    fn begin_restore(
+        &self,
+        operation_id: OperationId,
+        plan_hash: &str,
+    ) -> Result<(), SessionControlError> {
+        let mut snapshot = lock_snapshot(&self.snapshot);
+        let mut restore = lock_restore(&self.restore);
+        if !snapshot.connected
+            || !snapshot.armed
+            || !snapshot.audit_healthy
+            || !snapshot.operation_idle
+            || restore.is_some()
+            || plan_hash.is_empty()
+        {
+            return Err(SessionControlError::PreconditionChanged);
+        }
+        snapshot.operation_idle = false;
+        snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+        *restore = Some(RuntimeRestoreState {
+            operation_id,
+            plan_hash: plan_hash.to_owned(),
+            next_index: 0,
+        });
+        if self
+            .action_tx
+            .send(ApplicationAction::Session(SessionInput::RestoreStarted {
+                operation_id,
+                plan_hash: plan_hash.to_owned(),
+            }))
+            .is_err()
+        {
+            *restore = None;
+            snapshot.operation_idle = true;
+            snapshot.armed = false;
+            snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+            return Err(SessionControlError::Other(
+                "application session channel closed while starting restore".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn restore_matches(
+        &self,
+        operation_id: OperationId,
+        plan_hash: &str,
+        next_index: usize,
+    ) -> bool {
+        let snapshot = lock_snapshot(&self.snapshot);
+        let restore = lock_restore(&self.restore);
+        snapshot.connected
+            && snapshot.armed
+            && snapshot.audit_healthy
+            && !snapshot.operation_idle
+            && restore.as_ref().is_some_and(|state| {
+                state.operation_id == operation_id
+                    && state.plan_hash == plan_hash
+                    && state.next_index == next_index
+            })
+    }
+
+    fn advance_restore(
+        &self,
+        operation_id: OperationId,
+        plan_hash: &str,
+        next_index: usize,
+    ) -> Result<(), SessionControlError> {
+        let mut snapshot = lock_snapshot(&self.snapshot);
+        let mut restore = lock_restore(&self.restore);
+        let Some(state) = restore.as_mut() else {
+            return Err(SessionControlError::PreconditionChanged);
+        };
+        if !snapshot.connected
+            || !snapshot.armed
+            || !snapshot.audit_healthy
+            || snapshot.operation_idle
+            || state.operation_id != operation_id
+            || state.plan_hash != plan_hash
+            || next_index != state.next_index.saturating_add(1)
+        {
+            return Err(SessionControlError::PreconditionChanged);
+        }
+        state.next_index = next_index;
+        snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+        if self
+            .action_tx
+            .send(ApplicationAction::Session(SessionInput::RestoreAdvanced {
+                next_index,
+            }))
+            .is_err()
+        {
+            return Err(SessionControlError::Other(
+                "application session channel closed while advancing restore".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn finish_restore(
+        &self,
+        operation_id: OperationId,
+        plan_hash: &str,
+    ) -> Result<(), SessionControlError> {
+        let mut snapshot = lock_snapshot(&self.snapshot);
+        let mut restore = lock_restore(&self.restore);
+        let matches = restore.as_ref().is_some_and(|state| {
+            state.operation_id == operation_id && state.plan_hash == plan_hash
+        });
+        if !matches || snapshot.operation_idle {
+            return Err(SessionControlError::PreconditionChanged);
+        }
+        *restore = None;
+        snapshot.operation_idle = true;
+        snapshot.armed = false;
+        snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+        self.action_tx
+            .send(ApplicationAction::Session(SessionInput::RestoreFinished))
+            .map_err(|_| {
+                SessionControlError::Other(
+                    "application session channel closed while finishing restore".to_owned(),
+                )
+            })
+    }
+
+    fn abort_restore(
+        &self,
+        operation_id: OperationId,
+        plan_hash: &str,
+    ) -> Result<(), SessionControlError> {
+        let mut snapshot = lock_snapshot(&self.snapshot);
+        let mut restore = lock_restore(&self.restore);
+        let matches = restore.as_ref().is_some_and(|state| {
+            state.operation_id == operation_id && state.plan_hash == plan_hash
+        });
+        if !matches {
+            return Err(SessionControlError::PreconditionChanged);
+        }
+        *restore = None;
+        snapshot.operation_idle = true;
+        snapshot.armed = false;
+        snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+        self.action_tx
+            .send(ApplicationAction::Session(SessionInput::RestoreAborted))
+            .map_err(|_| {
+                SessionControlError::Other(
+                    "application session channel closed while aborting restore".to_owned(),
+                )
+            })
+    }
+
     fn disarm(&self) {
         {
             let mut snapshot = lock_snapshot(&self.snapshot);
@@ -530,6 +695,7 @@ impl SessionControlPort for RuntimeSessionControl {
             snapshot.operation_idle = true;
             snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
         }
+        *lock_restore(&self.restore) = None;
         let _ = self.action_tx.send(ApplicationAction::Session(
             SessionInput::AuditPersistenceFailed {
                 cause: "durable write audit failed".to_owned(),
@@ -545,6 +711,14 @@ impl SessionControlPort for RuntimeSessionControl {
 
 fn lock_snapshot(snapshot: &Mutex<WriteSessionSnapshot>) -> MutexGuard<'_, WriteSessionSnapshot> {
     snapshot
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn lock_restore(
+    restore: &Mutex<Option<RuntimeRestoreState>>,
+) -> MutexGuard<'_, Option<RuntimeRestoreState>> {
+    restore
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
