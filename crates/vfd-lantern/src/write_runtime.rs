@@ -1,5 +1,4 @@
 use std::{
-    fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
     time::Instant,
@@ -14,7 +13,8 @@ use lantern_app::{
     WriteEffect, WriteOutcome, WriteSessionSnapshot, semantic_backup_diff,
 };
 use lantern_storage::{
-    BACKUP_SUFFIX, FilesystemAuditPort, RuntimeProfileTrust, read_backup, write_backup,
+    BACKUP_SUFFIX, FilesystemAuditPort, RuntimeProfileTrust, list_backup_files, read_backup,
+    write_backup,
 };
 use lantern_transport::BusActorHandle;
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
@@ -383,21 +383,7 @@ fn send_backup_action(
 }
 
 fn backup_catalog(directory: &Path) -> Result<Vec<PathBuf>, String> {
-    if !directory.exists() {
-        return Ok(Vec::new());
-    }
-    let mut paths = fs::read_dir(directory)
-        .map_err(|error| error.to_string())?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with(BACKUP_SUFFIX))
-        })
-        .collect::<Vec<_>>();
-    paths.sort();
-    Ok(paths)
+    list_backup_files(directory).map_err(|error| error.to_string())
 }
 
 fn persist_backup(
