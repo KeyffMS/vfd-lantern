@@ -39,6 +39,7 @@ struct RuntimeState {
 pub struct TuiRuntimePaths {
     diagnostics_directory: PathBuf,
     fault_report_directory: PathBuf,
+    backup_directory: PathBuf,
     csv_directory: PathBuf,
     session_runtime_directory: PathBuf,
     audit_directory: PathBuf,
@@ -50,6 +51,7 @@ impl TuiRuntimePaths {
     pub fn new(
         diagnostics_directory: PathBuf,
         fault_report_directory: PathBuf,
+        backup_directory: PathBuf,
         csv_directory: PathBuf,
         session_runtime_directory: PathBuf,
         audit_directory: PathBuf,
@@ -58,6 +60,7 @@ impl TuiRuntimePaths {
         Self {
             diagnostics_directory,
             fault_report_directory,
+            backup_directory,
             csv_directory,
             session_runtime_directory,
             audit_directory,
@@ -92,6 +95,7 @@ impl TuiEffectRunner {
             registry,
             paths.audit_directory.clone(),
             paths.profile_trust_store.clone(),
+            paths.backup_directory.clone(),
             settings.process_writes_enabled,
         );
         let monitoring = MonitoringRuntime::new(
@@ -382,6 +386,7 @@ impl EffectRunner for TuiEffectRunner {
             ApplicationEffect::Faults(effect) => self.execute_fault(effect),
             ApplicationEffect::Write(effect) => self.write.execute(effect),
             ApplicationEffect::Session(effect) => self.execute_session(effect),
+            ApplicationEffect::Backup(effect) => self.write.execute_backup(effect),
         }
     }
 }
