@@ -8,10 +8,10 @@ use lantern_domain::{DriveState, ProfileId, SlaveId, UtcTimestamp};
 
 use crate::{
     backup_flow::{BackupRestoreState, PreparedRestoreBundle},
-    ApplicationAction as _, ApprovedRestorePlan, BackupAction, BackupCaptureContext, BackupEffect,
-    BackupRestoreView, ConnectionAction, ConnectionWizardView, FaultAction, FaultTimelineView,
-    MonitoringAction, MonitoringView, ParameterAction, ParameterBrowserView, ProfileRegistry,
-    RestoreConfirmation, SessionInput, SessionStateMachine,
+    BackupAction, BackupCaptureContext, BackupEffect, BackupRestoreView, ConnectionAction,
+    ConnectionWizardView, FaultAction, FaultTimelineView, MonitoringAction, MonitoringView,
+    ParameterAction, ParameterBrowserView, ProfileRegistry, RestoreConfirmation, SessionInput,
+    SessionStateMachine,
 };
 
 use crate::application as legacy;
