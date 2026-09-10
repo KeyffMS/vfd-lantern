@@ -1,6 +1,12 @@
 #![cfg(feature = "test-support")]
 
-use std::{collections::BTreeMap, fs, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use lantern_app::{
     AuditError, AuditPort, BusControlPort, ClockPort, PackagedProfileEntryV1,
@@ -22,7 +28,9 @@ use lantern_sim::{
     ConformanceSimulatorRuntime, LoadedConformanceScenario, conformance_case, load_profile,
     parse_conformance_scenario, parse_scenario,
 };
-use lantern_storage::{ManifestCopyStatus, RuntimeProfileTrust, approve_local_profile, verify_packaged_manifest_copy};
+use lantern_storage::{
+    ManifestCopyStatus, RuntimeProfileTrust, approve_local_profile, verify_packaged_manifest_copy,
+};
 use lantern_transport::open_serial_bus;
 use tempfile::tempdir;
 
@@ -33,7 +41,9 @@ const FINGERPRINT: &str = "example.vfd1000:local-trust-golden-27";
 fn system_source() -> ProfileSource {
     ProfileSource {
         path: PathBuf::from("/usr/share/vfd-lantern/profiles/example-vfd.toml"),
-        bytes: include_bytes!("../../../profiles/example-vfd.toml").to_vec().into_boxed_slice(),
+        bytes: include_bytes!("../../../profiles/example-vfd.toml")
+            .to_vec()
+            .into_boxed_slice(),
         format: ProfileSourceFormat::Toml,
         tier: ProfileSourceTier::System,
     }
@@ -213,7 +223,12 @@ write_capable = true
     let drift_registry = ProfileRegistry::from_sources(vec![system_source()], &drift_manifest)
         .expect("valid drift manifest");
     assert_eq!(
-        drift_registry.entries().values().next().expect("drift entry").origin(),
+        drift_registry
+            .entries()
+            .values()
+            .next()
+            .expect("drift entry")
+            .origin(),
         ProfileOrigin::LocalUntrusted
     );
 
@@ -223,18 +238,26 @@ write_capable = true
 
     let directory = tempdir().expect("tempdir");
     let disk_path = directory.path().join("profiles-v1.json");
-    fs::write(&disk_path, serde_json::to_vec(&exact).expect("disk manifest JSON"))
-        .expect("disk manifest");
+    fs::write(
+        &disk_path,
+        serde_json::to_vec(&exact).expect("disk manifest JSON"),
+    )
+    .expect("disk manifest");
     let embedded = empty_embedded_manifest();
     let embedded_bytes = serde_json::to_vec(&embedded).expect("embedded manifest JSON");
     assert_eq!(
         verify_packaged_manifest_copy(&disk_path, &embedded_bytes).expect("copy status"),
         ManifestCopyStatus::Mismatch
     );
-    let disk_registry = ProfileRegistry::from_sources(vec![system_source()], &embedded)
-        .expect("embedded registry");
+    let disk_registry =
+        ProfileRegistry::from_sources(vec![system_source()], &embedded).expect("embedded registry");
     assert_eq!(
-        disk_registry.entries().values().next().expect("disk entry").origin(),
+        disk_registry
+            .entries()
+            .values()
+            .next()
+            .expect("disk entry")
+            .origin(),
         ProfileOrigin::LocalUntrusted
     );
 
@@ -361,7 +384,10 @@ fn intent(profile: &ValidatedDeviceProfile) -> WriteIntent {
         profile_hash: profile.profile_hash().to_hex(),
         parameter_id,
         previous_raw: old_raw.clone(),
-        previous_engineering: parameter.codec().decode(old_raw.as_slice()).expect("old engineering"),
+        previous_engineering: parameter
+            .codec()
+            .decode(old_raw.as_slice())
+            .expect("old engineering"),
         previous_observed_at: MonotonicInstant::from_nanos(1),
         requested_engineering: EngineeringValue::Fixed(lantern_domain::Decimal::new(100, 1)),
         preview_raw: Some(RawRegisters::new(vec![100]).expect("preview")),
@@ -377,12 +403,17 @@ async fn generate_case_28_local_exact_hash_approval_before_physical_write_golden
     );
     let directory = tempdir().expect("tempdir");
     let profile_path = directory.path().join("local.toml");
-    fs::write(&profile_path, include_bytes!("../../../profiles/example-vfd.toml"))
-        .expect("local profile");
+    fs::write(
+        &profile_path,
+        include_bytes!("../../../profiles/example-vfd.toml"),
+    )
+    .expect("local profile");
     let profile = Arc::new(load_profile(&profile_path).expect("validated profile"));
     let source = ProfileSource {
         path: profile_path.clone(),
-        bytes: fs::read(&profile_path).expect("profile bytes").into_boxed_slice(),
+        bytes: fs::read(&profile_path)
+            .expect("profile bytes")
+            .into_boxed_slice(),
         format: ProfileSourceFormat::Toml,
         tier: ProfileSourceTier::User,
     };
@@ -398,7 +429,10 @@ async fn generate_case_28_local_exact_hash_approval_before_physical_write_golden
         .expect("registry"),
     );
     let trust_store = directory.path().join("trust/local.json");
-    let trust = Arc::new(RuntimeProfileTrust::new(Arc::clone(&registry), trust_store.clone()));
+    let trust = Arc::new(RuntimeProfileTrust::new(
+        Arc::clone(&registry),
+        trust_store.clone(),
+    ));
     assert!(!trust.is_trusted(profile.profile_id()));
 
     let core = Arc::new(
@@ -487,7 +521,9 @@ kind = "accept"
 
     assert!(matches!(
         coordinator.prepare_write(intent(&profile)).await,
-        Err(WriteCoordinatorError::NotExecuted(DecisionOutcome::ProfileNotTrusted))
+        Err(WriteCoordinatorError::NotExecuted(
+            DecisionOutcome::ProfileNotTrusted
+        ))
     ));
     assert_eq!(runtime.control().snapshot().write_count, 0);
 
@@ -500,7 +536,10 @@ kind = "accept"
     )
     .expect("approval");
     assert!(trust.is_trusted(profile.profile_id()));
-    let plan = coordinator.prepare_write(intent(&profile)).await.expect("approved prepare");
+    let plan = coordinator
+        .prepare_write(intent(&profile))
+        .await
+        .expect("approved prepare");
     assert_eq!(
         coordinator
             .confirm_write(
