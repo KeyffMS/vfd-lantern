@@ -1,0 +1,42 @@
+name: M6.5.2 challenge parser helper
+
+on:
+  push:
+    branches:
+      - agent/m6.5.2-backup-restore-pty
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    timeout-minutes: 45
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/m6.5.2-backup-restore-pty
+          fetch-depth: 0
+      - name: Install pinned toolchain
+        run: |
+          set -eu
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+      - name: Fix challenge token extraction, run process matrix, self-clean and commit
+        run: |
+          set -eu
+          file=crates/lantern-sim/examples/support/backup_restore_process.rs
+          test "$(grep -Fxc '        .map(str::trim)' "$file")" -eq 1
+          sed -i 's/        \.map(str::trim)$/        .and_then(|line| line.split_whitespace().next())/' "$file"
+          cargo fmt --all
+          cargo clippy -p lantern-sim --example connection_process_acceptance --all-features --locked -- -D warnings
+          cargo build -p lantern-sim --bin lantern-sim --all-features --locked
+          cargo build -p vfd-lantern --bin vfd-lantern --all-features --locked
+          cargo run -p lantern-sim --example connection_process_acceptance --all-features --locked -- --write-fixture
+          git rm .github/workflows/m652-challenge-parser-helper.yml
+          git add "$file"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "test: parse exact restore challenge token from TUI"
+          git push origin HEAD:agent/m6.5.2-backup-restore-pty
