@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Paragraph, Wrap},
 };
 
-use crate::{Theme, UiState};
+use crate::{ConnectionEdit, Theme, UiState};
 
 pub fn render_backup_screen(
     frame: &mut Frame<'_>,
@@ -122,11 +122,8 @@ pub fn render_backup_screen(
             "Exact confirmation required: {}",
             plan.challenge
         )));
-        if ui.backup.confirmation_active {
-            lines.push(Line::from(format!(
-                "Confirmation: {}_",
-                ui.backup.confirmation_input
-            )));
+        if ui.connection_edit == Some(ConnectionEdit::WriteConfirmation) {
+            lines.push(Line::from(format!("Confirmation: {}_", ui.form.value())));
             lines.push(Line::from("Enter submits exact text; Esc cancels without write."));
         } else {
             lines.push(Line::from("Press c to enter the exact confirmation challenge."));
