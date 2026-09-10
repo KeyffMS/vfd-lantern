@@ -4,6 +4,7 @@
 
 mod application;
 mod backup;
+mod backup_flow;
 mod bus;
 mod clock;
 mod connection;
@@ -17,6 +18,7 @@ mod monitoring_projection;
 mod parameters;
 mod poll;
 mod ports;
+mod product_application;
 mod profile_registry;
 mod restore;
 mod restore_permit;
@@ -27,8 +29,8 @@ mod telemetry;
 mod write_coordinator;
 mod write_flow;
 
-pub use application::*;
 pub use backup::*;
+pub use backup_flow::*;
 pub use bus::*;
 pub use clock::*;
 pub use connection::*;
@@ -54,6 +56,7 @@ pub use monitoring_projection::*;
 pub use parameters::*;
 pub use poll::*;
 pub use ports::*;
+pub use product_application::*;
 pub use profile_registry::*;
 pub use restore::*;
 pub use restore_permit::*;
