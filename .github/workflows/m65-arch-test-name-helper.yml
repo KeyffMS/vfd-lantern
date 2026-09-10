@@ -1,0 +1,36 @@
+name: M6.5 architecture test-name helper
+
+on:
+  push:
+    branches:
+      - agent/m6.5-backup-restore-ui
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: [self-hosted, linux, x64, podman, vfd-lantern]
+    timeout-minutes: 20
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/m6.5-backup-restore-ui
+          fetch-depth: 0
+      - name: Rename architecture contract test and self-clean
+        run: |
+          set -eu
+          file=crates/vfd-lantern/src/write_runtime.rs
+          old='    async fn missing_profile_trust_adapter_never_mints_any_profile_bound_capability() {'
+          new='    async fn missing_profile_trust_adapter_never_mints_write_capability_or_touches_bus() {'
+          test "$(grep -Fxc "$old" "$file")" -eq 1
+          sed -i "s|^$old$|$new|" "$file"
+          test "$(grep -Fxc "$new" "$file")" -eq 1
+          sh scripts/check-architecture.sh
+          git rm .github/workflows/m65-arch-test-name-helper.yml
+          git add "$file"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "test: restore fail-closed architecture contract name"
+          git push origin HEAD:agent/m6.5-backup-restore-ui
