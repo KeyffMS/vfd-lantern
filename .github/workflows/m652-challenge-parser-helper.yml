@@ -23,12 +23,14 @@ jobs:
           set -eu
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
           rustup default 1.97.1
-      - name: Fix challenge token extraction, run process matrix, self-clean and commit
+      - name: Fix harness assertions, run process matrix, self-clean and commit
         run: |
           set -eu
           file=crates/lantern-sim/examples/support/backup_restore_process.rs
           test "$(grep -Fxc '        .map(str::trim)' "$file")" -eq 1
+          test "$(grep -Fc 'writes[0].outcome == "ok"' "$file")" -eq 1
           sed -i 's/        \.map(str::trim)$/        .and_then(|line| line.split_whitespace().next())/' "$file"
+          sed -i 's/writes\[0\]\.outcome == "ok"/writes[0].outcome == "response"/' "$file"
           cargo fmt --all
           cargo clippy -p lantern-sim --example connection_process_acceptance --all-features --locked -- -D warnings
           cargo build -p lantern-sim --bin lantern-sim --all-features --locked
@@ -38,5 +40,5 @@ jobs:
           git add "$file"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git commit -m "test: parse exact restore challenge token from TUI"
+          git commit -m "test: align M6.5.2 harness with terminal and RTU records"
           git push origin HEAD:agent/m6.5.2-backup-restore-pty
