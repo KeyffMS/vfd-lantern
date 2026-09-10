@@ -1,28 +1,34 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
     time::Instant,
 };
 
 use lantern_app::{
-    ApplicationAction, ApplicationEffectError, AuditPort, ClockPort, DecisionOutcome,
-    DeviceFingerprint, DeviceWriteOutcome, DriveState, OperationId, ParameterAction, PlanId,
-    ProfileRegistry, ProfileTrustPort, ReadBusPort, SessionControlError, SessionControlPort,
-    SessionId, SessionInput, SlaveId, WriteBusPort, WriteCoordinator, WriteCoordinatorConfig,
-    WriteEffect, WriteOutcome, WriteSessionSnapshot,
+    ApplicationAction, ApplicationEffectError, AuditPort, BackupAction, BackupCoordinator,
+    BackupEffect, ClockPort, DecisionOutcome, DeviceFingerprint, DeviceWriteOutcome, DriveState,
+    OperationId, ParameterAction, PlanId, PreparedRestoreBundle, ProfileRegistry, ProfileTrustPort,
+    ReadBusPort, RestoreExecutionSummary, SessionControlError, SessionControlPort, SessionId,
+    SessionInput, SlaveId, StoredBackup, WriteBusPort, WriteCoordinator, WriteCoordinatorConfig,
+    WriteEffect, WriteOutcome, WriteSessionSnapshot, semantic_backup_diff,
 };
-use lantern_storage::{FilesystemAuditPort, RuntimeProfileTrust};
+use lantern_storage::{
+    BACKUP_SUFFIX, FilesystemAuditPort, RuntimeProfileTrust, list_backup_files, read_backup,
+    write_backup,
+};
 use lantern_transport::BusActorHandle;
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 
 #[derive(Clone)]
 pub struct ProductionWriteRuntime {
     coordinator: Arc<AsyncMutex<Option<WriteCoordinator>>>,
+    backup: Arc<AsyncMutex<Option<BackupCoordinator>>>,
     session: Arc<RuntimeSessionControl>,
     audit: Option<Arc<dyn AuditPort>>,
     trust: Option<Arc<dyn ProfileTrustPort>>,
     clock: Arc<RuntimeWriteClock>,
     config: WriteCoordinatorConfig,
+    backup_directory: PathBuf,
     action_tx: mpsc::UnboundedSender<ApplicationAction>,
 }
 
@@ -33,6 +39,7 @@ impl ProductionWriteRuntime {
         registry: Arc<ProfileRegistry>,
         audit_directory: PathBuf,
         trust_store_path: PathBuf,
+        backup_directory: PathBuf,
         process_writes_enabled: bool,
     ) -> Self {
         let audit: Option<Arc<dyn AuditPort>> = match FilesystemAuditPort::new(audit_directory) {
@@ -48,18 +55,42 @@ impl ProductionWriteRuntime {
             registry,
             trust_store_path,
         )));
-        Self::from_adapters(action_tx, audit, trust, process_writes_enabled)
+        Self::from_adapters_with_backup_directory(
+            action_tx,
+            audit,
+            trust,
+            backup_directory,
+            process_writes_enabled,
+        )
     }
 
+    #[cfg(test)]
     fn from_adapters(
         action_tx: mpsc::UnboundedSender<ApplicationAction>,
         audit: Option<Arc<dyn AuditPort>>,
         trust: Option<Arc<dyn ProfileTrustPort>>,
         process_writes_enabled: bool,
     ) -> Self {
+        Self::from_adapters_with_backup_directory(
+            action_tx,
+            audit,
+            trust,
+            PathBuf::from("."),
+            process_writes_enabled,
+        )
+    }
+
+    fn from_adapters_with_backup_directory(
+        action_tx: mpsc::UnboundedSender<ApplicationAction>,
+        audit: Option<Arc<dyn AuditPort>>,
+        trust: Option<Arc<dyn ProfileTrustPort>>,
+        backup_directory: PathBuf,
+        process_writes_enabled: bool,
+    ) -> Self {
         let session = Arc::new(RuntimeSessionControl::new(action_tx.clone()));
         Self {
             coordinator: Arc::new(AsyncMutex::new(None)),
+            backup: Arc::new(AsyncMutex::new(None)),
             session,
             audit,
             trust,
@@ -68,6 +99,7 @@ impl ProductionWriteRuntime {
                 process_writes_enabled,
                 ..WriteCoordinatorConfig::default()
             },
+            backup_directory,
             action_tx,
         }
     }
@@ -79,6 +111,27 @@ impl ProductionWriteRuntime {
     }
 
     async fn attach_ports(&self, read_bus: Arc<dyn ReadBusPort>, write_bus: Arc<dyn WriteBusPort>) {
+        let clock: Arc<dyn ClockPort> = self.clock.clone();
+        let session: Arc<dyn SessionControlPort> = self.session.clone();
+
+        if let Some(trust) = self.trust.clone() {
+            match BackupCoordinator::new(
+                Arc::clone(&read_bus),
+                trust,
+                Arc::clone(&clock),
+                Arc::clone(&session),
+                self.config.request_timeout,
+            ) {
+                Ok(coordinator) => *self.backup.lock().await = Some(coordinator),
+                Err(error) => {
+                    eprintln!("backup coordinator unavailable: {error}");
+                    *self.backup.lock().await = None;
+                }
+            }
+        } else {
+            *self.backup.lock().await = None;
+        }
+
         let Some(audit) = self.audit.clone() else {
             *self.coordinator.lock().await = None;
             return;
@@ -87,8 +140,6 @@ impl ProductionWriteRuntime {
             *self.coordinator.lock().await = None;
             return;
         };
-        let clock: Arc<dyn ClockPort> = self.clock.clone();
-        let session: Arc<dyn SessionControlPort> = self.session.clone();
         match WriteCoordinator::new(
             read_bus,
             write_bus,
@@ -184,6 +235,169 @@ impl ProductionWriteRuntime {
             }
         }
     }
+
+    pub fn execute_backup(&self, effect: BackupEffect) -> Result<(), ApplicationEffectError> {
+        match effect {
+            BackupEffect::RefreshCatalog => {
+                let result = backup_catalog(&self.backup_directory);
+                send_backup_action(&self.action_tx, BackupAction::CatalogRefreshed(result))
+            }
+            BackupEffect::LoadSource { path } => {
+                let sender = self.action_tx.clone();
+                tokio::task::spawn_blocking(move || {
+                    let result = read_backup(&path).map_err(|error| error.to_string());
+                    let _ = sender.send(ApplicationAction::Backup(Box::new(
+                        BackupAction::SourceLoaded { path, result },
+                    )));
+                });
+                Ok(())
+            }
+            BackupEffect::Capture { context } => {
+                let backup = Arc::clone(&self.backup);
+                let directory = self.backup_directory.clone();
+                let sender = self.action_tx.clone();
+                tokio::spawn(async move {
+                    let result: Result<StoredBackup, String> = async {
+                        let snapshot = backup
+                            .lock()
+                            .await
+                            .as_mut()
+                            .ok_or_else(|| {
+                                "backup capability unavailable: no verified bus/trust composition"
+                                    .to_owned()
+                            })?
+                            .capture(context)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        persist_backup(&directory, snapshot)
+                    }
+                    .await;
+                    let _ = sender.send(ApplicationAction::Backup(Box::new(
+                        BackupAction::Captured(result),
+                    )));
+                });
+                Ok(())
+            }
+            BackupEffect::PrepareRestore { source, context } => {
+                let backup = Arc::clone(&self.backup);
+                let coordinator = Arc::clone(&self.coordinator);
+                let directory = self.backup_directory.clone();
+                let sender = self.action_tx.clone();
+                tokio::spawn(async move {
+                    let result: Result<PreparedRestoreBundle, String> = async {
+                        let current = backup
+                            .lock()
+                            .await
+                            .as_mut()
+                            .ok_or_else(|| {
+                                "backup capability unavailable before restore".to_owned()
+                            })?
+                            .capture(context)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        let pre_restore = persist_backup(&directory, current)?;
+                        let diff = semantic_backup_diff(source.as_ref(), &pre_restore.snapshot, None);
+                        let plan = coordinator
+                            .lock()
+                            .await
+                            .as_mut()
+                            .ok_or_else(|| {
+                                "restore capability unavailable: write/audit/trust composition is incomplete"
+                                    .to_owned()
+                            })?
+                            .prepare_restore_plan(source.as_ref(), &pre_restore.snapshot)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        Ok(PreparedRestoreBundle {
+                            pre_restore,
+                            diff,
+                            plan,
+                        })
+                    }
+                    .await;
+                    let _ = sender.send(ApplicationAction::Backup(Box::new(
+                        BackupAction::RestorePrepared(Box::new(result)),
+                    )));
+                });
+                Ok(())
+            }
+            BackupEffect::ExecuteRestore { plan, confirmation } => {
+                let coordinator = Arc::clone(&self.coordinator);
+                let sender = self.action_tx.clone();
+                tokio::spawn(async move {
+                    let result: Result<RestoreExecutionSummary, String> = async {
+                        let total = plan.steps().len();
+                        let mut guard = coordinator.lock().await;
+                        let coordinator = guard.as_mut().ok_or_else(|| {
+                            "restore capability unavailable: write/audit/trust composition is incomplete"
+                                .to_owned()
+                        })?;
+                        let mut permit = coordinator
+                            .begin_restore(plan, confirmation)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        let mut verified_steps = 0_usize;
+                        for index in 0..total {
+                            let outcome = coordinator
+                                .execute_restore_step(&mut permit, index)
+                                .await
+                                .map_err(|error| error.to_string())?;
+                            if outcome == DeviceWriteOutcome::Verified {
+                                verified_steps = verified_steps.saturating_add(1);
+                                continue;
+                            }
+                            return Ok(RestoreExecutionSummary {
+                                attempted_steps: index.saturating_add(1),
+                                verified_steps,
+                                terminal_outcome: Some(outcome),
+                            });
+                        }
+                        coordinator
+                            .finish_restore(permit)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        Ok(RestoreExecutionSummary {
+                            attempted_steps: total,
+                            verified_steps,
+                            terminal_outcome: None,
+                        })
+                    }
+                    .await;
+                    let _ = sender.send(ApplicationAction::Backup(Box::new(
+                        BackupAction::RestoreCompleted(result),
+                    )));
+                });
+                Ok(())
+            }
+        }
+    }
+}
+
+fn send_backup_action(
+    sender: &mpsc::UnboundedSender<ApplicationAction>,
+    action: BackupAction,
+) -> Result<(), ApplicationEffectError> {
+    sender
+        .send(ApplicationAction::Backup(Box::new(action)))
+        .map_err(|_| ApplicationEffectError("application action channel closed".to_owned()))
+}
+
+fn backup_catalog(directory: &Path) -> Result<Vec<PathBuf>, String> {
+    list_backup_files(directory).map_err(|error| error.to_string())
+}
+
+fn persist_backup(
+    directory: &Path,
+    snapshot: lantern_app::BackupSnapshot,
+) -> Result<StoredBackup, String> {
+    let path = directory.join(format!(
+        "backup-{}-{}{}",
+        snapshot.backup_id.get(),
+        snapshot.finished_at.as_unix_nanos(),
+        BACKUP_SUFFIX
+    ));
+    write_backup(&path, &snapshot).map_err(|error| error.to_string())?;
+    Ok(StoredBackup { path, snapshot })
 }
 
 struct RuntimeWriteClock {
@@ -204,8 +418,16 @@ impl ClockPort for RuntimeWriteClock {
     }
 }
 
+#[derive(Clone, Debug)]
+struct RuntimeRestoreState {
+    operation_id: OperationId,
+    plan_hash: String,
+    next_index: usize,
+}
+
 struct RuntimeSessionControl {
     snapshot: Mutex<WriteSessionSnapshot>,
+    restore: Mutex<Option<RuntimeRestoreState>>,
     action_tx: mpsc::UnboundedSender<ApplicationAction>,
 }
 
@@ -213,11 +435,15 @@ impl RuntimeSessionControl {
     fn new(action_tx: mpsc::UnboundedSender<ApplicationAction>) -> Self {
         Self {
             snapshot: Mutex::new(unavailable_snapshot()),
+            restore: Mutex::new(None),
             action_tx,
         }
     }
 
     fn sync(&self, snapshot: WriteSessionSnapshot) {
+        if snapshot.operation_idle {
+            *lock_restore(&self.restore) = None;
+        }
         *lock_snapshot(&self.snapshot) = snapshot;
     }
 }
@@ -285,6 +511,156 @@ impl SessionControlPort for RuntimeSessionControl {
             }));
     }
 
+    fn begin_restore(
+        &self,
+        operation_id: OperationId,
+        plan_hash: &str,
+    ) -> Result<(), SessionControlError> {
+        let mut snapshot = lock_snapshot(&self.snapshot);
+        let mut restore = lock_restore(&self.restore);
+        if !snapshot.connected
+            || !snapshot.armed
+            || !snapshot.audit_healthy
+            || !snapshot.operation_idle
+            || restore.is_some()
+            || plan_hash.is_empty()
+        {
+            return Err(SessionControlError::PreconditionChanged);
+        }
+        snapshot.operation_idle = false;
+        snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+        *restore = Some(RuntimeRestoreState {
+            operation_id,
+            plan_hash: plan_hash.to_owned(),
+            next_index: 0,
+        });
+        if self
+            .action_tx
+            .send(ApplicationAction::Session(SessionInput::RestoreStarted {
+                operation_id,
+                plan_hash: plan_hash.to_owned(),
+            }))
+            .is_err()
+        {
+            *restore = None;
+            snapshot.operation_idle = true;
+            snapshot.armed = false;
+            snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+            return Err(SessionControlError::Other(
+                "application session channel closed while starting restore".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn restore_matches(
+        &self,
+        operation_id: OperationId,
+        plan_hash: &str,
+        next_index: usize,
+    ) -> bool {
+        let snapshot = lock_snapshot(&self.snapshot);
+        let restore = lock_restore(&self.restore);
+        snapshot.connected
+            && snapshot.armed
+            && snapshot.audit_healthy
+            && !snapshot.operation_idle
+            && restore.as_ref().is_some_and(|state| {
+                state.operation_id == operation_id
+                    && state.plan_hash == plan_hash
+                    && state.next_index == next_index
+            })
+    }
+
+    fn advance_restore(
+        &self,
+        operation_id: OperationId,
+        plan_hash: &str,
+        next_index: usize,
+    ) -> Result<(), SessionControlError> {
+        let mut snapshot = lock_snapshot(&self.snapshot);
+        let mut restore = lock_restore(&self.restore);
+        let Some(state) = restore.as_mut() else {
+            return Err(SessionControlError::PreconditionChanged);
+        };
+        if !snapshot.connected
+            || !snapshot.armed
+            || !snapshot.audit_healthy
+            || snapshot.operation_idle
+            || state.operation_id != operation_id
+            || state.plan_hash != plan_hash
+            || next_index != state.next_index.saturating_add(1)
+        {
+            return Err(SessionControlError::PreconditionChanged);
+        }
+        state.next_index = next_index;
+        snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+        if self
+            .action_tx
+            .send(ApplicationAction::Session(SessionInput::RestoreAdvanced {
+                next_index,
+            }))
+            .is_err()
+        {
+            return Err(SessionControlError::Other(
+                "application session channel closed while advancing restore".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn finish_restore(
+        &self,
+        operation_id: OperationId,
+        plan_hash: &str,
+    ) -> Result<(), SessionControlError> {
+        let mut snapshot = lock_snapshot(&self.snapshot);
+        let mut restore = lock_restore(&self.restore);
+        let matches = restore.as_ref().is_some_and(|state| {
+            state.operation_id == operation_id && state.plan_hash == plan_hash
+        });
+        if !matches || snapshot.operation_idle {
+            return Err(SessionControlError::PreconditionChanged);
+        }
+        *restore = None;
+        snapshot.operation_idle = true;
+        snapshot.armed = false;
+        snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+        self.action_tx
+            .send(ApplicationAction::Session(SessionInput::RestoreFinished))
+            .map_err(|_| {
+                SessionControlError::Other(
+                    "application session channel closed while finishing restore".to_owned(),
+                )
+            })
+    }
+
+    fn abort_restore(
+        &self,
+        operation_id: OperationId,
+        plan_hash: &str,
+    ) -> Result<(), SessionControlError> {
+        let mut snapshot = lock_snapshot(&self.snapshot);
+        let mut restore = lock_restore(&self.restore);
+        let matches = restore.as_ref().is_some_and(|state| {
+            state.operation_id == operation_id && state.plan_hash == plan_hash
+        });
+        if !matches {
+            return Err(SessionControlError::PreconditionChanged);
+        }
+        *restore = None;
+        snapshot.operation_idle = true;
+        snapshot.armed = false;
+        snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+        self.action_tx
+            .send(ApplicationAction::Session(SessionInput::RestoreAborted))
+            .map_err(|_| {
+                SessionControlError::Other(
+                    "application session channel closed while aborting restore".to_owned(),
+                )
+            })
+    }
+
     fn disarm(&self) {
         {
             let mut snapshot = lock_snapshot(&self.snapshot);
@@ -304,6 +680,7 @@ impl SessionControlPort for RuntimeSessionControl {
             snapshot.operation_idle = true;
             snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
         }
+        *lock_restore(&self.restore) = None;
         let _ = self.action_tx.send(ApplicationAction::Session(
             SessionInput::AuditPersistenceFailed {
                 cause: "durable write audit failed".to_owned(),
@@ -319,6 +696,14 @@ impl SessionControlPort for RuntimeSessionControl {
 
 fn lock_snapshot(snapshot: &Mutex<WriteSessionSnapshot>) -> MutexGuard<'_, WriteSessionSnapshot> {
     snapshot
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn lock_restore(
+    restore: &Mutex<Option<RuntimeRestoreState>>,
+) -> MutexGuard<'_, Option<RuntimeRestoreState>> {
+    restore
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
@@ -412,6 +797,7 @@ mod tests {
         let runtime = ProductionWriteRuntime::from_adapters(tx, Some(audit), None, true);
         let bus = attach_counting_bus(&runtime).await;
         assert!(runtime.coordinator.lock().await.is_none());
+        assert!(runtime.backup.lock().await.is_none());
         assert_eq!(bus.writes.load(Ordering::SeqCst), 0);
     }
 
@@ -423,6 +809,7 @@ mod tests {
             ProductionWriteRuntime::from_adapters(tx, Some(audit), Some(trust_adapter()), true);
         let bus = attach_counting_bus(&runtime).await;
         assert!(runtime.coordinator.lock().await.is_some());
+        assert!(runtime.backup.lock().await.is_some());
         assert_eq!(bus.writes.load(Ordering::SeqCst), 0);
     }
 }

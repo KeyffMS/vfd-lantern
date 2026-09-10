@@ -4,7 +4,7 @@ use crossterm::event::{Event, EventStream};
 use futures_util::StreamExt;
 use lantern_app::ApplicationView;
 
-use crate::{MappedAction, UiAction, UiState, map_key};
+use crate::{MappedAction, Screen, UiAction, UiState, backup_keymap::map_backup_key, map_key};
 
 pub struct InputReader {
     events: EventStream,
@@ -29,6 +29,11 @@ impl InputReader {
             })??;
             match event {
                 Event::Key(key) => {
+                    if ui.screen == Screen::Backup
+                        && let Some(action) = map_backup_key(ui, view, key)
+                    {
+                        return Ok(action);
+                    }
                     if let Some(action) = map_key(ui, view, key) {
                         return Ok(action);
                     }

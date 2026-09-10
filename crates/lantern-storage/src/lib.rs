@@ -6,6 +6,7 @@ mod artifacts;
 mod atomic;
 mod audit;
 mod backup;
+mod backup_catalog;
 mod csv_lifecycle;
 mod csv_writer;
 mod diagnostics_bundle;
@@ -30,6 +31,7 @@ pub use backup::{
     BACKUP_SCHEMA_VERSION, BACKUP_SUFFIX, BackupEnvelopeV1, BackupPayloadV1, BackupStorageError,
     MAX_BACKUP_FILE_BYTES, MAX_BACKUP_VALUES, decode_backup, read_backup, write_backup,
 };
+pub use backup_catalog::list_backup_files;
 pub use csv_lifecycle::{CsvLoggingCoordinator, CsvLoggingLifecycleState};
 pub use csv_writer::{
     CSV_HEADER, CSV_SCHEMA_VERSION, CsvWriterActor, CsvWriterHandle, CsvWriterStart,

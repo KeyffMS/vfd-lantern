@@ -22,8 +22,8 @@ use std::{
 use anyhow::Result;
 use clap::Parser;
 use lantern_app::{
-    ApplicationAction, ApplicationRuntime, ApplicationState, CliSettingsOverrides, ColorMode,
-    ConnectionAction, ParameterAction, PortDiscoveryPort, PortEvent, PortEventReceiver,
+    ApplicationAction, ApplicationRuntime, ApplicationState, BackupAction, CliSettingsOverrides,
+    ColorMode, ConnectionAction, ParameterAction, PortDiscoveryPort, PortEvent, PortEventReceiver,
     ProfileRegistry, SessionInput, SessionPhaseView, SettingsLoader, ValidatedSettings,
 };
 use lantern_storage::{
@@ -150,12 +150,13 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
     install_terminal_panic_hook(Arc::clone(&terminal_guard), paths.panic_directory.clone());
 
     let (action_tx, mut action_rx) = mpsc::unbounded_channel();
-    let state = ApplicationState::with_registry_and_suggestions(
+    let mut state = ApplicationState::with_registry_and_suggestions(
         Arc::clone(&registry),
         settings.process_writes_enabled,
         settings.suggested_device.clone(),
         settings.suggested_slave,
     );
+    state.set_build_id(profile_commands::embedded_manifest()?.build_id);
     let runner = TuiEffectRunner::new(
         Arc::clone(&terminal_guard),
         action_tx,
@@ -164,6 +165,7 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
         TuiRuntimePaths::new(
             paths.diagnostics_directory.clone(),
             paths.fault_report_directory.clone(),
+            paths.backup_directory.clone(),
             paths.csv_directory.clone(),
             paths.session_runtime_directory.clone(),
             paths.audit_directory.clone(),
@@ -180,6 +182,9 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
     application.dispatch(ApplicationAction::Connection(
         ConnectionAction::RefreshPorts,
     ))?;
+    application.dispatch(ApplicationAction::Backup(Box::new(
+        BackupAction::RefreshCatalog,
+    )))?;
     terminal.draw(&application.state().view(), &ui)?;
 
     let frame_interval = Duration::from_millis(1_000 / u64::from(settings.render_fps));
