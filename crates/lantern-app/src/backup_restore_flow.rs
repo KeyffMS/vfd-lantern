@@ -153,6 +153,11 @@ impl BackupRestoreState {
         self.error = None;
     }
 
+    pub(crate) fn fail(&mut self, message: impl Into<String>) {
+        self.status = None;
+        self.error = Some(message.into());
+    }
+
     pub(crate) fn begin_capture(&mut self) {
         self.status = Some("capturing complete backup through guarded read path".to_owned());
         self.error = None;
@@ -167,15 +172,10 @@ impl BackupRestoreState {
                 self.last_capture_path = Some(result.path);
                 self.diff.clear();
                 self.prepared = None;
-                self.status = Some(format!(
-                    "backup {id} captured; complete={complete}"
-                ));
+                self.status = Some(format!("backup {id} captured; complete={complete}"));
                 self.error = None;
             }
-            Err(error) => {
-                self.status = None;
-                self.error = Some(error);
-            }
+            Err(error) => self.fail(error),
         }
     }
 
@@ -193,15 +193,12 @@ impl BackupRestoreState {
                 let id = backup.backup_id.get();
                 let complete = backup.is_complete();
                 self.source = Some(backup);
-                self.status = Some(format!(
-                    "source backup {id} loaded; complete={complete}"
-                ));
+                self.status = Some(format!("source backup {id} loaded; complete={complete}"));
                 self.error = None;
             }
             Err(error) => {
                 self.source = None;
-                self.status = None;
-                self.error = Some(error);
+                self.fail(error);
             }
         }
     }
@@ -237,10 +234,7 @@ impl BackupRestoreState {
                 ));
                 self.error = None;
             }
-            Err(error) => {
-                self.status = None;
-                self.error = Some(error);
-            }
+            Err(error) => self.fail(error),
         }
     }
 
@@ -267,10 +261,7 @@ impl BackupRestoreState {
                 ));
                 self.error = None;
             }
-            Err(error) => {
-                self.status = None;
-                self.error = Some(error);
-            }
+            Err(error) => self.fail(error),
         }
     }
 
