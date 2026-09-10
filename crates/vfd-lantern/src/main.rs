@@ -70,8 +70,6 @@ async fn main() -> Result<()> {
         application_log.as_deref(),
     )?;
     let paths = AppPaths::resolve(&settings.paths)?;
-    // Diagnostic logging is independent from the durable audit path; changing VFD_LANTERN_LOG
-    // can only change this subscriber filter and can never disable AuditPort persistence.
     let _diagnostic_logging =
         match install_diagnostic_logging(&paths.log_directory, settings.log_level) {
             Ok(logging) => Some(logging),
@@ -164,6 +162,7 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
         TuiRuntimePaths::new(
             paths.diagnostics_directory.clone(),
             paths.fault_report_directory.clone(),
+            paths.backup_directory.clone(),
             paths.csv_directory.clone(),
             paths.session_runtime_directory.clone(),
             paths.audit_directory.clone(),
@@ -175,8 +174,6 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
     let mut ui = UiState::default();
     terminal.initialize_viewport(&mut ui)?;
 
-    // Passive discovery only. Failure is represented in the connection view and never blocks
-    // a user-provided Manual path.
     application.dispatch(ApplicationAction::Connection(
         ConnectionAction::RefreshPorts,
     ))?;
