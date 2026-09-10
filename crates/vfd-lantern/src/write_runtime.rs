@@ -271,7 +271,7 @@ impl ProductionWriteRuntime {
                     }
                     .await;
                     let _ = sender.send(ApplicationAction::BackupRestore(
-                        BackupRestoreAction::RestorePrepared(result),
+                        BackupRestoreAction::RestorePrepared(Box::new(result)),
                     ));
                 });
                 Ok(())
@@ -292,7 +292,7 @@ impl ProductionWriteRuntime {
                         })?;
                         let step_count = plan.steps().len();
                         let mut permit = coordinator
-                            .begin_restore(plan, confirmation)
+                            .begin_restore(*plan, confirmation)
                             .await
                             .map_err(|error| error.to_string())?;
                         for index in 0..step_count {

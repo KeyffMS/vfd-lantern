@@ -417,7 +417,7 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
     }
 }
 
-fn map_backup_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<MappedAction> {
+fn map_backup_key(_ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<MappedAction> {
     match key.code {
         KeyCode::Char('b') => Some(backup_action(BackupRestoreAction::Capture)),
         KeyCode::Char('l') => Some(MappedAction::Ui(UiAction::BeginBackupSourcePath(

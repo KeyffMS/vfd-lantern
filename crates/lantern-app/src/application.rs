@@ -370,7 +370,7 @@ impl ApplicationState {
                 )]
             }
             BackupRestoreAction::RestorePrepared(result) => {
-                self.backup_restore.restore_prepared(result);
+                self.backup_restore.restore_prepared(*result);
                 Vec::new()
             }
             BackupRestoreAction::ConfirmRestore { operator_text } => {
@@ -398,7 +398,7 @@ impl ApplicationState {
                 self.backup_restore.begin_execute();
                 vec![ApplicationEffect::BackupRestore(
                     BackupRestoreEffect::ExecuteRestore {
-                        plan,
+                        plan: Box::new(plan),
                         confirmation,
                         snapshot,
                     },

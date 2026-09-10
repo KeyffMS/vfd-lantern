@@ -286,7 +286,7 @@ pub enum BackupRestoreAction {
     LoadSource(PathBuf),
     SourceLoaded(Result<BackupSnapshot, String>),
     PrepareRestore,
-    RestorePrepared(Result<PreparedRestoreResult, String>),
+    RestorePrepared(Box<Result<PreparedRestoreResult, String>>),
     ConfirmRestore { operator_text: String },
     ClearPrepared,
     RestoreFinished(Result<RestoreExecutionSummary, String>),
@@ -305,7 +305,7 @@ pub enum BackupRestoreEffect {
         request: Box<BackupCaptureRequest>,
     },
     ExecuteRestore {
-        plan: ApprovedRestorePlan,
+        plan: Box<ApprovedRestorePlan>,
         confirmation: RestoreConfirmation,
         snapshot: WriteSessionSnapshot,
     },
