@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod backup_render;
 mod fault_keymap;
 mod fault_render;
 mod fault_state;
@@ -37,9 +38,12 @@ pub use ui_state::*;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout},
+    text::Text,
+    widgets::{Block, Paragraph, Wrap},
 };
 
 use crate::{
+    backup_render::backup_lines,
     screens::render_screen,
     widgets::{render_footer, render_header, render_modal, render_navigation, render_too_small},
 };
@@ -65,7 +69,17 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState, theme
 
     render_header(frame, header, view, theme);
     render_navigation(frame, navigation, ui, theme);
-    render_screen(frame, content, view, ui, theme);
+    if ui.screen == Screen::Backup {
+        let scroll = u16::try_from(ui.scroll_offset).unwrap_or(u16::MAX);
+        let paragraph = Paragraph::new(Text::from(backup_lines(view, ui)))
+            .block(Block::bordered().title(format!(" {} ", ui.screen.title())))
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0))
+            .style(theme.muted());
+        frame.render_widget(paragraph, content);
+    } else {
+        render_screen(frame, content, view, ui, theme);
+    }
     render_footer(frame, footer, theme);
 
     if let Some(modal) = &ui.modal {
@@ -78,7 +92,7 @@ mod tests {
     use lantern_app::ApplicationView;
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
-    use super::{MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH, Theme, UiState, render};
+    use super::{MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH, Screen, Theme, UiState, render};
 
     fn buffer_text(buffer: &Buffer) -> String {
         let mut output = String::new();
@@ -118,6 +132,24 @@ mod tests {
         help=true
         preconnect_no_open=true
         "###);
+    }
+
+    #[test]
+    fn backup_screen_is_not_a_placeholder() {
+        let backend = TestBackend::new(120, 32);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let view = ApplicationView::default();
+        let ui = UiState {
+            screen: Screen::Backup,
+            ..UiState::default()
+        };
+        terminal
+            .draw(|frame| render(frame, &view, &ui, Theme::new(false)))
+            .expect("draw");
+        let text = buffer_text(terminal.backend().buffer());
+        assert!(text.contains("capture complete backup"));
+        assert!(text.contains("guarded WriteCoordinator"));
+        assert!(!text.contains("presentation boundary is ready"));
     }
 
     #[test]

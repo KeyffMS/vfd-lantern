@@ -6,8 +6,8 @@ use std::{
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use lantern_app::{
-    ApplicationAction, ApplicationView, ConnectionAction, ConnectionStep, CsvLoggingStateView,
-    MonitoringAction, ParameterAction, ScopePanel, SessionInput,
+    ApplicationAction, ApplicationView, BackupRestoreAction, ConnectionAction, ConnectionStep,
+    CsvLoggingStateView, MonitoringAction, ParameterAction, ScopePanel, SessionInput,
 };
 
 use crate::{
@@ -34,7 +34,7 @@ pub struct KeyBinding {
     pub description: &'static str,
 }
 
-pub const HELP_BINDINGS: [KeyBinding; 47] = [
+pub const HELP_BINDINGS: [KeyBinding; 51] = [
     KeyBinding {
         key: "1..9",
         description: "select top-level screen",
@@ -162,6 +162,22 @@ pub const HELP_BINDINGS: [KeyBinding; 47] = [
     KeyBinding {
         key: "Parameters c",
         description: "cancel staged/prepared guarded write",
+    },
+    KeyBinding {
+        key: "Backup b",
+        description: "capture a complete profile-declared backup",
+    },
+    KeyBinding {
+        key: "Backup l",
+        description: "load and validate a source backup path",
+    },
+    KeyBinding {
+        key: "Backup p",
+        description: "fresh pre-backup, semantic diff, prepare restore",
+    },
+    KeyBinding {
+        key: "Backup r",
+        description: "confirm and execute prepared guarded restore",
     },
     KeyBinding {
         key: "Faults j/k",
@@ -318,6 +334,32 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
                 KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
                 _ => None,
             },
+            ConnectionEdit::BackupSourcePath => match key.code {
+                KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
+                KeyCode::Enter => Some(MappedAction::Combined {
+                    ui: UiAction::CancelEdit,
+                    application: Box::new(ApplicationAction::BackupRestore(
+                        BackupRestoreAction::LoadSource(PathBuf::from(ui.form.value())),
+                    )),
+                }),
+                KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
+                KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
+                _ => None,
+            },
+            ConnectionEdit::RestoreConfirmation => match key.code {
+                KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
+                KeyCode::Enter => Some(MappedAction::Combined {
+                    ui: UiAction::CancelEdit,
+                    application: Box::new(ApplicationAction::BackupRestore(
+                        BackupRestoreAction::ConfirmRestore {
+                            operator_text: ui.form.value().to_owned(),
+                        },
+                    )),
+                }),
+                KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
+                KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
+                _ => None,
+            },
         };
     }
 
@@ -326,27 +368,28 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
     {
         return Some(action);
     }
-
     if ui.screen == Screen::Scope
         && let Some(action) = map_scope_key(ui, view, key)
     {
         return Some(action);
     }
-
     if ui.screen == Screen::Logs
         && let Some(action) = map_logs_key(ui, view, key)
     {
         return Some(action);
     }
-
     if ui.screen == Screen::Faults
         && let Some(action) = map_fault_key(ui, view, key)
     {
         return Some(action);
     }
-
     if ui.screen == Screen::Parameters
         && let Some(action) = map_parameter_key(ui, view, key)
+    {
+        return Some(action);
+    }
+    if ui.screen == Screen::Backup
+        && let Some(action) = map_backup_key(ui, view, key)
     {
         return Some(action);
     }
@@ -370,6 +413,30 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
             .and_then(|index| Screen::ALL.get(index).copied())
             .map(UiAction::SelectScreen)
             .map(MappedAction::Ui),
+        _ => None,
+    }
+}
+
+fn map_backup_key(_ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<MappedAction> {
+    match key.code {
+        KeyCode::Char('b') => Some(backup_action(BackupRestoreAction::Capture)),
+        KeyCode::Char('l') => Some(MappedAction::Ui(UiAction::BeginBackupSourcePath(
+            view.backup_restore()
+                .source_path
+                .clone()
+                .unwrap_or_default(),
+        ))),
+        KeyCode::Char('p') => Some(backup_action(BackupRestoreAction::PrepareRestore)),
+        KeyCode::Char('r') if view.backup_restore().prepared_confirmation.is_some() => {
+            Some(MappedAction::Ui(UiAction::BeginRestoreConfirmation))
+        }
+        KeyCode::Char('c') => Some(backup_action(BackupRestoreAction::ClearPrepared)),
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::PageUp => {
+            Some(MappedAction::Ui(UiAction::ScrollUp))
+        }
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::PageDown => {
+            Some(MappedAction::Ui(UiAction::ScrollDown))
+        }
         _ => None,
     }
 }
@@ -575,6 +642,10 @@ fn monitoring_action(action: MonitoringAction) -> MappedAction {
     MappedAction::Application(Box::new(ApplicationAction::Monitoring(action)))
 }
 
+fn backup_action(action: BackupRestoreAction) -> MappedAction {
+    MappedAction::Application(Box::new(ApplicationAction::BackupRestore(action)))
+}
+
 fn shutdown_action() -> MappedAction {
     MappedAction::Application(Box::new(ApplicationAction::Session(SessionInput::Shutdown)))
 }
@@ -608,7 +679,6 @@ mod tests {
         let view = ApplicationView::default();
         let quit = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
         assert!(map_key(&ui, &view, quit).is_none());
-
         let close = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
         assert!(matches!(
             map_key(&ui, &view, close),
@@ -657,6 +727,35 @@ mod tests {
             map_key(&ui, &view, q),
             Some(MappedAction::Ui(UiAction::InputChar('q')))
         ));
+    }
+
+    #[test]
+    fn backup_source_path_mode_treats_q_as_path_text() {
+        let ui = UiState {
+            screen: Screen::Backup,
+            connection_edit: Some(ConnectionEdit::BackupSourcePath),
+            ..UiState::default()
+        };
+        let view = ApplicationView::default();
+        let q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        assert!(matches!(
+            map_key(&ui, &view, q),
+            Some(MappedAction::Ui(UiAction::InputChar('q')))
+        ));
+    }
+
+    #[test]
+    fn backup_capture_crosses_application_boundary() {
+        let ui = UiState {
+            screen: Screen::Backup,
+            ..UiState::default()
+        };
+        let action = map_key(
+            &ui,
+            &ApplicationView::default(),
+            KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+        );
+        assert!(matches!(action, Some(MappedAction::Application(_))));
     }
 
     #[test]
@@ -714,12 +813,10 @@ mod tests {
 
 #[cfg(test)]
 mod csv_logging_keymap_tests {
+    use super::{MappedAction, map_key};
+    use crate::{Screen, UiState};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use lantern_app::ApplicationView;
-
-    use crate::{Screen, UiState};
-
-    use super::{MappedAction, map_key};
 
     #[test]
     fn logs_start_stop_key_crosses_the_application_boundary() {

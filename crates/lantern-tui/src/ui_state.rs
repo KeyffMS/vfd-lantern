@@ -73,6 +73,8 @@ pub enum ConnectionEdit {
     ParameterSearch,
     WriteArming,
     WriteConfirmation,
+    BackupSourcePath,
+    RestoreConfirmation,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -158,6 +160,8 @@ pub enum UiAction {
     ClearParameterSearch,
     BeginWriteArming,
     BeginWriteConfirmation,
+    BeginBackupSourcePath(String),
+    BeginRestoreConfirmation,
     SetParameterGroup(Option<String>),
     SetParameterAccess(Option<ParameterAccess>),
     SetParameterQuality(Option<TelemetryQuality>),
@@ -339,6 +343,18 @@ impl UiState {
             UiAction::BeginWriteConfirmation => {
                 self.form.clear();
                 self.connection_edit = Some(ConnectionEdit::WriteConfirmation);
+                self.parameters.editor = None;
+                self.focus = Focus::Content;
+            }
+            UiAction::BeginBackupSourcePath(initial) => {
+                self.form.replace(initial);
+                self.connection_edit = Some(ConnectionEdit::BackupSourcePath);
+                self.parameters.editor = None;
+                self.focus = Focus::Content;
+            }
+            UiAction::BeginRestoreConfirmation => {
+                self.form.clear();
+                self.connection_edit = Some(ConnectionEdit::RestoreConfirmation);
                 self.parameters.editor = None;
                 self.focus = Focus::Content;
             }
@@ -689,6 +705,22 @@ mod tests {
         assert_eq!(state.form.value(), "/dev/ttyUSB0");
         state.apply(UiAction::CancelEdit);
         assert!(state.connection_edit.is_none());
+    }
+
+    #[test]
+    fn backup_and_restore_edits_are_presentation_only() {
+        let mut state = UiState::default();
+        state.apply(UiAction::BeginBackupSourcePath("/data/backup".to_owned()));
+        assert_eq!(
+            state.connection_edit,
+            Some(ConnectionEdit::BackupSourcePath)
+        );
+        state.apply(UiAction::CancelEdit);
+        state.apply(UiAction::BeginRestoreConfirmation);
+        assert_eq!(
+            state.connection_edit,
+            Some(ConnectionEdit::RestoreConfirmation)
+        );
     }
 
     #[test]

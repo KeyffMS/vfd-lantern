@@ -5,15 +5,16 @@ use lantern_profile::ValidatedDeviceProfile;
 use thiserror::Error;
 
 use crate::{
-    AuditHealth, Authorization, BusError, ConnectionAction, ConnectionAttemptKind,
+    AuditHealth, Authorization, BackupCaptureRequest, BackupRestoreAction, BackupRestoreEffect,
+    BackupRestoreState, BackupRestoreView, BusError, ConnectionAction, ConnectionAttemptKind,
     ConnectionEffect, ConnectionFailure, ConnectionStep, ConnectionWizardState,
     ConnectionWizardView, Connectivity, CsvLoggingFaultSummary, CsvLoggingRuntimeStatus,
     CsvLoggingStartContext, CsvLoggingStateView, FaultAction, FaultEffect, FaultIdentityContext,
     FaultTimelineView, FaultTracker, LoggingId, MAX_PARAMETER_BROWSER_VISIBLE, MonitoringAction,
     MonitoringEffect, MonitoringRuntimeSnapshot, MonitoringView, OperationState, ParameterAction,
     ParameterBrowserView, ParameterDescriptorView, ParameterIntentContext,
-    ParameterWritePresentation, PreparedWritePlan, ProfileRegistry, ScopeSelection,
-    SerialConnectError, SessionEffect, SessionFault, SessionInput, SessionState,
+    ParameterWritePresentation, PreparedWritePlan, ProfileRegistry, RestoreConfirmation,
+    ScopeSelection, SerialConnectError, SessionEffect, SessionFault, SessionInput, SessionState,
     SessionStateMachine, StagedWriteIntent, WriteConfirmation, WriteConfirmationModel, WriteEffect,
     WriteSessionSnapshot, default_dashboard_parameters, identification_error_attempt,
     identification_report_export, parameter_catalog, prepare_parameter_intent,
@@ -86,6 +87,7 @@ pub struct ApplicationState {
     monitoring: ApplicationMonitoringState,
     parameters: ApplicationParameterState,
     faults: FaultTracker,
+    backup_restore: BackupRestoreState,
     write_guard_revision: u64,
 }
 
@@ -99,6 +101,7 @@ impl Default for ApplicationState {
             monitoring: ApplicationMonitoringState::default(),
             parameters: ApplicationParameterState::default(),
             faults: FaultTracker::default(),
+            backup_restore: BackupRestoreState::default(),
             write_guard_revision: 0,
         }
     }
@@ -125,6 +128,7 @@ impl ApplicationState {
             monitoring: ApplicationMonitoringState::default(),
             parameters: ApplicationParameterState::default(),
             faults: FaultTracker::default(),
+            backup_restore: BackupRestoreState::default(),
             write_guard_revision: 0,
         }
     }
@@ -190,6 +194,7 @@ impl ApplicationState {
             monitoring,
             parameters,
             faults: self.faults.view(),
+            backup_restore: self.backup_restore.view(),
         }
     }
 
@@ -222,6 +227,23 @@ impl ApplicationState {
         })
     }
 
+    fn backup_capture_request(&self) -> Option<BackupCaptureRequest> {
+        let snapshot = self.write_session_snapshot()?;
+        let SessionState::Active(active) = self.session.state() else {
+            return None;
+        };
+        let profile_id = self.active_profile.as_ref()?;
+        let entry = self.registry.get(profile_id)?;
+        let link = self.connection.link?;
+        Some(BackupCaptureRequest {
+            snapshot,
+            profile_origin: format!("{:?}", entry.origin()),
+            adapter: port_label(&active.port_identity),
+            link_settings: format!("{link:?}"),
+            drive_state: DriveState::Unknown,
+        })
+    }
+
     fn push_write_session_sync(&self, effects: &mut Vec<ApplicationEffect>) {
         if let Some(snapshot) = self.write_session_snapshot() {
             effects.push(ApplicationEffect::Write(WriteEffect::SyncSession(snapshot)));
@@ -242,6 +264,7 @@ impl ApplicationState {
                     self.monitoring = ApplicationMonitoringState::default();
                     self.parameters = ApplicationParameterState::default();
                     self.faults = FaultTracker::default();
+                    self.backup_restore.clear_session();
                 }
                 self.registry = registry;
                 Vec::new()
@@ -259,6 +282,7 @@ impl ApplicationState {
             ApplicationAction::Monitoring(action) => self.reduce_monitoring(action),
             ApplicationAction::Parameters(action) => self.reduce_parameters(action),
             ApplicationAction::Faults(action) => self.reduce_faults(action),
+            ApplicationAction::BackupRestore(action) => self.reduce_backup_restore(action),
             ApplicationAction::Session(input) => {
                 self.write_guard_revision = self.write_guard_revision.saturating_add(1);
                 let previous_session_id = self.session.session_id();
@@ -278,9 +302,115 @@ impl ApplicationState {
                     self.monitoring = ApplicationMonitoringState::default();
                     self.parameters = ApplicationParameterState::default();
                     self.faults = FaultTracker::default();
+                    self.backup_restore.clear_session();
                 }
                 self.push_write_session_sync(&mut translated);
                 translated
+            }
+        }
+    }
+
+    fn reduce_backup_restore(&mut self, action: BackupRestoreAction) -> Vec<ApplicationEffect> {
+        match action {
+            BackupRestoreAction::Capture => {
+                let Some(request) = self.backup_capture_request() else {
+                    self.backup_restore.fail(
+                        "backup capture requires an active Verified connected session and profile",
+                    );
+                    return Vec::new();
+                };
+                self.backup_restore.begin_capture();
+                vec![ApplicationEffect::BackupRestore(
+                    BackupRestoreEffect::Capture {
+                        request: Box::new(request),
+                    },
+                )]
+            }
+            BackupRestoreAction::CaptureFinished(result) => {
+                self.backup_restore.capture_finished(result);
+                Vec::new()
+            }
+            BackupRestoreAction::LoadSource(path) => {
+                if path.as_os_str().is_empty() {
+                    self.backup_restore
+                        .fail("source backup path must not be empty");
+                    return Vec::new();
+                }
+                self.backup_restore.begin_load(path.clone());
+                vec![ApplicationEffect::BackupRestore(
+                    BackupRestoreEffect::LoadSource { path },
+                )]
+            }
+            BackupRestoreAction::SourceLoaded(result) => {
+                self.backup_restore.source_loaded(result);
+                Vec::new()
+            }
+            BackupRestoreAction::PrepareRestore => {
+                let Some(source) = self.backup_restore.source().cloned() else {
+                    self.backup_restore
+                        .fail("load a complete source backup before preparing restore");
+                    return Vec::new();
+                };
+                if !source.is_complete() {
+                    self.backup_restore
+                        .fail("incomplete source backup cannot be used for restore");
+                    return Vec::new();
+                }
+                let Some(request) = self.backup_capture_request() else {
+                    self.backup_restore
+                        .fail("restore preparation requires an active Verified connected session");
+                    return Vec::new();
+                };
+                self.backup_restore.begin_prepare_restore();
+                vec![ApplicationEffect::BackupRestore(
+                    BackupRestoreEffect::PrepareRestore {
+                        source: Box::new(source),
+                        request: Box::new(request),
+                    },
+                )]
+            }
+            BackupRestoreAction::RestorePrepared(result) => {
+                self.backup_restore.restore_prepared(*result);
+                Vec::new()
+            }
+            BackupRestoreAction::ConfirmRestore { operator_text } => {
+                let Some(plan) = self.backup_restore.prepared().cloned() else {
+                    self.backup_restore
+                        .fail("there is no prepared restore plan");
+                    return Vec::new();
+                };
+                if operator_text != plan.operator_confirmation_text() {
+                    self.backup_restore.confirmation_mismatch();
+                    return Vec::new();
+                }
+                let Some(snapshot) = self.write_session_snapshot() else {
+                    self.backup_restore
+                        .fail("restore confirmation requires the same active Verified session");
+                    return Vec::new();
+                };
+                let plan = self
+                    .backup_restore
+                    .take_prepared()
+                    .expect("prepared plan was checked above");
+                let confirmation = RestoreConfirmation::Confirm {
+                    challenge: plan.challenge().to_owned(),
+                };
+                self.backup_restore.begin_execute();
+                vec![ApplicationEffect::BackupRestore(
+                    BackupRestoreEffect::ExecuteRestore {
+                        plan: Box::new(plan),
+                        confirmation,
+                        snapshot,
+                    },
+                )]
+            }
+            BackupRestoreAction::ClearPrepared => {
+                self.backup_restore.clear_prepared();
+                Vec::new()
+            }
+            BackupRestoreAction::RestoreFinished(result) => {
+                self.backup_restore.restore_finished(result);
+                Vec::new()
             }
         }
     }
@@ -374,6 +504,7 @@ impl ApplicationState {
             }
         }
     }
+
     fn reduce_parameters(&mut self, action: ParameterAction) -> Vec<ApplicationEffect> {
         let Some(profile) = self.selected_profile() else {
             self.parameters.error =
@@ -403,7 +534,6 @@ impl ApplicationState {
                     }
                 }
                 if self.parameters.visible == visible {
-                    // Repeated presentation sync must preserve an operator-visible refusal.
                     return Vec::new();
                 }
                 self.parameters.visible = visible.clone();
@@ -854,6 +984,7 @@ impl ApplicationState {
                             self.connection.step = ConnectionStep::Report;
                             self.connection.failure =
                                 Some(ConnectionFailure::RemovedDuringIdentification);
+                            self.backup_restore.clear_session();
                             return self.translate_session_effects(effects);
                         }
                         Vec::new()
@@ -862,6 +993,7 @@ impl ApplicationState {
                         let effects = self.session.transition(SessionInput::PortRemoved {
                             now: Instant::now(),
                         });
+                        self.backup_restore.clear_session();
                         self.translate_session_effects(effects)
                     }
                     SessionState::Disconnected { .. }
@@ -1028,6 +1160,7 @@ impl ApplicationState {
         self.monitoring = ApplicationMonitoringState::default();
         self.parameters = ApplicationParameterState::default();
         self.faults = FaultTracker::default();
+        self.backup_restore.clear_session();
         let session_effects = self.session.transition(SessionInput::Connect);
         debug_assert_eq!(session_effects, vec![SessionEffect::OpenPort]);
         vec![ApplicationEffect::Connection(effect)]
@@ -1048,6 +1181,7 @@ impl ApplicationState {
             self.monitoring = ApplicationMonitoringState::default();
             self.parameters = ApplicationParameterState::default();
             self.faults = FaultTracker::default();
+            self.backup_restore.clear_session();
         }
         self.translate_session_effects(effects)
     }
@@ -1177,6 +1311,7 @@ impl ApplicationState {
                         self.monitoring = ApplicationMonitoringState::for_profile(&profile);
                         self.parameters = ApplicationParameterState::for_profile(&profile);
                         self.faults = FaultTracker::default();
+                        self.backup_restore.clear_session();
                         translated.push(ApplicationEffect::Monitoring(MonitoringEffect::Start {
                             profile,
                             session_id,
@@ -1198,6 +1333,7 @@ impl ApplicationState {
                     self.monitoring = ApplicationMonitoringState::default();
                     self.parameters = ApplicationParameterState::default();
                     self.faults = FaultTracker::default();
+                    self.backup_restore.clear_session();
                 }
                 translated
             }
@@ -1229,6 +1365,7 @@ impl ApplicationState {
                             "reconnect identity did not match the verified session".to_owned()
                         }),
                     ));
+                    self.backup_restore.clear_session();
                 }
                 translated
             }
@@ -1355,7 +1492,6 @@ pub enum OperationView {
     Restore,
 }
 
-/// Immutable presentation projection of the application-owned session state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionView {
     phase: SessionPhaseView,
@@ -1512,6 +1648,7 @@ pub struct ApplicationView {
     monitoring: MonitoringView,
     parameters: ParameterBrowserView,
     faults: FaultTimelineView,
+    backup_restore: BackupRestoreView,
 }
 
 impl Default for ApplicationView {
@@ -1524,6 +1661,7 @@ impl Default for ApplicationView {
             monitoring: MonitoringView::default(),
             parameters: ParameterBrowserView::default(),
             faults: FaultTimelineView::default(),
+            backup_restore: BackupRestoreView::default(),
         }
     }
 }
@@ -1568,6 +1706,11 @@ impl ApplicationView {
     pub const fn faults(&self) -> &FaultTimelineView {
         &self.faults
     }
+
+    #[must_use]
+    pub const fn backup_restore(&self) -> &BackupRestoreView {
+        &self.backup_restore
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1578,6 +1721,7 @@ pub enum ApplicationAction {
     Monitoring(MonitoringAction),
     Parameters(ParameterAction),
     Faults(FaultAction),
+    BackupRestore(BackupRestoreAction),
     Session(SessionInput),
 }
 
@@ -1586,6 +1730,7 @@ pub enum ApplicationEffect {
     Connection(ConnectionEffect),
     Monitoring(MonitoringEffect),
     Faults(FaultEffect),
+    BackupRestore(BackupRestoreEffect),
     Write(WriteEffect),
     Session(SessionEffect),
 }
@@ -1650,11 +1795,12 @@ mod tests {
     };
 
     use crate::{
-        AdapterIdentity, ApplicationAction, ApplicationEffect, ApplicationState, ConnectionAction,
-        ConnectionEffect, CsvLoggingStateView, EffectRunner, LoggingId, MonitoringEffect,
-        PackagedProfilesManifestV1, PortSnapshot, ProfileRegistry, ProfileSource,
-        ProfileSourceFormat, ProfileSourceTier, SerialPortDescriptor, SessionEffect, SessionInput,
-        SessionPhaseView, VerifiedSessionIdentity,
+        AdapterIdentity, ApplicationAction, ApplicationEffect, ApplicationState,
+        BackupRestoreAction, BackupRestoreEffect, ConnectionAction, ConnectionEffect,
+        CsvLoggingStateView, EffectRunner, LoggingId, MonitoringEffect, PackagedProfilesManifestV1,
+        PortSnapshot, ProfileRegistry, ProfileSource, ProfileSourceFormat, ProfileSourceTier,
+        SerialPortDescriptor, SessionEffect, SessionInput, SessionPhaseView,
+        VerifiedSessionIdentity,
     };
 
     use super::{ApplicationEffectError, ApplicationRuntime, ApplicationView};
@@ -1820,6 +1966,33 @@ mod tests {
     }
 
     #[test]
+    fn backup_restore_refuses_capture_without_verified_session() {
+        let mut state = ApplicationState::default();
+        assert!(
+            state
+                .reduce(ApplicationAction::BackupRestore(
+                    BackupRestoreAction::Capture
+                ))
+                .is_empty()
+        );
+        assert!(state.view().backup_restore().error.is_some());
+    }
+
+    #[test]
+    fn load_source_is_routed_only_as_application_owned_storage_effect() {
+        let mut state = ApplicationState::default();
+        let effects = state.reduce(ApplicationAction::BackupRestore(
+            BackupRestoreAction::LoadSource(PathBuf::from("source.vfdlantern-backup.json")),
+        ));
+        assert!(matches!(
+            effects.as_slice(),
+            [ApplicationEffect::BackupRestore(
+                BackupRestoreEffect::LoadSource { .. }
+            )]
+        ));
+    }
+
+    #[test]
     fn application_view_projects_session_without_exposing_mutable_session_state() {
         let view = ApplicationState::default().view();
         assert_eq!(view.session().phase(), SessionPhaseView::Disconnected);
@@ -1827,6 +2000,7 @@ mod tests {
         assert!(view.session().port().is_none());
         assert!(view.session().profile_hash().is_none());
         assert!(view.monitoring().dashboard.is_empty());
+        assert!(view.backup_restore().prepared_steps.is_empty());
     }
 
     #[test]
@@ -1836,5 +2010,6 @@ mod tests {
         assert!(view.active_profile_id().is_none());
         assert!(view.registry_profile_ids().is_empty());
         assert!(view.monitoring().catalog.is_empty());
+        assert!(view.backup_restore().source_path.is_none());
     }
 }
