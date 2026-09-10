@@ -4,11 +4,7 @@ use lantern_app::{ApplicationAction, ApplicationView, BackupAction};
 use crate::{ConnectionEdit, MappedAction, UiAction, UiState};
 
 #[must_use]
-pub fn map_backup_key(
-    ui: &UiState,
-    view: &ApplicationView,
-    key: KeyEvent,
-) -> Option<MappedAction> {
+pub fn map_backup_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<MappedAction> {
     if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
         return None;
     }
@@ -54,12 +50,8 @@ pub fn map_backup_key(
                     BackupAction::SelectSource(path),
                 )))
             }),
-        KeyCode::Char('j') | KeyCode::Down => {
-            Some(MappedAction::Ui(UiAction::SelectionNext))
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            Some(MappedAction::Ui(UiAction::SelectionPrevious))
-        }
+        KeyCode::Char('j') | KeyCode::Down => Some(MappedAction::Ui(UiAction::SelectionNext)),
+        KeyCode::Char('k') | KeyCode::Up => Some(MappedAction::Ui(UiAction::SelectionPrevious)),
         _ => None,
     }
 }
