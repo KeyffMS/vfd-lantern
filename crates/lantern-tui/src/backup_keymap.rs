@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use lantern_app::{ApplicationAction, ApplicationView, BackupAction};
 
 use crate::{ConnectionEdit, MappedAction, UiAction, UiState};
@@ -6,6 +6,9 @@ use crate::{ConnectionEdit, MappedAction, UiAction, UiState};
 #[must_use]
 pub fn map_backup_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<MappedAction> {
     if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+        return None;
+    }
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return None;
     }
 
