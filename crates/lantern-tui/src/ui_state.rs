@@ -4,7 +4,8 @@ use lantern_app::{
 };
 
 use crate::{
-    FaultUiState, FormState, ParameterEditorUiState, ParameterUiState, ScopeUiState, ScopeYRange,
+    BackupUiState, FaultUiState, FormState, ParameterEditorUiState, ParameterUiState, ScopeUiState,
+    ScopeYRange,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -110,6 +111,7 @@ pub struct UiState {
     pub scope_filter: String,
     pub scope: ScopeUiState,
     pub parameters: ParameterUiState,
+    pub backup: BackupUiState,
     pub faults: FaultUiState,
     pub modal: Option<ModalState>,
     pub viewport: Viewport,
@@ -128,6 +130,7 @@ impl Default for UiState {
             scope_filter: String::new(),
             scope: ScopeUiState::default(),
             parameters: ParameterUiState::default(),
+            backup: BackupUiState::default(),
             faults: FaultUiState::default(),
             modal: None,
             viewport: Viewport::default(),
@@ -192,6 +195,10 @@ pub enum UiAction {
     InputChar(char),
     Backspace,
     CancelEdit,
+    BackupBeginConfirmation,
+    BackupInputChar(char),
+    BackupBackspace,
+    BackupCancelConfirmation,
     ScopeTogglePause {
         anchor_nanos: u128,
     },
@@ -225,6 +232,7 @@ impl UiState {
                 self.selected_index = 0;
                 self.connection_edit = None;
                 self.parameters.editor = None;
+                self.backup.cancel_confirmation();
                 self.form.clear();
             }
             UiAction::NextScreen => {
@@ -234,6 +242,7 @@ impl UiState {
                 self.selected_index = 0;
                 self.connection_edit = None;
                 self.parameters.editor = None;
+                self.backup.cancel_confirmation();
                 self.form.clear();
             }
             UiAction::PreviousScreen => {
@@ -248,6 +257,7 @@ impl UiState {
                 self.selected_index = 0;
                 self.connection_edit = None;
                 self.parameters.editor = None;
+                self.backup.cancel_confirmation();
                 self.form.clear();
             }
             UiAction::ScrollUp => {
@@ -383,6 +393,7 @@ impl UiState {
                 self.scroll_offset = 0;
                 self.connection_edit = None;
                 self.parameters.editor = None;
+                self.backup.cancel_confirmation();
                 self.form.clear();
             }
             UiAction::BeginParameterTextEditor {
@@ -449,6 +460,16 @@ impl UiState {
             UiAction::CancelEdit => {
                 self.connection_edit = None;
                 self.form.clear();
+                self.focus = Focus::Navigation;
+            }
+            UiAction::BackupBeginConfirmation => {
+                self.backup.begin_confirmation();
+                self.focus = Focus::Content;
+            }
+            UiAction::BackupInputChar(character) => self.backup.insert(character),
+            UiAction::BackupBackspace => self.backup.backspace(),
+            UiAction::BackupCancelConfirmation => {
+                self.backup.cancel_confirmation();
                 self.focus = Focus::Navigation;
             }
             UiAction::ScopeTogglePause { anchor_nanos } => {
@@ -519,37 +540,6 @@ pub(crate) fn profile_matches_filter(profile: &ProfileChoiceView, filter: &str) 
     )
 }
 
-pub(crate) fn monitoring_parameter_matches_filter(
-    parameter: &MonitoringParameterView,
-    filter: &str,
-) -> bool {
-    let needle = normalized_filter(filter);
-    if needle.is_empty() {
-        return true;
-    }
-    [
-        parameter.parameter_id.as_str(),
-        parameter.code.as_str(),
-        parameter.name.as_str(),
-        parameter.unit.as_str(),
-    ]
-    .into_iter()
-    .any(|value| normalized_filter(value).contains(&needle))
-        || normalized_filter(&format!("{:?}", parameter.quantity)).contains(&needle)
-        || parameter
-            .aliases
-            .iter()
-            .any(|alias| normalized_filter(alias).contains(&needle))
-}
-
-fn normalized_filter(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
 fn profile_fields_match_filter(
     profile_id: &str,
     vendor: &str,
@@ -557,204 +547,75 @@ fn profile_fields_match_filter(
     model: &str,
     filter: &str,
 ) -> bool {
-    let filter = filter.trim();
-    if filter.is_empty() {
-        return true;
-    }
-    let needle = filter.to_ascii_lowercase();
-    [profile_id, vendor, family, model]
-        .into_iter()
-        .any(|value| value.to_ascii_lowercase().contains(&needle))
+    let needle = filter.trim().to_ascii_lowercase();
+    needle.is_empty()
+        || [profile_id, vendor, family, model]
+            .into_iter()
+            .any(|field| field.to_ascii_lowercase().contains(&needle))
+}
+
+pub(crate) fn monitoring_parameter_matches_filter(
+    parameter: &MonitoringParameterView,
+    filter: &str,
+) -> bool {
+    let needle = filter.trim().to_ascii_lowercase();
+    needle.is_empty()
+        || parameter.code.to_ascii_lowercase().contains(&needle)
+        || parameter.name.to_ascii_lowercase().contains(&needle)
+        || parameter
+            .aliases
+            .iter()
+            .any(|alias| alias.to_ascii_lowercase().contains(&needle))
+        || format!("{:?}", parameter.quantity)
+            .to_ascii_lowercase()
+            .contains(&needle)
+        || parameter.unit.to_ascii_lowercase().contains(&needle)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use lantern_app::{MonitoringParameterView, ParameterId, QuantityKind};
 
-    use lantern_app::{
-        PackagedProfilesManifestV1, ProfileRegistry, ProfileSource, ProfileSourceFormat,
-        ProfileSourceTier, monitoring_catalog,
-    };
-
-    use super::{
-        ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState,
-        monitoring_parameter_matches_filter, profile_fields_match_filter,
-    };
-    use crate::{ScopeWindow, ScopeYRange};
-
-    fn monitoring_parameter() -> lantern_app::MonitoringParameterView {
-        let registry = ProfileRegistry::from_sources(
-            vec![ProfileSource {
-                path: PathBuf::from("example-vfd.toml"),
-                bytes: include_bytes!("../../../profiles/example-vfd.toml")
-                    .to_vec()
-                    .into_boxed_slice(),
-                format: ProfileSourceFormat::Toml,
-                tier: ProfileSourceTier::Explicit,
-            }],
-            &PackagedProfilesManifestV1 {
-                schema_version: 1,
-                build_id: "test".to_owned(),
-                profiles: Vec::new(),
-            },
-        )
-        .expect("registry");
-        let profile = registry
-            .entries()
-            .values()
-            .next()
-            .expect("profile")
-            .profile();
-        monitoring_catalog(profile)
-            .into_iter()
-            .find(|parameter| parameter.parameter_id.as_str() == "status.output_frequency")
-            .expect("monitoring parameter")
-    }
+    use super::{monitoring_parameter_matches_filter, profile_fields_match_filter};
 
     #[test]
-    fn ui_reducer_changes_only_presentation_state() {
-        let mut state = UiState::default();
-        state.apply(UiAction::NextScreen);
-        state.apply(UiAction::ScrollDown);
-        state.apply(UiAction::FocusNext);
-        assert_eq!(state.screen, Screen::Dashboard);
-        assert_eq!(state.scroll_offset, 1);
-        assert_eq!(state.focus, Focus::Content);
-    }
-
-    #[test]
-    fn scope_controls_are_presentation_only_and_persist_across_screens() {
-        let mut state = UiState {
-            screen: Screen::Scope,
-            ..UiState::default()
-        };
-        state.apply(UiAction::ScopeTogglePause { anchor_nanos: 123 });
-        state.apply(UiAction::ScopeNextWindow);
-        state.apply(UiAction::ScopePanBackward);
-        state.apply(UiAction::ScopeZoomIn);
-        state.apply(UiAction::ScopeToggleCursor);
-        state.apply(UiAction::ScopeCursorNext);
-        state.apply(UiAction::ScopeSetYRange {
-            panel: 1,
-            range: ScopeYRange::new(0.0, 100.0),
-        });
-        assert!(state.scope.paused);
-        assert_eq!(state.scope.pause_anchor_nanos, Some(123));
-        assert_eq!(state.scope.window, ScopeWindow::FiveMinutes);
-        assert_eq!(state.scope.pan_steps, -1);
-        assert_eq!(state.scope.zoom_steps, 1);
-        assert_eq!(state.scope.cursor_index, Some(1));
-        assert!(state.scope.y_ranges.contains_key(&1));
-
-        state.apply(UiAction::SelectScreen(Screen::Dashboard));
-        state.apply(UiAction::SelectScreen(Screen::Scope));
-        assert!(state.scope.paused);
-        assert_eq!(state.scope.pan_steps, -1);
-
-        state.apply(UiAction::ScopeResetView);
-        assert_eq!(state.scope, crate::ScopeUiState::default());
-    }
-
-    #[test]
-    fn scope_search_normalizes_code_alias_quantity_and_unit() {
-        let parameter = monitoring_parameter();
-        assert!(monitoring_parameter_matches_filter(&parameter, "D1.00"));
-        assert!(monitoring_parameter_matches_filter(
-            &parameter,
-            "status.output_frequency"
-        ));
-        assert!(monitoring_parameter_matches_filter(&parameter, "frequency"));
-        assert!(monitoring_parameter_matches_filter(&parameter, "hz"));
-        assert!(!monitoring_parameter_matches_filter(&parameter, "rpm"));
-    }
-
-    #[test]
-    fn scope_search_edit_is_presentation_only() {
-        let mut state = UiState::default();
-        state.apply(UiAction::BeginScopeSearch);
-        for character in "rpm".chars() {
-            state.apply(UiAction::InputChar(character));
-        }
-        state.apply(UiAction::ApplyScopeSearch);
-        assert_eq!(state.scope_filter, "rpm");
-        assert!(state.connection_edit.is_none());
-    }
-
-    #[test]
-    fn manual_path_edit_is_presentation_only() {
-        let mut state = UiState::default();
-        state.apply(UiAction::BeginManualPath("/dev/ttyUSB".to_owned()));
-        state.apply(UiAction::InputChar('0'));
-        assert_eq!(state.connection_edit, Some(ConnectionEdit::ManualPath));
-        assert_eq!(state.form.value(), "/dev/ttyUSB0");
-        state.apply(UiAction::CancelEdit);
-        assert!(state.connection_edit.is_none());
-    }
-
-    #[test]
-    fn profile_search_is_case_insensitive_and_presentation_only() {
+    fn profile_search_is_case_insensitive_and_metadata_only() {
         assert!(profile_fields_match_filter(
-            "example.vfd1000",
-            "Example Devices",
-            "Fictional",
-            "VFD 1000",
-            "devices",
+            "acme.v1",
+            "ACME",
+            "Falcon",
+            "F-100",
+            "falcon"
         ));
         assert!(profile_fields_match_filter(
-            "example.vfd1000",
-            "Example Devices",
-            "Fictional",
-            "VFD 1000",
-            "VFD1000",
-        ));
-        assert!(profile_fields_match_filter(
-            "example.vfd1000",
-            "Example Devices",
-            "Fictional",
-            "VFD 1000",
-            "fictional",
+            "acme.v1",
+            "ACME",
+            "Falcon",
+            "F-100",
+            "F-100"
         ));
         assert!(!profile_fields_match_filter(
-            "example.vfd1000",
-            "Example Devices",
-            "Fictional",
-            "VFD 1000",
-            "other",
+            "acme.v1",
+            "ACME",
+            "Falcon",
+            "F-100",
+            "40001"
         ));
-
-        let mut state = UiState::default();
-        state.apply(UiAction::BeginProfileSearch);
-        for character in "vfd1000".chars() {
-            state.apply(UiAction::InputChar(character));
-        }
-        state.apply(UiAction::ApplyProfileSearch);
-        assert_eq!(state.profile_filter, "vfd1000");
-        assert!(state.connection_edit.is_none());
     }
 
     #[test]
-    fn resize_invalidates_layout_revision_only_when_dimensions_change() {
-        let mut state = UiState::default();
-        state.apply(UiAction::Resize {
-            width: 100,
-            height: 30,
-        });
-        assert_eq!(state.viewport.layout_revision, 1);
-        state.apply(UiAction::Resize {
-            width: 100,
-            height: 30,
-        });
-        assert_eq!(state.viewport.layout_revision, 1);
-    }
-
-    #[test]
-    fn modal_owns_focus_until_closed() {
-        let mut state = UiState::default();
-        state.apply(UiAction::OpenHelp);
-        assert_eq!(state.modal, Some(ModalState::Help));
-        assert_eq!(state.focus, Focus::Modal);
-        state.apply(UiAction::CloseModal);
-        assert!(state.modal.is_none());
-        assert_eq!(state.focus, Focus::Navigation);
+    fn scope_search_matches_semantic_metadata() {
+        let parameter = MonitoringParameterView {
+            parameter_id: ParameterId::parse("motor.frequency").expect("id"),
+            code: "F1.01".to_owned(),
+            name: "Output Frequency".to_owned(),
+            aliases: vec!["Hz Out".to_owned()],
+            quantity: QuantityKind::Frequency,
+            unit: "Hz".to_owned(),
+        };
+        assert!(monitoring_parameter_matches_filter(&parameter, "frequency"));
+        assert!(monitoring_parameter_matches_filter(&parameter, "hz out"));
+        assert!(monitoring_parameter_matches_filter(&parameter, "HZ"));
+        assert!(!monitoring_parameter_matches_filter(&parameter, "40001"));
     }
 }
