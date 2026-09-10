@@ -17,8 +17,12 @@ pub fn render_backup_screen(
 ) {
     let backup = view.backup();
     let mut lines = vec![
-        Line::from("b capture | r refresh files | Enter select source | p prepare restore | c confirm | x clear source"),
-        Line::from("Restore remains gated by Verified + trust + Armed + healthy audit + exact confirmation + permit."),
+        Line::from(
+            "b capture | r refresh files | Enter select source | p prepare restore | c confirm | x clear source",
+        ),
+        Line::from(
+            "Restore remains gated by Verified + trust + Armed + healthy audit + exact confirmation + permit.",
+        ),
         Line::from(""),
     ];
 
@@ -89,7 +93,10 @@ pub fn render_backup_screen(
 
     if !backup.diff.is_empty() {
         lines.push(Line::from(""));
-        lines.push(Line::from(format!("Semantic diff ({} entries):", backup.diff.len())));
+        lines.push(Line::from(format!(
+            "Semantic diff ({} entries):",
+            backup.diff.len()
+        )));
         for entry in backup.diff.iter().take(64) {
             lines.push(Line::from(format!(
                 "  {} {:?}",
@@ -124,9 +131,13 @@ pub fn render_backup_screen(
         )));
         if ui.connection_edit == Some(ConnectionEdit::WriteConfirmation) {
             lines.push(Line::from(format!("Confirmation: {}_", ui.form.value())));
-            lines.push(Line::from("Enter submits exact text; Esc cancels without write."));
+            lines.push(Line::from(
+                "Enter submits exact text; Esc cancels without write.",
+            ));
         } else {
-            lines.push(Line::from("Press c to enter the exact confirmation challenge."));
+            lines.push(Line::from(
+                "Press c to enter the exact confirmation challenge.",
+            ));
         }
     }
 
