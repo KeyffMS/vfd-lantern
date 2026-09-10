@@ -37,7 +37,7 @@ pub enum BackupAction {
     },
     ClearSource,
     PrepareRestore,
-    RestorePrepared(Result<PreparedRestoreBundle, String>),
+    RestorePrepared(Box<Result<PreparedRestoreBundle, String>>),
     ConfirmRestore {
         operator_text: String,
     },
@@ -54,7 +54,7 @@ pub enum BackupEffect {
         path: PathBuf,
     },
     PrepareRestore {
-        source: BackupSnapshot,
+        source: Box<BackupSnapshot>,
         context: BackupCaptureContext,
     },
     ExecuteRestore {
