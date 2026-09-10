@@ -239,10 +239,7 @@ impl ProductionWriteRuntime {
         match effect {
             BackupEffect::RefreshCatalog => {
                 let result = backup_catalog(&self.backup_directory);
-                send_backup_action(
-                    &self.action_tx,
-                    BackupAction::CatalogRefreshed(result),
-                )
+                send_backup_action(&self.action_tx, BackupAction::CatalogRefreshed(result))
             }
             BackupEffect::LoadSource { path } => {
                 let sender = self.action_tx.clone();
