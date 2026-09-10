@@ -14,9 +14,11 @@ pub fn map_backup_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Op
             KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
             KeyCode::Enter => Some(MappedAction::Combined {
                 ui: UiAction::CancelEdit,
-                application: Box::new(ApplicationAction::Backup(BackupAction::ConfirmRestore {
-                    operator_text: ui.form.value().to_owned(),
-                })),
+                application: Box::new(ApplicationAction::Backup(Box::new(
+                    BackupAction::ConfirmRestore {
+                        operator_text: ui.form.value().to_owned(),
+                    },
+                ))),
             }),
             KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
             KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
@@ -26,16 +28,16 @@ pub fn map_backup_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Op
 
     match key.code {
         KeyCode::Char('b') => Some(MappedAction::Application(Box::new(
-            ApplicationAction::Backup(BackupAction::Capture),
+            ApplicationAction::Backup(Box::new(BackupAction::Capture)),
         ))),
         KeyCode::Char('r') => Some(MappedAction::Application(Box::new(
-            ApplicationAction::Backup(BackupAction::RefreshCatalog),
+            ApplicationAction::Backup(Box::new(BackupAction::RefreshCatalog)),
         ))),
         KeyCode::Char('x') => Some(MappedAction::Application(Box::new(
-            ApplicationAction::Backup(BackupAction::ClearSource),
+            ApplicationAction::Backup(Box::new(BackupAction::ClearSource)),
         ))),
         KeyCode::Char('p') => Some(MappedAction::Application(Box::new(
-            ApplicationAction::Backup(BackupAction::PrepareRestore),
+            ApplicationAction::Backup(Box::new(BackupAction::PrepareRestore)),
         ))),
         KeyCode::Char('c') if view.backup().prepared_plan.is_some() => {
             Some(MappedAction::Ui(UiAction::BeginWriteConfirmation))
@@ -46,9 +48,9 @@ pub fn map_backup_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Op
             .get(ui.selected_index)
             .cloned()
             .map(|path| {
-                MappedAction::Application(Box::new(ApplicationAction::Backup(
+                MappedAction::Application(Box::new(ApplicationAction::Backup(Box::new(
                     BackupAction::SelectSource(path),
-                )))
+                ))))
             }),
         KeyCode::Char('j') | KeyCode::Down => Some(MappedAction::Ui(UiAction::SelectionNext)),
         KeyCode::Char('k') | KeyCode::Up => Some(MappedAction::Ui(UiAction::SelectionPrevious)),
