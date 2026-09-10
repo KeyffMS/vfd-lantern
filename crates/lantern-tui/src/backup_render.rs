@@ -17,31 +17,49 @@ pub(crate) fn backup_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'st
     lines.push(Line::from(""));
 
     if view.active_session().is_none() {
-        lines.push(Line::from("Verified session required for capture and restore preparation."));
-        lines.push(Line::from("A source backup may still be loaded and validated offline."));
+        lines.push(Line::from(
+            "Verified session required for capture and restore preparation.",
+        ));
+        lines.push(Line::from(
+            "A source backup may still be loaded and validated offline.",
+        ));
     }
 
     if ui.connection_edit == Some(ConnectionEdit::BackupSourcePath) {
-        lines.push(Line::from(format!("Source backup path: {}_", ui.form.value())));
-        lines.push(Line::from("Enter loads and validates; Esc cancels without changing device state."));
+        lines.push(Line::from(format!(
+            "Source backup path: {}_",
+            ui.form.value()
+        )));
+        lines.push(Line::from(
+            "Enter loads and validates; Esc cancels without changing device state.",
+        ));
         lines.push(Line::from(""));
     }
     if ui.connection_edit == Some(ConnectionEdit::RestoreConfirmation) {
-        lines.push(Line::from(format!("Restore confirmation: {}_", ui.form.value())));
-        lines.push(Line::from("Enter submits the exact text; Esc cancels without executing a write."));
+        lines.push(Line::from(format!(
+            "Restore confirmation: {}_",
+            ui.form.value()
+        )));
+        lines.push(Line::from(
+            "Enter submits the exact text; Esc cancels without executing a write.",
+        ));
         lines.push(Line::from(""));
     }
 
     lines.push(Line::from(format!(
         "source={} id={} complete={}",
         state.source_path.as_deref().unwrap_or("—"),
-        state.source_backup_id.map_or_else(|| "—".to_owned(), |id| id.to_string()),
+        state
+            .source_backup_id
+            .map_or_else(|| "—".to_owned(), |id| id.to_string()),
         state.source_complete,
     )));
     lines.push(Line::from(format!(
         "last_capture={} current_id={} complete={}",
         state.last_capture_path.as_deref().unwrap_or("—"),
-        state.current_backup_id.map_or_else(|| "—".to_owned(), |id| id.to_string()),
+        state
+            .current_backup_id
+            .map_or_else(|| "—".to_owned(), |id| id.to_string()),
         state.current_complete,
     )));
 
@@ -62,10 +80,13 @@ pub(crate) fn backup_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'st
         lines.push(Line::from(""));
         lines.push(Line::from(format!(
             "PREPARED RESTORE plan_hash={plan_hash} steps={} skipped={}",
-            state.prepared_steps.len(), state.prepared_skipped
+            state.prepared_steps.len(),
+            state.prepared_skipped
         )));
         if let Some(confirmation) = &state.prepared_confirmation {
-            lines.push(Line::from(format!("Exact confirmation required: {confirmation}")));
+            lines.push(Line::from(format!(
+                "Exact confirmation required: {confirmation}"
+            )));
         }
         for step in &state.prepared_steps {
             lines.push(Line::from(format!(

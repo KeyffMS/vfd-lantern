@@ -320,9 +320,11 @@ impl ApplicationState {
                     return Vec::new();
                 };
                 self.backup_restore.begin_capture();
-                vec![ApplicationEffect::BackupRestore(BackupRestoreEffect::Capture {
-                    request: Box::new(request),
-                })]
+                vec![ApplicationEffect::BackupRestore(
+                    BackupRestoreEffect::Capture {
+                        request: Box::new(request),
+                    },
+                )]
             }
             BackupRestoreAction::CaptureFinished(result) => {
                 self.backup_restore.capture_finished(result);
@@ -330,13 +332,14 @@ impl ApplicationState {
             }
             BackupRestoreAction::LoadSource(path) => {
                 if path.as_os_str().is_empty() {
-                    self.backup_restore.fail("source backup path must not be empty");
+                    self.backup_restore
+                        .fail("source backup path must not be empty");
                     return Vec::new();
                 }
                 self.backup_restore.begin_load(path.clone());
-                vec![ApplicationEffect::BackupRestore(BackupRestoreEffect::LoadSource {
-                    path,
-                })]
+                vec![ApplicationEffect::BackupRestore(
+                    BackupRestoreEffect::LoadSource { path },
+                )]
             }
             BackupRestoreAction::SourceLoaded(result) => {
                 self.backup_restore.source_loaded(result);
@@ -354,9 +357,8 @@ impl ApplicationState {
                     return Vec::new();
                 }
                 let Some(request) = self.backup_capture_request() else {
-                    self.backup_restore.fail(
-                        "restore preparation requires an active Verified connected session",
-                    );
+                    self.backup_restore
+                        .fail("restore preparation requires an active Verified connected session");
                     return Vec::new();
                 };
                 self.backup_restore.begin_prepare_restore();
@@ -373,7 +375,8 @@ impl ApplicationState {
             }
             BackupRestoreAction::ConfirmRestore { operator_text } => {
                 let Some(plan) = self.backup_restore.prepared().cloned() else {
-                    self.backup_restore.fail("there is no prepared restore plan");
+                    self.backup_restore
+                        .fail("there is no prepared restore plan");
                     return Vec::new();
                 };
                 if operator_text != plan.operator_confirmation_text() {
@@ -1792,11 +1795,12 @@ mod tests {
     };
 
     use crate::{
-        AdapterIdentity, ApplicationAction, ApplicationEffect, ApplicationState, BackupRestoreAction,
-        BackupRestoreEffect, ConnectionAction, ConnectionEffect, CsvLoggingStateView, EffectRunner,
-        LoggingId, MonitoringEffect, PackagedProfilesManifestV1, PortSnapshot, ProfileRegistry,
-        ProfileSource, ProfileSourceFormat, ProfileSourceTier, SerialPortDescriptor, SessionEffect,
-        SessionInput, SessionPhaseView, VerifiedSessionIdentity,
+        AdapterIdentity, ApplicationAction, ApplicationEffect, ApplicationState,
+        BackupRestoreAction, BackupRestoreEffect, ConnectionAction, ConnectionEffect,
+        CsvLoggingStateView, EffectRunner, LoggingId, MonitoringEffect, PackagedProfilesManifestV1,
+        PortSnapshot, ProfileRegistry, ProfileSource, ProfileSourceFormat, ProfileSourceTier,
+        SerialPortDescriptor, SessionEffect, SessionInput, SessionPhaseView,
+        VerifiedSessionIdentity,
     };
 
     use super::{ApplicationEffectError, ApplicationRuntime, ApplicationView};
@@ -1966,7 +1970,9 @@ mod tests {
         let mut state = ApplicationState::default();
         assert!(
             state
-                .reduce(ApplicationAction::BackupRestore(BackupRestoreAction::Capture))
+                .reduce(ApplicationAction::BackupRestore(
+                    BackupRestoreAction::Capture
+                ))
                 .is_empty()
         );
         assert!(state.view().backup_restore().error.is_some());
@@ -1980,7 +1986,9 @@ mod tests {
         ));
         assert!(matches!(
             effects.as_slice(),
-            [ApplicationEffect::BackupRestore(BackupRestoreEffect::LoadSource { .. })]
+            [ApplicationEffect::BackupRestore(
+                BackupRestoreEffect::LoadSource { .. }
+            )]
         ));
     }
 

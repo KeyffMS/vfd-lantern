@@ -139,7 +139,10 @@ mod tests {
         let backend = TestBackend::new(120, 32);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         let view = ApplicationView::default();
-        let ui = UiState { screen: Screen::Backup, ..UiState::default() };
+        let ui = UiState {
+            screen: Screen::Backup,
+            ..UiState::default()
+        };
         terminal
             .draw(|frame| render(frame, &view, &ui, Theme::new(false)))
             .expect("draw");

@@ -711,10 +711,16 @@ mod tests {
     fn backup_and_restore_edits_are_presentation_only() {
         let mut state = UiState::default();
         state.apply(UiAction::BeginBackupSourcePath("/data/backup".to_owned()));
-        assert_eq!(state.connection_edit, Some(ConnectionEdit::BackupSourcePath));
+        assert_eq!(
+            state.connection_edit,
+            Some(ConnectionEdit::BackupSourcePath)
+        );
         state.apply(UiAction::CancelEdit);
         state.apply(UiAction::BeginRestoreConfirmation);
-        assert_eq!(state.connection_edit, Some(ConnectionEdit::RestoreConfirmation));
+        assert_eq!(
+            state.connection_edit,
+            Some(ConnectionEdit::RestoreConfirmation)
+        );
     }
 
     #[test]

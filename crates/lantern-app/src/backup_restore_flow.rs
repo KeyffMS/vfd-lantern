@@ -105,13 +105,19 @@ impl BackupRestoreState {
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
             source_backup_id: self.source.as_ref().map(|backup| backup.backup_id.get()),
-            source_complete: self.source.as_ref().is_some_and(BackupSnapshot::is_complete),
+            source_complete: self
+                .source
+                .as_ref()
+                .is_some_and(BackupSnapshot::is_complete),
             last_capture_path: self
                 .last_capture_path
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
             current_backup_id: self.current.as_ref().map(|backup| backup.backup_id.get()),
-            current_complete: self.current.as_ref().is_some_and(BackupSnapshot::is_complete),
+            current_complete: self
+                .current
+                .as_ref()
+                .is_some_and(BackupSnapshot::is_complete),
             diff: (!self.diff.is_empty()).then(|| BackupDiffSummary::from_diff(&self.diff)),
             prepared_plan_hash: self
                 .prepared
