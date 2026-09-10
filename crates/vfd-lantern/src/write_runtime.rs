@@ -64,6 +64,7 @@ impl ProductionWriteRuntime {
         )
     }
 
+    #[cfg(test)]
     fn from_adapters(
         action_tx: mpsc::UnboundedSender<ApplicationAction>,
         audit: Option<Arc<dyn AuditPort>>,
