@@ -9,9 +9,9 @@ use lantern_app::{
     BackupCaptureResult, BackupCoordinator, BackupRestoreAction, BackupRestoreEffect, ClockPort,
     DecisionOutcome, DeviceFingerprint, DeviceWriteOutcome, DriveState, OperationId, ParameterAction,
     PlanId, PreparedRestoreResult, ProfileRegistry, ProfileTrustPort, ReadBusPort,
-    RestoreConfirmation, RestoreExecutionSummary, SessionControlError, SessionControlPort, SessionId,
-    SessionInput, SlaveId, WriteBusPort, WriteCoordinator, WriteCoordinatorConfig, WriteEffect,
-    WriteOutcome, WriteSessionSnapshot, semantic_backup_diff,
+    RestoreExecutionSummary, SessionControlError, SessionControlPort, SessionId, SessionInput,
+    SlaveId, WriteBusPort, WriteCoordinator, WriteCoordinatorConfig, WriteEffect, WriteOutcome,
+    WriteSessionSnapshot, semantic_backup_diff,
 };
 use lantern_storage::{
     BACKUP_SUFFIX, FilesystemAuditPort, RuntimeProfileTrust, read_backup, write_backup,
@@ -46,9 +46,7 @@ impl ProductionWriteRuntime {
         let audit: Option<Arc<dyn AuditPort>> = match FilesystemAuditPort::new(audit_directory) {
             Ok(port) => Some(Arc::new(port)),
             Err(error) => {
-                eprintln!(
-                    "durable audit unavailable; production writes remain fail-closed: {error}"
-                );
+                eprintln!("durable audit unavailable; production writes remain fail-closed: {error}");
                 None
             }
         };
@@ -98,14 +96,13 @@ impl ProductionWriteRuntime {
         };
         let clock: Arc<dyn ClockPort> = self.clock.clone();
         let session: Arc<dyn SessionControlPort> = self.session.clone();
-        let backup = BackupCoordinator::new(
+        match BackupCoordinator::new(
             Arc::clone(&read_bus),
             Arc::clone(&trust),
             Arc::clone(&clock),
             Arc::clone(&session),
             self.config.request_timeout,
-        );
-        match backup {
+        ) {
             Ok(backup) => *self.backup.lock().await = Some(backup),
             Err(error) => {
                 eprintln!("backup coordinator unavailable: {error}");
@@ -128,9 +125,7 @@ impl ProductionWriteRuntime {
         ) {
             Ok(coordinator) => *self.coordinator.lock().await = Some(coordinator),
             Err(error) => {
-                eprintln!(
-                    "guarded write coordinator unavailable; writes remain fail-closed: {error}"
-                );
+                eprintln!("guarded write coordinator unavailable; writes remain fail-closed: {error}");
                 *self.coordinator.lock().await = None;
             }
         }
@@ -152,10 +147,7 @@ impl ProductionWriteRuntime {
                             .prepare_write(intent)
                             .await
                             .map_err(|error| error.to_string()),
-                        None => Err(
-                            "production write capability unavailable: bus/audit/trust composition is incomplete"
-                                .to_owned(),
-                        ),
+                        None => Err("production write capability unavailable: bus/audit/trust composition is incomplete".to_owned()),
                     };
                     let _ = sender.send(ApplicationAction::Parameters(
                         ParameterAction::WritePrepared(Box::new(result)),
@@ -163,11 +155,7 @@ impl ProductionWriteRuntime {
                 });
                 Ok(())
             }
-            WriteEffect::Confirm {
-                plan_id,
-                confirmation,
-                snapshot,
-            } => {
+            WriteEffect::Confirm { plan_id, confirmation, snapshot } => {
                 self.session.sync(snapshot);
                 let coordinator = Arc::clone(&self.coordinator);
                 let sender = self.action_tx.clone();
@@ -178,10 +166,7 @@ impl ProductionWriteRuntime {
                             .await
                             .map(|outcome| format!("write outcome: {outcome:?}"))
                             .map_err(|error| error.to_string()),
-                        None => Err(
-                            "production write capability unavailable: bus/audit/trust composition is incomplete"
-                                .to_owned(),
-                        ),
+                        None => Err("production write capability unavailable: bus/audit/trust composition is incomplete".to_owned()),
                     };
                     let _ = sender.send(ApplicationAction::Parameters(
                         ParameterAction::WriteCompleted(result),
@@ -199,10 +184,7 @@ impl ProductionWriteRuntime {
                             .await
                             .map(|outcome| format!("write outcome: {outcome:?}"))
                             .map_err(|error| error.to_string()),
-                        None => Err(
-                            "production write capability unavailable while cancelling prepared plan"
-                                .to_owned(),
-                        ),
+                        None => Err("production write capability unavailable while cancelling prepared plan".to_owned()),
                     };
                     let _ = sender.send(ApplicationAction::Parameters(
                         ParameterAction::WriteCompleted(result),
@@ -252,10 +234,7 @@ impl ProductionWriteRuntime {
                     let result = async {
                         let current = capture_and_persist(backup, &directory, *request).await?;
                         if !source.is_complete() || !current.snapshot.is_complete() {
-                            return Err(
-                                "restore requires complete source and fresh pre-restore backups"
-                                    .to_owned(),
-                            );
+                            return Err("restore requires complete source and fresh pre-restore backups".to_owned());
                         }
                         let profile = trust
                             .as_ref()
@@ -271,10 +250,7 @@ impl ProductionWriteRuntime {
                             .lock()
                             .await
                             .as_mut()
-                            .ok_or_else(|| {
-                                "guarded restore capability unavailable: bus/audit/trust composition is incomplete"
-                                    .to_owned()
-                            })?
+                            .ok_or_else(|| "guarded restore capability unavailable: bus/audit/trust composition is incomplete".to_owned())?
                             .prepare_restore_plan(source.as_ref(), &current.snapshot)
                             .await
                             .map_err(|error| error.to_string())?;
@@ -292,11 +268,7 @@ impl ProductionWriteRuntime {
                 });
                 Ok(())
             }
-            BackupRestoreEffect::ExecuteRestore {
-                plan,
-                confirmation,
-                snapshot,
-            } => {
+            BackupRestoreEffect::ExecuteRestore { plan, confirmation, snapshot } => {
                 self.session.sync(snapshot);
                 let coordinator = Arc::clone(&self.coordinator);
                 let sender = self.action_tx.clone();
@@ -304,8 +276,7 @@ impl ProductionWriteRuntime {
                     let result = async {
                         let mut guard = coordinator.lock().await;
                         let coordinator = guard.as_mut().ok_or_else(|| {
-                            "guarded restore capability unavailable: bus/audit/trust composition is incomplete"
-                                .to_owned()
+                            "guarded restore capability unavailable: bus/audit/trust composition is incomplete".to_owned()
                         })?;
                         let step_count = plan.steps().len();
                         let mut permit = coordinator
@@ -318,18 +289,14 @@ impl ProductionWriteRuntime {
                                 .await
                                 .map_err(|error| error.to_string())?;
                             if outcome != DeviceWriteOutcome::Verified {
-                                return Err(format!(
-                                    "restore stopped at step {index}: {outcome:?}"
-                                ));
+                                return Err(format!("restore stopped at step {index}: {outcome:?}"));
                             }
                         }
                         coordinator
                             .finish_restore(permit)
                             .await
                             .map_err(|error| error.to_string())?;
-                        Ok(RestoreExecutionSummary {
-                            verified_steps: step_count,
-                        })
+                        Ok(RestoreExecutionSummary { verified_steps: step_count })
                     }
                     .await;
                     let _ = sender.send(ApplicationAction::BackupRestore(
@@ -350,9 +317,7 @@ async fn capture_and_persist(
     let timestamp = OffsetDateTime::now_utc().unix_timestamp_nanos();
     let context = BackupCaptureContext {
         app_version: env!("CARGO_PKG_VERSION").to_owned(),
-        build_id: option_env!("VFD_RELEASE_COMMIT")
-            .unwrap_or("development")
-            .to_owned(),
+        build_id: option_env!("VFD_RELEASE_COMMIT").unwrap_or("development").to_owned(),
         profile_origin: request.profile_origin,
         adapter: request.adapter,
         link_settings: request.link_settings,
@@ -380,17 +345,12 @@ fn persist_backup_unique(
         let name = if suffix == 0 {
             format!("backup-{}{}", snapshot.backup_id.get(), BACKUP_SUFFIX)
         } else {
-            format!(
-                "backup-{}-{}{}",
-                snapshot.backup_id.get(),
-                suffix,
-                BACKUP_SUFFIX
-            )
+            format!("backup-{}-{}{}", snapshot.backup_id.get(), suffix, BACKUP_SUFFIX)
         };
         let path = directory.join(name);
         match write_backup(&path, snapshot) {
             Ok(()) => return Ok(path),
-            Err(error) if path.exists() => continue,
+            Err(_error) if path.exists() => continue,
             Err(error) => return Err(error.to_string()),
         }
     }
@@ -402,17 +362,11 @@ struct RuntimeWriteClock {
 }
 
 impl RuntimeWriteClock {
-    fn new() -> Self {
-        Self {
-            origin: Instant::now(),
-        }
-    }
+    fn new() -> Self { Self { origin: Instant::now() } }
 }
 
 impl ClockPort for RuntimeWriteClock {
-    fn monotonic_ns(&self) -> u128 {
-        self.origin.elapsed().as_nanos()
-    }
+    fn monotonic_ns(&self) -> u128 { self.origin.elapsed().as_nanos() }
 }
 
 #[derive(Clone, Debug)]
@@ -443,9 +397,7 @@ impl RuntimeSessionControl {
 }
 
 impl SessionControlPort for RuntimeSessionControl {
-    fn snapshot(&self) -> WriteSessionSnapshot {
-        lock_snapshot(&self.snapshot).clone()
-    }
+    fn snapshot(&self) -> WriteSessionSnapshot { lock_snapshot(&self.snapshot).clone() }
 
     fn begin_single_write(
         &self,
@@ -453,29 +405,19 @@ impl SessionControlPort for RuntimeSessionControl {
         plan_id: PlanId,
     ) -> Result<(), SessionControlError> {
         let mut snapshot = lock_snapshot(&self.snapshot);
-        if !snapshot.connected
-            || !snapshot.armed
-            || !snapshot.audit_healthy
-            || !snapshot.operation_idle
-        {
+        if !snapshot.connected || !snapshot.armed || !snapshot.audit_healthy || !snapshot.operation_idle {
             return Err(SessionControlError::PreconditionChanged);
         }
         snapshot.operation_idle = false;
         snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
-        if self
-            .action_tx
-            .send(ApplicationAction::Session(SessionInput::WriteConfirmed {
-                operation_id,
-                plan_id,
-            }))
-            .is_err()
-        {
+        if self.action_tx.send(ApplicationAction::Session(SessionInput::WriteConfirmed {
+            operation_id,
+            plan_id,
+        })).is_err() {
             snapshot.operation_idle = true;
             snapshot.armed = false;
             snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
-            return Err(SessionControlError::Other(
-                "application session channel closed".to_owned(),
-            ));
+            return Err(SessionControlError::Other("application session channel closed".to_owned()));
         }
         Ok(())
     }
@@ -485,9 +427,7 @@ impl SessionControlPort for RuntimeSessionControl {
             let mut snapshot = lock_snapshot(&self.snapshot);
             snapshot.operation_idle = true;
             match &outcome {
-                WriteOutcome::Executed(
-                    DeviceWriteOutcome::OutcomeUnknown | DeviceWriteOutcome::TransportLost,
-                ) => snapshot.armed = false,
+                WriteOutcome::Executed(DeviceWriteOutcome::OutcomeUnknown | DeviceWriteOutcome::TransportLost) => snapshot.armed = false,
                 WriteOutcome::Executed(DeviceWriteOutcome::AuditDegraded)
                 | WriteOutcome::NotExecuted(DecisionOutcome::AuditUnavailable) => {
                     snapshot.armed = false;
@@ -497,26 +437,15 @@ impl SessionControlPort for RuntimeSessionControl {
             }
             snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
         }
-        let _ = self
-            .action_tx
-            .send(ApplicationAction::Session(SessionInput::WriteFinished {
-                outcome,
-                now: Instant::now(),
-            }));
+        let _ = self.action_tx.send(ApplicationAction::Session(SessionInput::WriteFinished {
+            outcome,
+            now: Instant::now(),
+        }));
     }
 
-    fn begin_restore(
-        &self,
-        operation_id: OperationId,
-        plan_hash: &str,
-    ) -> Result<(), SessionControlError> {
+    fn begin_restore(&self, operation_id: OperationId, plan_hash: &str) -> Result<(), SessionControlError> {
         let mut snapshot = lock_snapshot(&self.snapshot);
-        if !snapshot.connected
-            || !snapshot.armed
-            || !snapshot.audit_healthy
-            || !snapshot.operation_idle
-            || lock_restore(&self.restore).is_some()
-        {
+        if !snapshot.connected || !snapshot.armed || !snapshot.audit_healthy || !snapshot.operation_idle || lock_restore(&self.restore).is_some() {
             return Err(SessionControlError::PreconditionChanged);
         }
         snapshot.operation_idle = false;
@@ -526,34 +455,24 @@ impl SessionControlPort for RuntimeSessionControl {
             plan_hash: plan_hash.to_owned(),
             next_index: 0,
         });
-        if self
-            .action_tx
-            .send(ApplicationAction::Session(SessionInput::RestoreStarted {
-                operation_id,
-                plan_hash: plan_hash.to_owned(),
-            }))
-            .is_err()
-        {
+        if self.action_tx.send(ApplicationAction::Session(SessionInput::RestoreStarted {
+            operation_id,
+            plan_hash: plan_hash.to_owned(),
+        })).is_err() {
             *lock_restore(&self.restore) = None;
             snapshot.operation_idle = true;
             snapshot.armed = false;
             snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
-            return Err(SessionControlError::Other(
-                "application session channel closed".to_owned(),
-            ));
+            return Err(SessionControlError::Other("application session channel closed".to_owned()));
         }
         Ok(())
     }
 
     fn restore_matches(&self, operation_id: OperationId, plan_hash: &str, next_index: usize) -> bool {
         let snapshot = lock_snapshot(&self.snapshot);
-        if !snapshot.connected || snapshot.operation_idle {
-            return false;
-        }
+        if !snapshot.connected || snapshot.operation_idle { return false; }
         lock_restore(&self.restore).as_ref().is_some_and(|restore| {
-            restore.operation_id == operation_id
-                && restore.plan_hash == plan_hash
-                && restore.next_index == next_index
+            restore.operation_id == operation_id && restore.plan_hash == plan_hash && restore.next_index == next_index
         })
     }
 
@@ -575,55 +494,44 @@ impl SessionControlPort for RuntimeSessionControl {
         }
         active.next_index = next_index;
         drop(restore);
-        lock_snapshot(&self.snapshot).guard_revision = lock_snapshot(&self.snapshot)
-            .guard_revision
-            .saturating_add(1);
+        {
+            let mut snapshot = lock_snapshot(&self.snapshot);
+            snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+        }
         self.action_tx
             .send(ApplicationAction::Session(SessionInput::RestoreAdvanced { next_index }))
             .map_err(|_| SessionControlError::Other("application session channel closed".to_owned()))
     }
 
-    fn finish_restore(
-        &self,
-        operation_id: OperationId,
-        plan_hash: &str,
-    ) -> Result<(), SessionControlError> {
+    fn finish_restore(&self, operation_id: OperationId, plan_hash: &str) -> Result<(), SessionControlError> {
         let restore = lock_restore(&self.restore).take();
-        let Some(active) = restore else {
-            return Err(SessionControlError::PreconditionChanged);
-        };
+        let Some(active) = restore else { return Err(SessionControlError::PreconditionChanged); };
         if active.operation_id != operation_id || active.plan_hash != plan_hash {
             *lock_restore(&self.restore) = Some(active);
             return Err(SessionControlError::PreconditionChanged);
         }
-        let mut snapshot = lock_snapshot(&self.snapshot);
-        snapshot.operation_idle = true;
-        snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
-        drop(snapshot);
+        {
+            let mut snapshot = lock_snapshot(&self.snapshot);
+            snapshot.operation_idle = true;
+            snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+        }
         self.action_tx
             .send(ApplicationAction::Session(SessionInput::RestoreFinished))
             .map_err(|_| SessionControlError::Other("application session channel closed".to_owned()))
     }
 
-    fn abort_restore(
-        &self,
-        operation_id: OperationId,
-        plan_hash: &str,
-    ) -> Result<(), SessionControlError> {
+    fn abort_restore(&self, operation_id: OperationId, plan_hash: &str) -> Result<(), SessionControlError> {
         let restore = lock_restore(&self.restore).take();
-        if restore.as_ref().is_some_and(|active| {
-            active.operation_id != operation_id || active.plan_hash != plan_hash
-        }) {
-            if let Some(active) = restore {
-                *lock_restore(&self.restore) = Some(active);
-            }
+        if restore.as_ref().is_some_and(|active| active.operation_id != operation_id || active.plan_hash != plan_hash) {
+            if let Some(active) = restore { *lock_restore(&self.restore) = Some(active); }
             return Err(SessionControlError::PreconditionChanged);
         }
-        let mut snapshot = lock_snapshot(&self.snapshot);
-        snapshot.operation_idle = true;
-        snapshot.armed = false;
-        snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
-        drop(snapshot);
+        {
+            let mut snapshot = lock_snapshot(&self.snapshot);
+            snapshot.operation_idle = true;
+            snapshot.armed = false;
+            snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+        }
         self.action_tx
             .send(ApplicationAction::Session(SessionInput::RestoreAborted))
             .map_err(|_| SessionControlError::Other("application session channel closed".to_owned()))
@@ -635,9 +543,7 @@ impl SessionControlPort for RuntimeSessionControl {
             snapshot.armed = false;
             snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
         }
-        let _ = self
-            .action_tx
-            .send(ApplicationAction::Session(SessionInput::DisarmWrites));
+        let _ = self.action_tx.send(ApplicationAction::Session(SessionInput::DisarmWrites));
     }
 
     fn degrade_audit_and_disarm(&self) {
@@ -663,24 +569,17 @@ impl SessionControlPort for RuntimeSessionControl {
 }
 
 fn lock_snapshot(snapshot: &Mutex<WriteSessionSnapshot>) -> MutexGuard<'_, WriteSessionSnapshot> {
-    snapshot
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    snapshot.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn lock_restore(
-    restore: &Mutex<Option<RuntimeRestoreState>>,
-) -> MutexGuard<'_, Option<RuntimeRestoreState>> {
-    restore
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+fn lock_restore(restore: &Mutex<Option<RuntimeRestoreState>>) -> MutexGuard<'_, Option<RuntimeRestoreState>> {
+    restore.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn unavailable_snapshot() -> WriteSessionSnapshot {
     WriteSessionSnapshot {
         session_id: SessionId::new(0),
-        fingerprint: DeviceFingerprint::parse("write.unavailable")
-            .expect("static fingerprint is valid"),
+        fingerprint: DeviceFingerprint::parse("write.unavailable").expect("static fingerprint is valid"),
         profile_hash: String::new(),
         connected: false,
         armed: false,
@@ -694,53 +593,34 @@ fn unavailable_snapshot() -> WriteSessionSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
-
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
     use lantern_app::{
-        AuditPort, BusError, BusFuture, PreparedBusWrite, ProfileRegistry, ProfileTrustPort,
-        RawRegisters, ReadBusPort, ReadBusRequest, SessionControlPort, WriteBusPort,
+        ApplicationAction, AuditPort, BusError, BusFuture, PreparedBusWrite, ProfileRegistry,
+        ProfileTrustPort, RawRegisters, ReadBusPort, ReadBusRequest, SessionControlPort,
+        SessionInput, WriteBusPort,
     };
     use lantern_storage::RuntimeProfileTrust;
     use tokio::sync::mpsc;
-
     use super::ProductionWriteRuntime;
 
     #[derive(Default)]
-    struct CountingBus {
-        writes: AtomicUsize,
-    }
-
+    struct CountingBus { writes: AtomicUsize }
     impl ReadBusPort for CountingBus {
         fn read(&self, _request: ReadBusRequest) -> BusFuture<'static, RawRegisters> {
             Box::pin(async { Err(BusError::Shutdown) })
         }
     }
-
     impl WriteBusPort for CountingBus {
         fn execute(&self, _request: PreparedBusWrite) -> BusFuture<'static, ()> {
             self.writes.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok(()) })
         }
     }
-
     struct AvailableAudit;
-
-    impl AuditPort for AvailableAudit {
-        fn is_available(&self) -> bool {
-            true
-        }
-    }
-
+    impl AuditPort for AvailableAudit { fn is_available(&self) -> bool { true } }
     fn trust_adapter() -> Arc<dyn ProfileTrustPort> {
-        Arc::new(RuntimeProfileTrust::new(
-            Arc::new(ProfileRegistry::default()),
-            "unused-test-trust.json".into(),
-        ))
+        Arc::new(RuntimeProfileTrust::new(Arc::new(ProfileRegistry::default()), "unused-test-trust.json".into()))
     }
-
     async fn attach_counting_bus(runtime: &ProductionWriteRuntime) -> Arc<CountingBus> {
         let bus = Arc::new(CountingBus::default());
         let read: Arc<dyn ReadBusPort> = bus.clone();
@@ -774,8 +654,7 @@ mod tests {
     async fn both_required_adapters_mint_coordinator_without_implicit_write() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let audit: Arc<dyn AuditPort> = Arc::new(AvailableAudit);
-        let runtime =
-            ProductionWriteRuntime::from_adapters(tx, Some(audit), Some(trust_adapter()), true);
+        let runtime = ProductionWriteRuntime::from_adapters(tx, Some(audit), Some(trust_adapter()), true);
         let bus = attach_counting_bus(&runtime).await;
         assert!(runtime.coordinator.lock().await.is_some());
         assert!(runtime.backup.lock().await.is_some());
@@ -793,31 +672,13 @@ mod tests {
         snapshot.operation_idle = true;
         runtime.session.sync(snapshot);
         let operation = lantern_app::OperationId::new(7);
-        runtime
-            .session
-            .begin_restore(operation, "plan")
-            .expect("begin restore");
+        runtime.session.begin_restore(operation, "plan").expect("begin restore");
         assert!(runtime.session.restore_matches(operation, "plan", 0));
-        runtime
-            .session
-            .advance_restore(operation, "plan", 1)
-            .expect("advance restore");
+        runtime.session.advance_restore(operation, "plan", 1).expect("advance restore");
         assert!(runtime.session.restore_matches(operation, "plan", 1));
-        runtime
-            .session
-            .finish_restore(operation, "plan")
-            .expect("finish restore");
-        assert!(matches!(
-            rx.try_recv(),
-            Ok(ApplicationAction::Session(SessionInput::RestoreStarted { .. }))
-        ));
-        assert!(matches!(
-            rx.try_recv(),
-            Ok(ApplicationAction::Session(SessionInput::RestoreAdvanced { next_index: 1 }))
-        ));
-        assert!(matches!(
-            rx.try_recv(),
-            Ok(ApplicationAction::Session(SessionInput::RestoreFinished))
-        ));
+        runtime.session.finish_restore(operation, "plan").expect("finish restore");
+        assert!(matches!(rx.try_recv(), Ok(ApplicationAction::Session(SessionInput::RestoreStarted { .. }))));
+        assert!(matches!(rx.try_recv(), Ok(ApplicationAction::Session(SessionInput::RestoreAdvanced { next_index: 1 }))));
+        assert!(matches!(rx.try_recv(), Ok(ApplicationAction::Session(SessionInput::RestoreFinished))));
     }
 }
