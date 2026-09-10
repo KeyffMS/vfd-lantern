@@ -29,6 +29,8 @@ mod telemetry;
 mod write_coordinator;
 mod write_flow;
 
+#[cfg(test)]
+pub use application::*;
 pub use backup::*;
 pub use backup_flow::*;
 pub use bus::*;
@@ -56,6 +58,7 @@ pub use monitoring_projection::*;
 pub use parameters::*;
 pub use poll::*;
 pub use ports::*;
+#[cfg(not(test))]
 pub use product_application::*;
 pub use profile_registry::*;
 pub use restore::*;
