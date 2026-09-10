@@ -182,7 +182,9 @@ async fn run_tui(settings: &ValidatedSettings, paths: &AppPaths) -> Result<()> {
     application.dispatch(ApplicationAction::Connection(
         ConnectionAction::RefreshPorts,
     ))?;
-    application.dispatch(ApplicationAction::Backup(BackupAction::RefreshCatalog))?;
+    application.dispatch(ApplicationAction::Backup(Box::new(
+        BackupAction::RefreshCatalog,
+    )))?;
     terminal.draw(&application.state().view(), &ui)?;
 
     let frame_interval = Duration::from_millis(1_000 / u64::from(settings.render_fps));
