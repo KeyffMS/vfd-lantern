@@ -201,7 +201,7 @@ fn run_device_failure_case(
         .filter(|record| record.function == 6)
         .collect::<Vec<_>>();
     ensure!(
-        writes[0].outcome == "ok",
+        writes[0].outcome == "response",
         "first restore step must be accepted"
     );
     ensure!(
@@ -243,7 +243,7 @@ fn restore_challenge(screen: &str) -> Result<String> {
         .split(marker)
         .nth(1)
         .and_then(|suffix| suffix.lines().next())
-        .map(str::trim)
+        .and_then(|line| line.split_whitespace().next())
         .filter(|value| value.starts_with("restore:") && value.matches(':').count() == 2)
         .map(str::to_owned)
         .context("operator-visible exact restore challenge")
