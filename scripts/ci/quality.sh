@@ -26,6 +26,7 @@ coverage_environment=$(cargo llvm-cov show-env --export-prefix)
 eval "$coverage_environment"
 cargo llvm-cov clean --workspace
 cargo nextest run --workspace --all-features --locked
+sh scripts/ci/check-identity-fault-goldens.sh
 # Under show-env, regular Cargo commands share instrumentation with nextest.
 # The process harness launches the product and simulator as sibling binaries.
 cargo build --workspace --all-features --bins --locked

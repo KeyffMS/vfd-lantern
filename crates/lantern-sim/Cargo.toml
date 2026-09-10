@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+test-support = ["lantern-app/test-support"]
+
 [dependencies]
 lantern-domain.workspace = true
 lantern-profile.workspace = true
