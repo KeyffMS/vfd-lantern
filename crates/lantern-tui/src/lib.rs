@@ -2,6 +2,9 @@
 
 #![forbid(unsafe_code)]
 
+mod backup_keymap;
+mod backup_render;
+mod backup_state;
 mod fault_keymap;
 mod fault_render;
 mod fault_state;
@@ -21,6 +24,7 @@ mod theme;
 mod ui_state;
 mod widgets;
 
+pub use backup_state::*;
 pub use fault_state::*;
 pub use forms::*;
 pub use input::*;
@@ -40,6 +44,7 @@ use ratatui::{
 };
 
 use crate::{
+    backup_render::render_backup_screen,
     screens::render_screen,
     widgets::{render_footer, render_header, render_modal, render_navigation, render_too_small},
 };
@@ -65,7 +70,11 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState, theme
 
     render_header(frame, header, view, theme);
     render_navigation(frame, navigation, ui, theme);
-    render_screen(frame, content, view, ui, theme);
+    if ui.screen == Screen::Backup {
+        render_backup_screen(frame, content, view, ui, theme);
+    } else {
+        render_screen(frame, content, view, ui, theme);
+    }
     render_footer(frame, footer, theme);
 
     if let Some(modal) = &ui.modal {
