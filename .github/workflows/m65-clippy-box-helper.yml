@@ -23,19 +23,20 @@ jobs:
           set -eu
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
           rustup default 1.97.1
-      - name: Apply minimal enum indirection, verify, self-clean, and commit
+      - name: Apply minimal cleanup, verify, self-clean, and commit
         run: |
           set -eu
           flow=crates/lantern-app/src/backup_restore_flow.rs
           app=crates/lantern-app/src/application.rs
           runtime=crates/vfd-lantern/src/write_runtime.rs
+          keymap=crates/lantern-tui/src/keymap.rs
 
           test "$(grep -Fxc '    RestorePrepared(Result<PreparedRestoreResult, String>),' "$flow")" -eq 1
           test "$(grep -Fxc '        plan: ApprovedRestorePlan,' "$flow")" -eq 1
           test "$(grep -Fxc '                self.backup_restore.restore_prepared(result);' "$app")" -eq 1
-          test "$(grep -Fxc '                        plan,' "$app")" -ge 1
           test "$(grep -Fc 'BackupRestoreAction::RestorePrepared(result)' "$runtime")" -eq 1
           test "$(grep -Fc '.begin_restore(plan, confirmation)' "$runtime")" -eq 1
+          test "$(grep -Fc 'fn map_backup_key(ui: &UiState,' "$keymap")" -eq 1
 
           sed -i 's/^    RestorePrepared(Result<PreparedRestoreResult, String>),$/    RestorePrepared(Box<Result<PreparedRestoreResult, String>>),/' "$flow"
           sed -i 's/^        plan: ApprovedRestorePlan,$/        plan: Box<ApprovedRestorePlan>,/' "$flow"
@@ -43,18 +44,20 @@ jobs:
           sed -i '/BackupRestoreEffect::ExecuteRestore {/,/                )]/ s/^                        plan,$/                        plan: Box::new(plan),/' "$app"
           sed -i 's/BackupRestoreAction::RestorePrepared(result)/BackupRestoreAction::RestorePrepared(Box::new(result))/' "$runtime"
           sed -i 's/\.begin_restore(plan, confirmation)/.begin_restore(*plan, confirmation)/' "$runtime"
+          sed -i 's/fn map_backup_key(ui: &UiState,/fn map_backup_key(_ui: \&UiState,/' "$keymap"
 
           test "$(grep -Fxc '    RestorePrepared(Box<Result<PreparedRestoreResult, String>>),' "$flow")" -eq 1
           test "$(grep -Fxc '        plan: Box<ApprovedRestorePlan>,' "$flow")" -eq 1
           test "$(grep -Fxc '                self.backup_restore.restore_prepared(*result);' "$app")" -eq 1
           test "$(grep -Fc 'BackupRestoreAction::RestorePrepared(Box::new(result))' "$runtime")" -eq 1
           test "$(grep -Fc '.begin_restore(*plan, confirmation)' "$runtime")" -eq 1
+          test "$(grep -Fc 'fn map_backup_key(_ui: &UiState,' "$keymap")" -eq 1
 
           cargo fmt --all
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
           git rm .github/workflows/m65-clippy-box-helper.yml
-          git add "$flow" "$app" "$runtime"
+          git add "$flow" "$app" "$runtime" "$keymap"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git commit -m "refactor: box large backup restore payloads"
+          git commit -m "refactor: satisfy M6.5 workspace quality checks"
           git push origin HEAD:agent/m6.5-backup-restore-ui
