@@ -386,7 +386,7 @@ impl EffectRunner for TuiEffectRunner {
             ApplicationEffect::Faults(effect) => self.execute_fault(effect),
             ApplicationEffect::Write(effect) => self.write.execute(effect),
             ApplicationEffect::Session(effect) => self.execute_session(effect),
-            ApplicationEffect::Backup(effect) => self.write.execute_backup(effect),
+            ApplicationEffect::Backup(effect) => self.write.execute_backup(*effect),
         }
     }
 }
