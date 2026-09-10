@@ -245,10 +245,9 @@ impl ProductionWriteRuntime {
                 let sender = self.action_tx.clone();
                 tokio::task::spawn_blocking(move || {
                     let result = read_backup(&path).map_err(|error| error.to_string());
-                    let _ = sender.send(ApplicationAction::Backup(BackupAction::SourceLoaded {
-                        path,
-                        result,
-                    }));
+                    let _ = sender.send(ApplicationAction::Backup(Box::new(
+                        BackupAction::SourceLoaded { path, result },
+                    )));
                 });
                 Ok(())
             }
@@ -272,7 +271,9 @@ impl ProductionWriteRuntime {
                         persist_backup(&directory, snapshot)
                     }
                     .await;
-                    let _ = sender.send(ApplicationAction::Backup(BackupAction::Captured(result)));
+                    let _ = sender.send(ApplicationAction::Backup(Box::new(
+                        BackupAction::Captured(result),
+                    )));
                 });
                 Ok(())
             }
@@ -294,7 +295,7 @@ impl ProductionWriteRuntime {
                             .await
                             .map_err(|error| error.to_string())?;
                         let pre_restore = persist_backup(&directory, current)?;
-                        let diff = semantic_backup_diff(&source, &pre_restore.snapshot, None);
+                        let diff = semantic_backup_diff(source.as_ref(), &pre_restore.snapshot, None);
                         let plan = coordinator
                             .lock()
                             .await
@@ -303,7 +304,7 @@ impl ProductionWriteRuntime {
                                 "restore capability unavailable: write/audit/trust composition is incomplete"
                                     .to_owned()
                             })?
-                            .prepare_restore_plan(&source, &pre_restore.snapshot)
+                            .prepare_restore_plan(source.as_ref(), &pre_restore.snapshot)
                             .await
                             .map_err(|error| error.to_string())?;
                         Ok(PreparedRestoreBundle {
@@ -313,8 +314,8 @@ impl ProductionWriteRuntime {
                         })
                     }
                     .await;
-                    let _ = sender.send(ApplicationAction::Backup(BackupAction::RestorePrepared(
-                        result,
+                    let _ = sender.send(ApplicationAction::Backup(Box::new(
+                        BackupAction::RestorePrepared(Box::new(result)),
                     )));
                 });
                 Ok(())
@@ -361,8 +362,8 @@ impl ProductionWriteRuntime {
                         })
                     }
                     .await;
-                    let _ = sender.send(ApplicationAction::Backup(BackupAction::RestoreCompleted(
-                        result,
+                    let _ = sender.send(ApplicationAction::Backup(Box::new(
+                        BackupAction::RestoreCompleted(result),
                     )));
                 });
                 Ok(())
@@ -376,7 +377,7 @@ fn send_backup_action(
     action: BackupAction,
 ) -> Result<(), ApplicationEffectError> {
     sender
-        .send(ApplicationAction::Backup(action))
+        .send(ApplicationAction::Backup(Box::new(action)))
         .map_err(|_| ApplicationEffectError("application action channel closed".to_owned()))
 }
 
