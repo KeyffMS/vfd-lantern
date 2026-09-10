@@ -750,7 +750,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_profile_trust_adapter_never_mints_any_profile_bound_capability() {
+    async fn missing_profile_trust_adapter_never_mints_write_capability_or_touches_bus() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let audit: Arc<dyn AuditPort> = Arc::new(AvailableAudit);
         let runtime = ProductionWriteRuntime::from_adapters(tx, Some(audit), None, true);
