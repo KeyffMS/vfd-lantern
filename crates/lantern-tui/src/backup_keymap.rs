@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use lantern_app::{ApplicationAction, ApplicationView, BackupAction};
 
-use crate::{MappedAction, UiAction, UiState};
+use crate::{ConnectionEdit, MappedAction, UiAction, UiState};
 
 #[must_use]
 pub fn map_backup_key(
@@ -13,19 +13,17 @@ pub fn map_backup_key(
         return None;
     }
 
-    if ui.backup.confirmation_active {
+    if ui.connection_edit == Some(ConnectionEdit::WriteConfirmation) {
         return match key.code {
-            KeyCode::Esc => Some(MappedAction::Ui(UiAction::BackupCancelConfirmation)),
+            KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
             KeyCode::Enter => Some(MappedAction::Combined {
-                ui: UiAction::BackupCancelConfirmation,
+                ui: UiAction::CancelEdit,
                 application: Box::new(ApplicationAction::Backup(BackupAction::ConfirmRestore {
-                    operator_text: ui.backup.confirmation_input.clone(),
+                    operator_text: ui.form.value().to_owned(),
                 })),
             }),
-            KeyCode::Backspace => Some(MappedAction::Ui(UiAction::BackupBackspace)),
-            KeyCode::Char(character) => {
-                Some(MappedAction::Ui(UiAction::BackupInputChar(character)))
-            }
+            KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
+            KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
             _ => None,
         };
     }
@@ -44,7 +42,7 @@ pub fn map_backup_key(
             ApplicationAction::Backup(BackupAction::PrepareRestore),
         ))),
         KeyCode::Char('c') if view.backup().prepared_plan.is_some() => {
-            Some(MappedAction::Ui(UiAction::BackupBeginConfirmation))
+            Some(MappedAction::Ui(UiAction::BeginWriteConfirmation))
         }
         KeyCode::Enter => view
             .backup()
