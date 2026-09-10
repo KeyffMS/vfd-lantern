@@ -1,4 +1,7 @@
-use std::{fs, io, path::{Path, PathBuf}};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use crate::BACKUP_SUFFIX;
 
@@ -46,6 +49,9 @@ mod tests {
         fs::write(directory.path().join("notes.txt"), b"ignore").expect("notes");
         symlink(&a, directory.path().join("linked.vfdlantern-backup.json")).expect("symlink");
 
-        assert_eq!(list_backup_files(directory.path()).expect("catalog"), vec![a, b]);
+        assert_eq!(
+            list_backup_files(directory.path()).expect("catalog"),
+            vec![a, b]
+        );
     }
 }
