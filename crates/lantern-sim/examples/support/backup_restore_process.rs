@@ -19,9 +19,15 @@ pub(super) fn run_backup_restore_process_matrix(
     let base = fs::read_to_string(reference_profile())?;
     fs::write(&selected, two_step_restore_profile(&base)?)?;
     let profile = lantern_sim::load_profile(&selected)?;
-    approve_write_fixture(product_binary, &selected, &profile.profile_hash().to_hex(), &env)?;
+    approve_write_fixture(
+        product_binary,
+        &selected,
+        &profile.profile_hash().to_hex(),
+        &env,
+    )?;
 
-    let source_backup = capture_source_backup(simulator_binary, product_binary, &selected, &profile, &env)?;
+    let source_backup =
+        capture_source_backup(simulator_binary, product_binary, &selected, &profile, &env)?;
     ensure!(source_backup.is_file(), "source backup was not persisted");
 
     run_success_case(product_binary, &selected, &profile, &source_backup, &env)?;
@@ -153,7 +159,10 @@ fn run_device_failure_case(
             RESTORE_CURRENT_DECELERATION,
         ),
     )?;
-    let conformance_path = env.root.path().join("restore-device-failure-conformance.toml");
+    let conformance_path = env
+        .root
+        .path()
+        .join("restore-device-failure-conformance.toml");
     let mut simulator = ConformanceProcessSimulator::spawn(
         selected,
         &core_path,
@@ -191,7 +200,10 @@ fn run_device_failure_case(
         .iter()
         .filter(|record| record.function == 6)
         .collect::<Vec<_>>();
-    ensure!(writes[0].outcome == "ok", "first restore step must be accepted");
+    ensure!(
+        writes[0].outcome == "ok",
+        "first restore step must be accepted"
+    );
     ensure!(
         writes[1].outcome == "exception:02",
         "second restore step must expose the injected device exception"
@@ -246,8 +258,16 @@ fn approve_write_fixture(
     let approval = Command::new(product_binary)
         .args(["profile", "approve-write"])
         .arg(selected)
-        .args(["--expected-hash", hash, "--manual-source", "PTY restore fixture"])
-        .args(["--summary", "Disposable two-step process restore acceptance"])
+        .args([
+            "--expected-hash",
+            hash,
+            "--manual-source",
+            "PTY restore fixture",
+        ])
+        .args([
+            "--summary",
+            "Disposable two-step process restore acceptance",
+        ])
         .env("HOME", &env.home)
         .env("XDG_CONFIG_HOME", &env.config)
         .env("XDG_DATA_HOME", &env.data)
@@ -273,14 +293,20 @@ fn scenario_with_values(
 
 fn two_step_restore_profile(base: &str) -> Result<String> {
     let restore_order = "restore_order = [\"config.acceleration\"]";
-    ensure!(base.contains(restore_order), "reference profile restore_order changed");
+    ensure!(
+        base.contains(restore_order),
+        "reference profile restore_order changed"
+    );
     let source = base.replacen(
         restore_order,
         "restore_order = [\"config.acceleration\", \"config.deceleration\"]",
         1,
     );
     let marker = "[aliases]";
-    ensure!(source.contains(marker), "reference profile aliases marker changed");
+    ensure!(
+        source.contains(marker),
+        "reference profile aliases marker changed"
+    );
     let extra = r#"[[parameters]]
 id = "config.deceleration"
 code = "D0.02"
@@ -367,7 +393,10 @@ fn assert_restore_audit(env: &CaseEnvironment, completed: bool) -> Result<()> {
     let mut aborted = 0;
     for entry in fs::read_dir(&audit_root)? {
         let path = entry?.path();
-        if !path.extension().is_some_and(|extension| extension == "jsonl") {
+        if !path
+            .extension()
+            .is_some_and(|extension| extension == "jsonl")
+        {
             continue;
         }
         for line in fs::read_to_string(path)?.lines() {
@@ -448,7 +477,10 @@ impl ConformanceProcessSimulator {
     }
 
     fn stop(&mut self) -> Result<Vec<SimulatorLogRecord>> {
-        let simulator = self.simulator.as_mut().context("simulator already stopped")?;
+        let simulator = self
+            .simulator
+            .as_mut()
+            .context("simulator already stopped")?;
         simulator.shutdown();
         self.runtime.block_on(simulator.wait())?;
         let records = simulator.control().structured_log();
