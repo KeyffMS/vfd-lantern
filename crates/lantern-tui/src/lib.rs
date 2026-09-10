@@ -4,7 +4,6 @@
 
 mod backup_keymap;
 mod backup_render;
-mod backup_state;
 mod fault_keymap;
 mod fault_render;
 mod fault_state;
@@ -24,7 +23,6 @@ mod theme;
 mod ui_state;
 mod widgets;
 
-pub use backup_state::*;
 pub use fault_state::*;
 pub use forms::*;
 pub use input::*;
