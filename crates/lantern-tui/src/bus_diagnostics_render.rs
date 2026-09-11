@@ -3,8 +3,8 @@ use ratatui::text::Line;
 
 /// Presentation-only Bus Diagnostics view.
 ///
-/// All values originate in the immutable `MonitoringRuntimeSnapshot` already owned by
-/// `ApplicationState`. This renderer has no transport handle and cannot issue Modbus requests.
+/// All values originate in the immutable monitoring snapshot exposed through `ApplicationView`.
+/// This renderer has no transport handle and cannot issue Modbus requests.
 pub(crate) fn bus_diagnostics_lines(view: &ApplicationView) -> Vec<Line<'static>> {
     if view.active_session().is_none() {
         return vec![
