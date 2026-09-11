@@ -295,8 +295,16 @@ fn run_case(simulator_binary: &Path, product_binary: &Path, confirm: bool) -> Re
     let approval = Command::new(product_binary)
         .args(["profile", "approve-write"])
         .arg(&selected)
-        .args(["--expected-hash", &hash, "--manual-source", "PTY restore fixture"])
-        .args(["--summary", "Disposable simulator-only backup/restore acceptance"])
+        .args([
+            "--expected-hash",
+            &hash,
+            "--manual-source",
+            "PTY restore fixture",
+        ])
+        .args([
+            "--summary",
+            "Disposable simulator-only backup/restore acceptance",
+        ])
         .env("HOME", &env.home)
         .env("XDG_CONFIG_HOME", &env.config)
         .env("XDG_DATA_HOME", &env.data)
@@ -360,10 +368,16 @@ fn run_case(simulator_binary: &Path, product_binary: &Path, confirm: bool) -> Re
         .values
         .get_mut(&parameter_id)
         .context("captured acceleration value")?;
-    ensure!(value.raw != target_raw, "fixture target must differ from device");
+    ensure!(
+        value.raw != target_raw,
+        "fixture target must differ from device"
+    );
     value.raw = target_raw;
     value.engineering = target_engineering;
-    let source_path = env.root.path().join("restore-source.vfdlantern-backup.json");
+    let source_path = env
+        .root
+        .path()
+        .join("restore-source.vfdlantern-backup.json");
     lantern_storage::write_backup(&source_path, &source)?;
 
     product.send("l")?;
@@ -414,7 +428,13 @@ fn run_case(simulator_binary: &Path, product_binary: &Path, confirm: bool) -> Re
     product.quit()?;
     let records = simulator.stop()?;
     ensure!(records.iter().filter(|record| record.function == 6).count() == 1);
-    ensure!(records.iter().filter(|record| record.function == 16).count() == 0);
+    ensure!(
+        records
+            .iter()
+            .filter(|record| record.function == 16)
+            .count()
+            == 0
+    );
     let write = records
         .iter()
         .find(|record| record.function == 6)
@@ -470,7 +490,10 @@ fn backup_files(directory: &Path) -> Result<Vec<PathBuf>> {
 
 fn only_backup_file(directory: &Path) -> Result<PathBuf> {
     let files = backup_files(directory)?;
-    ensure!(files.len() == 1, "expected one captured backup, found {files:?}");
+    ensure!(
+        files.len() == 1,
+        "expected one captured backup, found {files:?}"
+    );
     Ok(files[0].clone())
 }
 
