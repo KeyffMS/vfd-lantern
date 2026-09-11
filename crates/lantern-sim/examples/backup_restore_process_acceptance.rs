@@ -17,8 +17,8 @@ use nix::{
 use serde::Deserialize;
 use tempfile::TempDir;
 
-const ROWS: u16 = 64;
-const COLS: u16 = 140;
+const ROWS: usize = 64;
+const COLS: usize = 140;
 const SEED: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 const TIMEOUT: Duration = Duration::from_secs(12);
 
@@ -70,6 +70,211 @@ impl Drop for ChildGuard {
     }
 }
 
+struct Screen {
+    cells: Vec<u8>,
+    row: usize,
+    col: usize,
+    saved: (usize, usize),
+}
+
+impl Screen {
+    fn new() -> Self {
+        Self {
+            cells: vec![b' '; ROWS * COLS],
+            row: 0,
+            col: 0,
+            saved: (0, 0),
+        }
+    }
+
+    fn from_terminal_stream(bytes: &[u8]) -> Self {
+        let mut screen = Self::new();
+        let mut index = 0;
+        while index < bytes.len() {
+            match bytes[index] {
+                0x1b => index = screen.escape(bytes, index + 1),
+                b'\r' => {
+                    screen.col = 0;
+                    index += 1;
+                }
+                b'\n' => {
+                    screen.row = (screen.row + 1).min(ROWS - 1);
+                    index += 1;
+                }
+                0x08 => {
+                    screen.col = screen.col.saturating_sub(1);
+                    index += 1;
+                }
+                b'\t' => {
+                    screen.col = ((screen.col / 8) + 1).saturating_mul(8).min(COLS - 1);
+                    index += 1;
+                }
+                byte @ 0x20..=0x7e => {
+                    screen.put(byte);
+                    index += 1;
+                }
+                byte @ 0x80..=0xff => {
+                    screen.put(b'?');
+                    index += utf8_sequence_length(byte).min(bytes.len() - index);
+                }
+                _ => index += 1,
+            }
+        }
+        screen
+    }
+
+    fn escape(&mut self, bytes: &[u8], mut index: usize) -> usize {
+        if index >= bytes.len() {
+            return index;
+        }
+        match bytes[index] {
+            b'[' => {
+                index += 1;
+                let start = index;
+                while index < bytes.len() && !(0x40..=0x7e).contains(&bytes[index]) {
+                    index += 1;
+                }
+                if index < bytes.len() {
+                    self.csi(&bytes[start..index], bytes[index]);
+                    index + 1
+                } else {
+                    index
+                }
+            }
+            b']' => {
+                index += 1;
+                while index < bytes.len() {
+                    if bytes[index] == 0x07 {
+                        return index + 1;
+                    }
+                    if bytes[index] == 0x1b && bytes.get(index + 1).copied() == Some(b'\\') {
+                        return index + 2;
+                    }
+                    index += 1;
+                }
+                index
+            }
+            b'7' => {
+                self.saved = (self.row, self.col);
+                index + 1
+            }
+            b'8' => {
+                (self.row, self.col) = self.saved;
+                index + 1
+            }
+            _ => index + 1,
+        }
+    }
+
+    fn csi(&mut self, raw: &[u8], final_byte: u8) {
+        let private = raw.first().copied() == Some(b'?');
+        let params_raw = if private { &raw[1..] } else { raw };
+        let params = params_raw
+            .split(|byte| *byte == b';')
+            .map(|part| {
+                std::str::from_utf8(part)
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(0)
+            })
+            .collect::<Vec<_>>();
+        let p = |index: usize, default: usize| {
+            params
+                .get(index)
+                .copied()
+                .filter(|value| *value != 0)
+                .unwrap_or(default)
+        };
+
+        match final_byte {
+            b'H' | b'f' => {
+                self.row = p(0, 1).saturating_sub(1).min(ROWS - 1);
+                self.col = p(1, 1).saturating_sub(1).min(COLS - 1);
+            }
+            b'G' => self.col = p(0, 1).saturating_sub(1).min(COLS - 1),
+            b'd' => self.row = p(0, 1).saturating_sub(1).min(ROWS - 1),
+            b'A' => self.row = self.row.saturating_sub(p(0, 1)),
+            b'B' => self.row = (self.row + p(0, 1)).min(ROWS - 1),
+            b'C' => self.col = (self.col + p(0, 1)).min(COLS - 1),
+            b'D' => self.col = self.col.saturating_sub(p(0, 1)),
+            b'E' => {
+                self.row = (self.row + p(0, 1)).min(ROWS - 1);
+                self.col = 0;
+            }
+            b'F' => {
+                self.row = self.row.saturating_sub(p(0, 1));
+                self.col = 0;
+            }
+            b'J' => self.erase_display(p(0, 0)),
+            b'K' => self.erase_line(p(0, 0)),
+            b'X' => self.erase_chars(p(0, 1)),
+            b's' => self.saved = (self.row, self.col),
+            b'u' => (self.row, self.col) = self.saved,
+            b'h' if private && params.contains(&1049) => self.clear(),
+            b'l' | b'h' | b'm' | b'n' | b'r' | b'q' => {}
+            _ => {}
+        }
+    }
+
+    fn put(&mut self, byte: u8) {
+        if self.col >= COLS {
+            self.col = 0;
+            self.row = (self.row + 1).min(ROWS - 1);
+        }
+        self.cells[self.row * COLS + self.col] = byte;
+        self.col += 1;
+    }
+
+    fn clear(&mut self) {
+        self.cells.fill(b' ');
+        self.row = 0;
+        self.col = 0;
+    }
+
+    fn erase_display(&mut self, mode: usize) {
+        let cursor = self.row * COLS + self.col.min(COLS - 1);
+        match mode {
+            0 => self.cells[cursor..].fill(b' '),
+            1 => self.cells[..=cursor].fill(b' '),
+            2 | 3 => self.cells.fill(b' '),
+            _ => {}
+        }
+    }
+
+    fn erase_line(&mut self, mode: usize) {
+        let start = self.row * COLS;
+        let col = self.col.min(COLS - 1);
+        match mode {
+            0 => self.cells[start + col..start + COLS].fill(b' '),
+            1 => self.cells[start..=start + col].fill(b' '),
+            2 => self.cells[start..start + COLS].fill(b' '),
+            _ => {}
+        }
+    }
+
+    fn erase_chars(&mut self, count: usize) {
+        let start = self.row * COLS + self.col.min(COLS - 1);
+        let end = (start + count).min((self.row + 1) * COLS);
+        self.cells[start..end].fill(b' ');
+    }
+
+    fn text(&self) -> String {
+        let mut lines = Vec::new();
+        for row in 0..ROWS {
+            let cells = &self.cells[row * COLS..(row + 1) * COLS];
+            let end = cells
+                .iter()
+                .rposition(|byte| *byte != b' ')
+                .map_or(0, |index| index + 1);
+            lines.push(String::from_utf8_lossy(&cells[..end]).into_owned());
+        }
+        while lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
+        lines.join("\n")
+    }
+}
+
 struct TerminalChild {
     child: ChildGuard,
     writer: File,
@@ -80,8 +285,8 @@ struct TerminalChild {
 impl TerminalChild {
     fn spawn(binary: &Path, args: &[String], environment: &Environment) -> Result<Self> {
         let size = Winsize {
-            ws_row: ROWS,
-            ws_col: COLS,
+            ws_row: ROWS as u16,
+            ws_col: COLS as u16,
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
@@ -152,7 +357,7 @@ impl TerminalChild {
     }
 
     fn terminal_text(&self) -> String {
-        normalize_terminal_stream(&lock_output(&self.output))
+        Screen::from_terminal_stream(&lock_output(&self.output)).text()
     }
 
     fn wait_for(&self, needle: &str) -> Result<()> {
@@ -164,7 +369,7 @@ impl TerminalChild {
             }
             if Instant::now() >= deadline {
                 bail!(
-                    "TUI did not render {needle:?}; normalized terminal tail:\n{}",
+                    "TUI did not render {needle:?}; reconstructed screen:\n{}",
                     tail(&text, 12_000)
                 );
             }
@@ -176,7 +381,7 @@ impl TerminalChild {
         let text = self.terminal_text();
         ensure!(
             !text.contains(needle),
-            "TUI unexpectedly rendered {needle:?}; normalized terminal tail:\n{}",
+            "TUI unexpectedly rendered {needle:?}; reconstructed screen:\n{}",
             tail(&text, 4000)
         );
         Ok(())
@@ -530,64 +735,13 @@ fn read_log_records(path: &Path) -> Result<Vec<LogRecord>> {
     Ok(requests)
 }
 
-fn normalize_terminal_stream(bytes: &[u8]) -> String {
-    let mut text = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            0x1b => {
-                index += 1;
-                if index < bytes.len() {
-                    match bytes[index] {
-                        b'[' => {
-                            index += 1;
-                            while index < bytes.len() && !(0x40..=0x7e).contains(&bytes[index]) {
-                                index += 1;
-                            }
-                            if index < bytes.len() {
-                                index += 1;
-                            }
-                        }
-                        b']' => {
-                            index += 1;
-                            while index < bytes.len() {
-                                if bytes[index] == 0x07 {
-                                    index += 1;
-                                    break;
-                                }
-                                if bytes[index] == 0x1b
-                                    && bytes.get(index + 1).copied() == Some(b'\\')
-                                {
-                                    index += 2;
-                                    break;
-                                }
-                                index += 1;
-                            }
-                        }
-                        _ => index += 1,
-                    }
-                }
-                text.push(b' ');
-            }
-            b'\r' | b'\n' | b'\t' => {
-                text.push(b' ');
-                index += 1;
-            }
-            byte @ 0x20..=0x7e => {
-                text.push(byte);
-                index += 1;
-            }
-            _ => {
-                text.push(b' ');
-                index += 1;
-            }
-        }
+fn utf8_sequence_length(first: u8) -> usize {
+    match first {
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => 1,
     }
-
-    String::from_utf8_lossy(&text)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn lock_output(output: &Arc<Mutex<Vec<u8>>>) -> MutexGuard<'_, Vec<u8>> {
