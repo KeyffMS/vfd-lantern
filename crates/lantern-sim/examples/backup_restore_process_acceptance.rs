@@ -541,9 +541,7 @@ fn normalize_terminal_stream(bytes: &[u8]) -> String {
                     match bytes[index] {
                         b'[' => {
                             index += 1;
-                            while index < bytes.len()
-                                && !(0x40..=0x7e).contains(&bytes[index])
-                            {
+                            while index < bytes.len() && !(0x40..=0x7e).contains(&bytes[index]) {
                                 index += 1;
                             }
                             if index < bytes.len() {
