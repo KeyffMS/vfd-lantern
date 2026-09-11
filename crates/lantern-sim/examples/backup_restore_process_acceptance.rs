@@ -151,21 +151,21 @@ impl TerminalChild {
         Ok(())
     }
 
-    fn transcript(&self) -> String {
-        String::from_utf8_lossy(&lock_output(&self.output)).into_owned()
+    fn terminal_text(&self) -> String {
+        normalize_terminal_stream(&lock_output(&self.output))
     }
 
     fn wait_for(&self, needle: &str) -> Result<()> {
         let deadline = Instant::now() + TIMEOUT;
         loop {
-            let transcript = self.transcript();
-            if transcript.contains(needle) {
+            let text = self.terminal_text();
+            if text.contains(needle) {
                 return Ok(());
             }
             if Instant::now() >= deadline {
                 bail!(
-                    "product did not emit {needle:?}; transcript tail:\n{}",
-                    tail(&transcript, 12_000)
+                    "TUI did not render {needle:?}; normalized terminal tail:\n{}",
+                    tail(&text, 12_000)
                 );
             }
             thread::sleep(Duration::from_millis(25));
@@ -173,11 +173,11 @@ impl TerminalChild {
     }
 
     fn assert_not_emitted(&self, needle: &str) -> Result<()> {
-        let transcript = self.transcript();
+        let text = self.terminal_text();
         ensure!(
-            !transcript.contains(needle),
-            "product unexpectedly emitted {needle:?}; transcript tail:\n{}",
-            tail(&transcript, 4000)
+            !text.contains(needle),
+            "TUI unexpectedly rendered {needle:?}; normalized terminal tail:\n{}",
+            tail(&text, 4000)
         );
         Ok(())
     }
@@ -387,8 +387,8 @@ fn run_case(simulator_binary: &Path, product_binary: &Path, confirm: bool) -> Re
     product.send("p")?;
     product.wait_for("restore plan prepared; steps=1")?;
     product.wait_for("Exact confirmation required:")?;
-    let transcript = product.transcript();
-    let confirmation = transcript
+    let text = product.terminal_text();
+    let confirmation = text
         .rsplit("Exact confirmation required:")
         .next()
         .and_then(|suffix| suffix.split_whitespace().next())
@@ -528,6 +528,68 @@ fn read_log_records(path: &Path) -> Result<Vec<LogRecord>> {
         }
     }
     Ok(requests)
+}
+
+fn normalize_terminal_stream(bytes: &[u8]) -> String {
+    let mut text = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            0x1b => {
+                index += 1;
+                if index < bytes.len() {
+                    match bytes[index] {
+                        b'[' => {
+                            index += 1;
+                            while index < bytes.len()
+                                && !(0x40..=0x7e).contains(&bytes[index])
+                            {
+                                index += 1;
+                            }
+                            if index < bytes.len() {
+                                index += 1;
+                            }
+                        }
+                        b']' => {
+                            index += 1;
+                            while index < bytes.len() {
+                                if bytes[index] == 0x07 {
+                                    index += 1;
+                                    break;
+                                }
+                                if bytes[index] == 0x1b
+                                    && bytes.get(index + 1).copied() == Some(b'\\')
+                                {
+                                    index += 2;
+                                    break;
+                                }
+                                index += 1;
+                            }
+                        }
+                        _ => index += 1,
+                    }
+                }
+                text.push(b' ');
+            }
+            b'\r' | b'\n' | b'\t' => {
+                text.push(b' ');
+                index += 1;
+            }
+            byte @ 0x20..=0x7e => {
+                text.push(byte);
+                index += 1;
+            }
+            _ => {
+                text.push(b' ');
+                index += 1;
+            }
+        }
+    }
+
+    String::from_utf8_lossy(&text)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn lock_output(output: &Arc<Mutex<Vec<u8>>>) -> MutexGuard<'_, Vec<u8>> {
