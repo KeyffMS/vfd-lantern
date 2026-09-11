@@ -36,6 +36,9 @@ process_status=0
 if ! cargo run --locked --all-features -p lantern-sim --example connection_process_acceptance -- --write-fixture; then
     process_status=1
 fi
+if ! cargo run --locked --all-features -p lantern-sim --example backup_restore_process_acceptance; then
+    process_status=1
+fi
 if ! sh scripts/ci/test-product-cli.sh "$CARGO_TARGET_DIR/debug/vfd-lantern"; then
     process_status=1
 fi
