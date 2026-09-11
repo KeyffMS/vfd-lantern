@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod backup_render;
+mod bus_diagnostics_render;
 mod fault_keymap;
 mod fault_render;
 mod fault_state;
@@ -44,6 +45,7 @@ use ratatui::{
 
 use crate::{
     backup_render::backup_lines,
+    bus_diagnostics_render::bus_diagnostics_lines,
     screens::render_screen,
     widgets::{render_footer, render_header, render_modal, render_navigation, render_too_small},
 };
@@ -69,9 +71,14 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState, theme
 
     render_header(frame, header, view, theme);
     render_navigation(frame, navigation, ui, theme);
-    if ui.screen == Screen::Backup {
+    let custom_lines = match ui.screen {
+        Screen::Backup => Some(backup_lines(view, ui)),
+        Screen::BusDiagnostics => Some(bus_diagnostics_lines(view)),
+        _ => None,
+    };
+    if let Some(lines) = custom_lines {
         let scroll = u16::try_from(ui.scroll_offset).unwrap_or(u16::MAX);
-        let paragraph = Paragraph::new(Text::from(backup_lines(view, ui)))
+        let paragraph = Paragraph::new(Text::from(lines))
             .block(Block::bordered().title(format!(" {} ", ui.screen.title())))
             .wrap(Wrap { trim: false })
             .scroll((scroll, 0))
@@ -150,6 +157,24 @@ mod tests {
         assert!(text.contains("capture complete backup"));
         assert!(text.contains("guarded WriteCoordinator"));
         assert!(!text.contains("presentation boundary is ready"));
+    }
+
+    #[test]
+    fn bus_diagnostics_screen_is_not_a_placeholder() {
+        let backend = TestBackend::new(120, 32);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let view = ApplicationView::default();
+        let ui = UiState {
+            screen: Screen::BusDiagnostics,
+            ..UiState::default()
+        };
+        terminal
+            .draw(|frame| render(frame, &view, &ui, Theme::new(false)))
+            .expect("draw");
+        let text = buffer_text(terminal.backend().buffer());
+        assert!(text.contains("Verified session required."));
+        assert!(text.contains("issues no Modbus requests"));
+        assert!(!text.contains("later diagnostics integration"));
     }
 
     #[test]
