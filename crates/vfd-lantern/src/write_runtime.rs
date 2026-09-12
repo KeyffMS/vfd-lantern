@@ -404,28 +404,98 @@ struct RuntimeRestoreState {
 }
 
 struct RuntimeSessionControl {
-    snapshot: Mutex<WriteSessionSnapshot>,
-    restore: Mutex<Option<RuntimeRestoreState>>,
+    // Application-owned write/session projection. `sync` is the only writer of this cache.
+    projection: Mutex<WriteSessionSnapshot>,
+    // Runtime-only restrictive execution fence. It can only remove capabilities while the
+    // authoritative application projection catches up; it never grants authorization.
+    execution: Mutex<RuntimeExecutionState>,
     action_tx: mpsc::UnboundedSender<ApplicationAction>,
+}
+
+#[derive(Clone, Debug)]
+enum RuntimeOperationState {
+    SingleWrite {
+        started_at_revision: u64,
+        finished: bool,
+    },
+    Restore {
+        state: RuntimeRestoreState,
+        started_at_revision: u64,
+        finished: bool,
+    },
+}
+
+#[derive(Clone, Debug, Default)]
+struct RuntimeExecutionState {
+    operation: Option<RuntimeOperationState>,
+    disarm_barrier: bool,
+    audit_barrier: bool,
+}
+
+impl RuntimeExecutionState {
+    fn reconcile(&mut self, projection: &WriteSessionSnapshot) {
+        if self.disarm_barrier && !projection.armed {
+            self.disarm_barrier = false;
+        }
+        if self.audit_barrier && !projection.audit_healthy {
+            self.audit_barrier = false;
+        }
+        let operation_finished = self.operation.as_ref().is_some_and(|operation| {
+            let (started_at_revision, finished) = match operation {
+                RuntimeOperationState::SingleWrite {
+                    started_at_revision,
+                    finished,
+                }
+                | RuntimeOperationState::Restore {
+                    started_at_revision,
+                    finished,
+                    ..
+                } => (*started_at_revision, *finished),
+            };
+            finished && projection.operation_idle && projection.guard_revision > started_at_revision
+        });
+        if operation_finished {
+            self.operation = None;
+        }
+    }
+
+    fn apply_restrictive_overlay(&self, snapshot: &mut WriteSessionSnapshot) {
+        if self.operation.is_some() {
+            snapshot.operation_idle = false;
+        }
+        if self.disarm_barrier {
+            snapshot.armed = false;
+        }
+        if self.audit_barrier {
+            snapshot.armed = false;
+            snapshot.audit_healthy = false;
+        }
+    }
 }
 
 impl RuntimeSessionControl {
     fn new(action_tx: mpsc::UnboundedSender<ApplicationAction>) -> Self {
         Self {
-            snapshot: Mutex::new(unavailable_snapshot()),
-            restore: Mutex::new(None),
+            projection: Mutex::new(unavailable_snapshot()),
+            execution: Mutex::new(RuntimeExecutionState::default()),
             action_tx,
         }
     }
 
-    fn sync(&self, snapshot: WriteSessionSnapshot) {
-        *lock_snapshot(&self.snapshot) = snapshot;
+    fn sync(&self, projection: WriteSessionSnapshot) {
+        {
+            let mut execution = lock_execution(&self.execution);
+            execution.reconcile(&projection);
+        }
+        *lock_projection(&self.projection) = projection;
     }
 }
 
 impl SessionControlPort for RuntimeSessionControl {
     fn snapshot(&self) -> WriteSessionSnapshot {
-        lock_snapshot(&self.snapshot).clone()
+        let mut snapshot = lock_projection(&self.projection).clone();
+        lock_execution(&self.execution).apply_restrictive_overlay(&mut snapshot);
+        snapshot
     }
 
     fn begin_single_write(
@@ -433,7 +503,7 @@ impl SessionControlPort for RuntimeSessionControl {
         operation_id: OperationId,
         plan_id: PlanId,
     ) -> Result<(), SessionControlError> {
-        let mut snapshot = lock_snapshot(&self.snapshot);
+        let snapshot = self.snapshot();
         if !snapshot.connected
             || !snapshot.armed
             || !snapshot.audit_healthy
@@ -441,8 +511,16 @@ impl SessionControlPort for RuntimeSessionControl {
         {
             return Err(SessionControlError::PreconditionChanged);
         }
-        snapshot.operation_idle = false;
-        snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+        {
+            let mut execution = lock_execution(&self.execution);
+            if execution.operation.is_some() {
+                return Err(SessionControlError::PreconditionChanged);
+            }
+            execution.operation = Some(RuntimeOperationState::SingleWrite {
+                started_at_revision: snapshot.guard_revision,
+                finished: false,
+            });
+        }
         if self
             .action_tx
             .send(ApplicationAction::Session(SessionInput::WriteConfirmed {
@@ -451,9 +529,7 @@ impl SessionControlPort for RuntimeSessionControl {
             }))
             .is_err()
         {
-            snapshot.operation_idle = true;
-            snapshot.armed = false;
-            snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+            lock_execution(&self.execution).operation = None;
             return Err(SessionControlError::Other(
                 "application session channel closed".to_owned(),
             ));
@@ -463,20 +539,23 @@ impl SessionControlPort for RuntimeSessionControl {
 
     fn finish_single_write(&self, outcome: WriteOutcome) {
         {
-            let mut snapshot = lock_snapshot(&self.snapshot);
-            snapshot.operation_idle = true;
+            let mut execution = lock_execution(&self.execution);
+            if let Some(RuntimeOperationState::SingleWrite { finished, .. }) =
+                execution.operation.as_mut()
+            {
+                *finished = true;
+            }
             match &outcome {
                 WriteOutcome::Executed(
                     DeviceWriteOutcome::OutcomeUnknown | DeviceWriteOutcome::TransportLost,
-                ) => snapshot.armed = false,
+                ) => execution.disarm_barrier = true,
                 WriteOutcome::Executed(DeviceWriteOutcome::AuditDegraded)
                 | WriteOutcome::NotExecuted(DecisionOutcome::AuditUnavailable) => {
-                    snapshot.armed = false;
-                    snapshot.audit_healthy = false;
+                    execution.disarm_barrier = true;
+                    execution.audit_barrier = true;
                 }
                 _ => {}
             }
-            snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
         }
         let _ = self
             .action_tx
@@ -491,22 +570,29 @@ impl SessionControlPort for RuntimeSessionControl {
         operation_id: OperationId,
         plan_hash: &str,
     ) -> Result<(), SessionControlError> {
-        let mut snapshot = lock_snapshot(&self.snapshot);
+        let snapshot = self.snapshot();
         if !snapshot.connected
             || !snapshot.armed
             || !snapshot.audit_healthy
             || !snapshot.operation_idle
-            || lock_restore(&self.restore).is_some()
         {
             return Err(SessionControlError::PreconditionChanged);
         }
-        snapshot.operation_idle = false;
-        snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
-        *lock_restore(&self.restore) = Some(RuntimeRestoreState {
-            operation_id,
-            plan_hash: plan_hash.to_owned(),
-            next_index: 0,
-        });
+        {
+            let mut execution = lock_execution(&self.execution);
+            if execution.operation.is_some() {
+                return Err(SessionControlError::PreconditionChanged);
+            }
+            execution.operation = Some(RuntimeOperationState::Restore {
+                state: RuntimeRestoreState {
+                    operation_id,
+                    plan_hash: plan_hash.to_owned(),
+                    next_index: 0,
+                },
+                started_at_revision: snapshot.guard_revision,
+                finished: false,
+            });
+        }
         if self
             .action_tx
             .send(ApplicationAction::Session(SessionInput::RestoreStarted {
@@ -515,10 +601,7 @@ impl SessionControlPort for RuntimeSessionControl {
             }))
             .is_err()
         {
-            *lock_restore(&self.restore) = None;
-            snapshot.operation_idle = true;
-            snapshot.armed = false;
-            snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+            lock_execution(&self.execution).operation = None;
             return Err(SessionControlError::Other(
                 "application session channel closed".to_owned(),
             ));
@@ -532,15 +615,30 @@ impl SessionControlPort for RuntimeSessionControl {
         plan_hash: &str,
         next_index: usize,
     ) -> bool {
-        let snapshot = lock_snapshot(&self.snapshot);
-        if !snapshot.connected || snapshot.operation_idle {
+        let snapshot = self.snapshot();
+        if !snapshot.connected
+            || !snapshot.armed
+            || !snapshot.audit_healthy
+            || snapshot.operation_idle
+        {
             return false;
         }
-        lock_restore(&self.restore).as_ref().is_some_and(|restore| {
-            restore.operation_id == operation_id
-                && restore.plan_hash == plan_hash
-                && restore.next_index == next_index
-        })
+        lock_execution(&self.execution)
+            .operation
+            .as_ref()
+            .is_some_and(|operation| match operation {
+                RuntimeOperationState::Restore {
+                    state,
+                    finished: false,
+                    ..
+                } => {
+                    state.operation_id == operation_id
+                        && state.plan_hash == plan_hash
+                        && state.next_index == next_index
+                }
+                RuntimeOperationState::SingleWrite { .. }
+                | RuntimeOperationState::Restore { finished: true, .. } => false,
+            })
     }
 
     fn advance_restore(
@@ -549,21 +647,23 @@ impl SessionControlPort for RuntimeSessionControl {
         plan_hash: &str,
         next_index: usize,
     ) -> Result<(), SessionControlError> {
-        let mut restore = lock_restore(&self.restore);
-        let Some(active) = restore.as_mut() else {
-            return Err(SessionControlError::PreconditionChanged);
-        };
-        if active.operation_id != operation_id
-            || active.plan_hash != plan_hash
-            || next_index != active.next_index.saturating_add(1)
         {
-            return Err(SessionControlError::PreconditionChanged);
-        }
-        active.next_index = next_index;
-        drop(restore);
-        {
-            let mut snapshot = lock_snapshot(&self.snapshot);
-            snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+            let mut execution = lock_execution(&self.execution);
+            let Some(RuntimeOperationState::Restore {
+                state,
+                finished: false,
+                ..
+            }) = execution.operation.as_mut()
+            else {
+                return Err(SessionControlError::PreconditionChanged);
+            };
+            if state.operation_id != operation_id
+                || state.plan_hash != plan_hash
+                || next_index != state.next_index.saturating_add(1)
+            {
+                return Err(SessionControlError::PreconditionChanged);
+            }
+            state.next_index = next_index;
         }
         self.action_tx
             .send(ApplicationAction::Session(SessionInput::RestoreAdvanced {
@@ -579,18 +679,18 @@ impl SessionControlPort for RuntimeSessionControl {
         operation_id: OperationId,
         plan_hash: &str,
     ) -> Result<(), SessionControlError> {
-        let restore = lock_restore(&self.restore).take();
-        let Some(active) = restore else {
-            return Err(SessionControlError::PreconditionChanged);
-        };
-        if active.operation_id != operation_id || active.plan_hash != plan_hash {
-            *lock_restore(&self.restore) = Some(active);
-            return Err(SessionControlError::PreconditionChanged);
-        }
         {
-            let mut snapshot = lock_snapshot(&self.snapshot);
-            snapshot.operation_idle = true;
-            snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+            let mut execution = lock_execution(&self.execution);
+            let Some(RuntimeOperationState::Restore {
+                state, finished, ..
+            }) = execution.operation.as_mut()
+            else {
+                return Err(SessionControlError::PreconditionChanged);
+            };
+            if state.operation_id != operation_id || state.plan_hash != plan_hash || *finished {
+                return Err(SessionControlError::PreconditionChanged);
+            }
+            *finished = true;
         }
         self.action_tx
             .send(ApplicationAction::Session(SessionInput::RestoreFinished))
@@ -604,20 +704,17 @@ impl SessionControlPort for RuntimeSessionControl {
         operation_id: OperationId,
         plan_hash: &str,
     ) -> Result<(), SessionControlError> {
-        let restore = lock_restore(&self.restore).take();
-        if restore.as_ref().is_some_and(|active| {
-            active.operation_id != operation_id || active.plan_hash != plan_hash
-        }) {
-            if let Some(active) = restore {
-                *lock_restore(&self.restore) = Some(active);
-            }
-            return Err(SessionControlError::PreconditionChanged);
-        }
         {
-            let mut snapshot = lock_snapshot(&self.snapshot);
-            snapshot.operation_idle = true;
-            snapshot.armed = false;
-            snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+            let mut execution = lock_execution(&self.execution);
+            match execution.operation.as_mut() {
+                Some(RuntimeOperationState::Restore {
+                    state, finished, ..
+                }) if state.operation_id == operation_id && state.plan_hash == plan_hash => {
+                    *finished = true;
+                }
+                None => {}
+                _ => return Err(SessionControlError::PreconditionChanged),
+            }
         }
         self.action_tx
             .send(ApplicationAction::Session(SessionInput::RestoreAborted))
@@ -627,11 +724,7 @@ impl SessionControlPort for RuntimeSessionControl {
     }
 
     fn disarm(&self) {
-        {
-            let mut snapshot = lock_snapshot(&self.snapshot);
-            snapshot.armed = false;
-            snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
-        }
+        lock_execution(&self.execution).disarm_barrier = true;
         let _ = self
             .action_tx
             .send(ApplicationAction::Session(SessionInput::DisarmWrites));
@@ -639,13 +732,15 @@ impl SessionControlPort for RuntimeSessionControl {
 
     fn degrade_audit_and_disarm(&self) {
         {
-            let mut snapshot = lock_snapshot(&self.snapshot);
-            snapshot.armed = false;
-            snapshot.audit_healthy = false;
-            snapshot.operation_idle = true;
-            snapshot.guard_revision = snapshot.guard_revision.saturating_add(1);
+            let mut execution = lock_execution(&self.execution);
+            execution.disarm_barrier = true;
+            execution.audit_barrier = true;
+            match execution.operation.as_mut() {
+                Some(RuntimeOperationState::SingleWrite { finished, .. })
+                | Some(RuntimeOperationState::Restore { finished, .. }) => *finished = true,
+                None => {}
+            }
         }
-        *lock_restore(&self.restore) = None;
         let _ = self.action_tx.send(ApplicationAction::Session(
             SessionInput::AuditPersistenceFailed {
                 cause: "durable write audit failed".to_owned(),
@@ -659,20 +754,21 @@ impl SessionControlPort for RuntimeSessionControl {
     }
 }
 
-fn lock_snapshot(snapshot: &Mutex<WriteSessionSnapshot>) -> MutexGuard<'_, WriteSessionSnapshot> {
-    snapshot
+fn lock_projection(
+    projection: &Mutex<WriteSessionSnapshot>,
+) -> MutexGuard<'_, WriteSessionSnapshot> {
+    projection
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn lock_restore(
-    restore: &Mutex<Option<RuntimeRestoreState>>,
-) -> MutexGuard<'_, Option<RuntimeRestoreState>> {
-    restore
+fn lock_execution(
+    execution: &Mutex<RuntimeExecutionState>,
+) -> MutexGuard<'_, RuntimeExecutionState> {
+    execution
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
-
 fn unavailable_snapshot() -> WriteSessionSnapshot {
     WriteSessionSnapshot {
         session_id: SessionId::new(0),
@@ -772,46 +868,182 @@ mod tests {
         assert_eq!(bus.writes.load(Ordering::SeqCst), 0);
     }
 
-    #[test]
-    fn production_session_adapter_implements_restore_sequence_contract() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let runtime = ProductionWriteRuntime::from_adapters(tx, None, Some(trust_adapter()), true);
+    fn writable_snapshot(revision: u64) -> lantern_app::WriteSessionSnapshot {
         let mut snapshot = super::unavailable_snapshot();
         snapshot.connected = true;
         snapshot.armed = true;
         snapshot.audit_healthy = true;
         snapshot.operation_idle = true;
-        runtime.session.sync(snapshot);
+        snapshot.guard_revision = revision;
+        snapshot
+    }
+
+    fn cached_projection(runtime: &ProductionWriteRuntime) -> lantern_app::WriteSessionSnapshot {
+        super::lock_projection(&runtime.session.projection).clone()
+    }
+
+    #[test]
+    fn production_session_projection_changes_only_via_application_sync() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let runtime = ProductionWriteRuntime::from_adapters(tx, None, Some(trust_adapter()), true);
+        let idle = writable_snapshot(10);
+        runtime.session.sync(idle.clone());
+
+        runtime
+            .session
+            .begin_single_write(
+                lantern_app::OperationId::new(7),
+                lantern_app::PlanId::new(9),
+            )
+            .expect("begin single write");
+        assert_eq!(cached_projection(&runtime), idle);
+        assert!(!runtime.session.snapshot().operation_idle);
+        assert!(runtime.session.snapshot().armed);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ApplicationAction::Session(
+                SessionInput::WriteConfirmed { .. }
+            ))
+        ));
+
+        let mut active = idle.clone();
+        active.operation_idle = false;
+        active.guard_revision = 11;
+        runtime.session.sync(active.clone());
+        assert_eq!(cached_projection(&runtime), active);
+
+        runtime
+            .session
+            .finish_single_write(lantern_app::WriteOutcome::Executed(
+                lantern_app::DeviceWriteOutcome::Verified,
+            ));
+        assert_eq!(cached_projection(&runtime), active);
+        assert!(!runtime.session.snapshot().operation_idle);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ApplicationAction::Session(
+                SessionInput::WriteFinished { .. }
+            ))
+        ));
+
+        let mut finished = idle;
+        finished.guard_revision = 12;
+        runtime.session.sync(finished.clone());
+        assert_eq!(cached_projection(&runtime), finished);
+        assert!(runtime.session.snapshot().operation_idle);
+    }
+
+    #[test]
+    fn production_session_adapter_implements_restore_sequence_without_owning_session_state() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let runtime = ProductionWriteRuntime::from_adapters(tx, None, Some(trust_adapter()), true);
+        let idle = writable_snapshot(20);
+        runtime.session.sync(idle.clone());
         let operation = lantern_app::OperationId::new(7);
+
         runtime
             .session
             .begin_restore(operation, "plan")
             .expect("begin restore");
+        assert_eq!(cached_projection(&runtime), idle);
+        assert!(!runtime.session.snapshot().operation_idle);
         assert!(runtime.session.restore_matches(operation, "plan", 0));
-        runtime
-            .session
-            .advance_restore(operation, "plan", 1)
-            .expect("advance restore");
-        assert!(runtime.session.restore_matches(operation, "plan", 1));
-        runtime
-            .session
-            .finish_restore(operation, "plan")
-            .expect("finish restore");
         assert!(matches!(
             rx.try_recv(),
             Ok(ApplicationAction::Session(
                 SessionInput::RestoreStarted { .. }
             ))
         ));
+
+        let mut active = idle.clone();
+        active.operation_idle = false;
+        active.guard_revision = 21;
+        runtime.session.sync(active.clone());
+        runtime
+            .session
+            .advance_restore(operation, "plan", 1)
+            .expect("advance restore");
+        assert_eq!(cached_projection(&runtime), active);
+        assert!(runtime.session.restore_matches(operation, "plan", 1));
         assert!(matches!(
             rx.try_recv(),
             Ok(ApplicationAction::Session(SessionInput::RestoreAdvanced {
                 next_index: 1
             }))
         ));
+
+        runtime
+            .session
+            .finish_restore(operation, "plan")
+            .expect("finish restore");
+        assert_eq!(cached_projection(&runtime), active);
+        assert!(!runtime.session.snapshot().operation_idle);
         assert!(matches!(
             rx.try_recv(),
             Ok(ApplicationAction::Session(SessionInput::RestoreFinished))
         ));
+
+        let mut finished = idle;
+        finished.guard_revision = 22;
+        runtime.session.sync(finished.clone());
+        assert_eq!(cached_projection(&runtime), finished);
+        assert!(runtime.session.snapshot().operation_idle);
+    }
+
+    #[test]
+    fn restrictive_barriers_never_grant_write_capability_before_authoritative_sync() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let runtime = ProductionWriteRuntime::from_adapters(tx, None, Some(trust_adapter()), true);
+        let armed = writable_snapshot(30);
+        runtime.session.sync(armed.clone());
+
+        runtime.session.disarm();
+        assert_eq!(cached_projection(&runtime), armed);
+        assert!(!runtime.session.snapshot().armed);
+        assert!(
+            runtime
+                .session
+                .begin_single_write(
+                    lantern_app::OperationId::new(1),
+                    lantern_app::PlanId::new(1)
+                )
+                .is_err()
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ApplicationAction::Session(SessionInput::DisarmWrites))
+        ));
+
+        let mut disarmed = armed.clone();
+        disarmed.armed = false;
+        disarmed.guard_revision = 31;
+        runtime.session.sync(disarmed.clone());
+        assert_eq!(cached_projection(&runtime), disarmed);
+        assert!(!runtime.session.snapshot().armed);
+
+        let mut rearmed = armed;
+        rearmed.guard_revision = 32;
+        runtime.session.sync(rearmed.clone());
+        runtime.session.degrade_audit_and_disarm();
+        assert_eq!(cached_projection(&runtime), rearmed);
+        let effective = runtime.session.snapshot();
+        assert!(!effective.armed);
+        assert!(!effective.audit_healthy);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ApplicationAction::Session(
+                SessionInput::AuditPersistenceFailed { .. }
+            ))
+        ));
+
+        let mut degraded = rearmed;
+        degraded.armed = false;
+        degraded.audit_healthy = false;
+        degraded.guard_revision = 33;
+        runtime.session.sync(degraded.clone());
+        assert_eq!(cached_projection(&runtime), degraded);
+        let effective = runtime.session.snapshot();
+        assert!(!effective.armed);
+        assert!(!effective.audit_healthy);
     }
 }
