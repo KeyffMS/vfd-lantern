@@ -7,7 +7,7 @@ use lantern_app::{
 use ratatui::text::Line;
 
 use crate::{
-    ConnectionEdit, ParameterEditorUiState, UiState, filtered_parameters, selected_parameter,
+    ActiveEdit, ParameterEditorUiState, UiState, filtered_parameters, selected_parameter,
     visible_parameter_ids,
 };
 
@@ -104,7 +104,7 @@ fn parameter_lines_inner(
             lines.push(Line::from(
                 "Type the challenge exactly and press Enter; Esc cancels arming. Challenge expires after 30 seconds.",
             ));
-            if ui.connection_edit == Some(ConnectionEdit::WriteArming) {
+            if ui.active_edit == Some(ActiveEdit::WriteArming) {
                 lines.push(Line::from(format!("Arming confirmation: {}_", ui.form.value())));
             }
         }
@@ -203,7 +203,7 @@ fn parameter_lines_inner(
         lines.push(Line::from(
             "Press w to open phase-2 confirmation. Only an exact match can call confirm_write; Esc leaves the plan prepared, c cancels it.",
         ));
-        if ui.connection_edit == Some(ConnectionEdit::WriteConfirmation) {
+        if ui.active_edit == Some(ActiveEdit::WriteConfirmation) {
             lines.push(Line::from(format!(
                 "Write confirmation: {}_",
                 ui.form.value()

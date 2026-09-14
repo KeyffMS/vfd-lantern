@@ -1,7 +1,7 @@
 use lantern_app::ApplicationView;
 use ratatui::text::Line;
 
-use crate::{ConnectionEdit, UiState};
+use crate::{ActiveEdit, UiState};
 
 pub(crate) fn backup_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> {
     let state = view.backup_restore();
@@ -25,7 +25,7 @@ pub(crate) fn backup_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'st
         ));
     }
 
-    if ui.connection_edit == Some(ConnectionEdit::BackupSourcePath) {
+    if ui.active_edit == Some(ActiveEdit::BackupSourcePath) {
         lines.push(Line::from(format!(
             "Source backup path: {}_",
             ui.form.value()
@@ -35,7 +35,7 @@ pub(crate) fn backup_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'st
         ));
         lines.push(Line::from(""));
     }
-    if ui.connection_edit == Some(ConnectionEdit::RestoreConfirmation) {
+    if ui.active_edit == Some(ActiveEdit::RestoreConfirmation) {
         lines.push(Line::from(format!(
             "Restore confirmation: {}_",
             ui.form.value()
