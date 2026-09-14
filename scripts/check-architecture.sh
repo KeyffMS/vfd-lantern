@@ -124,4 +124,16 @@ if grep -q 'operator_text\.trim()' crates/lantern-app/src/application.rs; then
     exit 1
 fi
 
+
+projection_writers="$(grep -cF '*lock_projection(&self.projection) = projection;' crates/vfd-lantern/src/write_runtime.rs || true)"
+if [ "$projection_writers" -ne 1 ]; then
+    printf 'runtime write session projection must have exactly one writer: SyncSession\n' >&2
+    exit 1
+fi
+
+if grep -n -E 'let mut [[:alnum:]_]+ = lock_projection\(&self\.projection\);|lock_projection\(&self\.projection\)\.[[:alnum:]_]+[[:space:]]*=' \
+    crates/vfd-lantern/src/write_runtime.rs; then
+    printf 'runtime write adapter must not mutate application-owned session projection fields\n' >&2
+    exit 1
+fi
 printf 'architecture checks passed\n'
