@@ -234,6 +234,25 @@ impl UiState {
         self.reset_transient_navigation_state();
     }
 
+    fn begin_search_edit(&mut self, initial: String, edit: ConnectionEdit) {
+        self.form.replace(initial);
+        self.connection_edit = Some(edit);
+        self.focus = Focus::Content;
+    }
+
+    fn finish_search_edit(&mut self) {
+        self.connection_edit = None;
+        self.form.clear();
+        self.selected_index = 0;
+        self.focus = Focus::Navigation;
+    }
+
+    fn apply_search_edit(&mut self) -> String {
+        let value = self.form.value().trim().to_owned();
+        self.finish_search_edit();
+        value
+    }
+
     pub fn apply(&mut self, action: UiAction) {
         match action {
             UiAction::SelectScreen(screen) => self.switch_screen(screen),
@@ -274,61 +293,35 @@ impl UiState {
                 self.focus = Focus::Content;
             }
             UiAction::BeginProfileSearch => {
-                self.form.replace(self.profile_filter.clone());
-                self.connection_edit = Some(ConnectionEdit::ProfileSearch);
-                self.focus = Focus::Content;
+                self.begin_search_edit(self.profile_filter.clone(), ConnectionEdit::ProfileSearch)
             }
             UiAction::ApplyProfileSearch => {
-                self.profile_filter = self.form.value().trim().to_owned();
-                self.connection_edit = None;
-                self.form.clear();
-                self.selected_index = 0;
-                self.focus = Focus::Navigation;
+                self.profile_filter = self.apply_search_edit();
             }
             UiAction::ClearProfileSearch => {
                 self.profile_filter.clear();
-                self.form.clear();
-                self.connection_edit = None;
-                self.selected_index = 0;
-                self.focus = Focus::Navigation;
+                self.finish_search_edit();
             }
             UiAction::BeginScopeSearch => {
-                self.form.replace(self.scope_filter.clone());
-                self.connection_edit = Some(ConnectionEdit::ScopeSearch);
-                self.focus = Focus::Content;
+                self.begin_search_edit(self.scope_filter.clone(), ConnectionEdit::ScopeSearch)
             }
             UiAction::ApplyScopeSearch => {
-                self.scope_filter = self.form.value().trim().to_owned();
-                self.connection_edit = None;
-                self.form.clear();
-                self.selected_index = 0;
-                self.focus = Focus::Navigation;
+                self.scope_filter = self.apply_search_edit();
             }
             UiAction::ClearScopeSearch => {
                 self.scope_filter.clear();
-                self.form.clear();
-                self.connection_edit = None;
-                self.selected_index = 0;
-                self.focus = Focus::Navigation;
+                self.finish_search_edit();
             }
-            UiAction::BeginParameterSearch => {
-                self.form.replace(self.parameters.filters.search.clone());
-                self.connection_edit = Some(ConnectionEdit::ParameterSearch);
-                self.focus = Focus::Content;
-            }
+            UiAction::BeginParameterSearch => self.begin_search_edit(
+                self.parameters.filters.search.clone(),
+                ConnectionEdit::ParameterSearch,
+            ),
             UiAction::ApplyParameterSearch => {
-                self.parameters.filters.search = self.form.value().trim().to_owned();
-                self.connection_edit = None;
-                self.form.clear();
-                self.selected_index = 0;
-                self.focus = Focus::Navigation;
+                self.parameters.filters.search = self.apply_search_edit();
             }
             UiAction::ClearParameterSearch => {
                 self.parameters.filters.search.clear();
-                self.form.clear();
-                self.connection_edit = None;
-                self.selected_index = 0;
-                self.focus = Focus::Navigation;
+                self.finish_search_edit();
             }
             UiAction::BeginWriteArming => {
                 self.form.clear();
@@ -836,5 +829,94 @@ mod screen_transition_refactor_tests {
         assert_eq!(state.connection_edit, None);
         assert_eq!(state.form.value(), "");
         assert_eq!(state.focus, Focus::Content);
+    }
+}
+
+#[cfg(test)]
+mod search_lifecycle_refactor_tests {
+    use super::{ConnectionEdit, Focus, UiAction, UiState};
+
+    fn assert_search_closed(state: &UiState) {
+        assert_eq!(state.connection_edit, None);
+        assert_eq!(state.form.value(), "");
+        assert_eq!(state.selected_index, 0);
+        assert_eq!(state.focus, Focus::Navigation);
+    }
+
+    #[test]
+    fn profile_scope_and_parameter_search_share_begin_and_apply_lifecycle() {
+        let mut profile = UiState {
+            profile_filter: "old-profile".to_owned(),
+            selected_index: 5,
+            ..UiState::default()
+        };
+        profile.apply(UiAction::BeginProfileSearch);
+        assert_eq!(profile.form.value(), "old-profile");
+        assert_eq!(profile.connection_edit, Some(ConnectionEdit::ProfileSearch));
+        assert_eq!(profile.focus, Focus::Content);
+        profile.form.replace("  new-profile  ");
+        profile.apply(UiAction::ApplyProfileSearch);
+        assert_eq!(profile.profile_filter, "new-profile");
+        assert_search_closed(&profile);
+
+        let mut scope = UiState {
+            scope_filter: "old-scope".to_owned(),
+            selected_index: 6,
+            ..UiState::default()
+        };
+        scope.apply(UiAction::BeginScopeSearch);
+        assert_eq!(scope.form.value(), "old-scope");
+        assert_eq!(scope.connection_edit, Some(ConnectionEdit::ScopeSearch));
+        assert_eq!(scope.focus, Focus::Content);
+        scope.form.replace("  new-scope  ");
+        scope.apply(UiAction::ApplyScopeSearch);
+        assert_eq!(scope.scope_filter, "new-scope");
+        assert_search_closed(&scope);
+
+        let mut parameter = UiState::default();
+        parameter.parameters.filters.search = "old-parameter".to_owned();
+        parameter.selected_index = 7;
+        parameter.apply(UiAction::BeginParameterSearch);
+        assert_eq!(parameter.form.value(), "old-parameter");
+        assert_eq!(
+            parameter.connection_edit,
+            Some(ConnectionEdit::ParameterSearch)
+        );
+        assert_eq!(parameter.focus, Focus::Content);
+        parameter.form.replace("  new-parameter  ");
+        parameter.apply(UiAction::ApplyParameterSearch);
+        assert_eq!(parameter.parameters.filters.search, "new-parameter");
+        assert_search_closed(&parameter);
+    }
+
+    #[test]
+    fn all_search_clear_actions_use_the_same_close_lifecycle() {
+        let mut profile = UiState {
+            profile_filter: "profile".to_owned(),
+            selected_index: 3,
+            ..UiState::default()
+        };
+        profile.apply(UiAction::BeginProfileSearch);
+        profile.apply(UiAction::ClearProfileSearch);
+        assert_eq!(profile.profile_filter, "");
+        assert_search_closed(&profile);
+
+        let mut scope = UiState {
+            scope_filter: "scope".to_owned(),
+            selected_index: 4,
+            ..UiState::default()
+        };
+        scope.apply(UiAction::BeginScopeSearch);
+        scope.apply(UiAction::ClearScopeSearch);
+        assert_eq!(scope.scope_filter, "");
+        assert_search_closed(&scope);
+
+        let mut parameter = UiState::default();
+        parameter.parameters.filters.search = "parameter".to_owned();
+        parameter.selected_index = 5;
+        parameter.apply(UiAction::BeginParameterSearch);
+        parameter.apply(UiAction::ClearParameterSearch);
+        assert_eq!(parameter.parameters.filters.search, "");
+        assert_search_closed(&parameter);
     }
 }
