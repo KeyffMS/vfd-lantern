@@ -221,24 +221,25 @@ pub enum UiAction {
 }
 
 impl UiState {
+    fn reset_transient_navigation_state(&mut self) {
+        self.scroll_offset = 0;
+        self.selected_index = 0;
+        self.connection_edit = None;
+        self.parameters.editor = None;
+        self.form.clear();
+    }
+
+    fn switch_screen(&mut self, screen: Screen) {
+        self.screen = screen;
+        self.reset_transient_navigation_state();
+    }
+
     pub fn apply(&mut self, action: UiAction) {
         match action {
-            UiAction::SelectScreen(screen) => {
-                self.screen = screen;
-                self.scroll_offset = 0;
-                self.selected_index = 0;
-                self.connection_edit = None;
-                self.parameters.editor = None;
-                self.form.clear();
-            }
+            UiAction::SelectScreen(screen) => self.switch_screen(screen),
             UiAction::NextScreen => {
                 let next = (self.screen.index() + 1) % Screen::ALL.len();
-                self.screen = Screen::ALL[next];
-                self.scroll_offset = 0;
-                self.selected_index = 0;
-                self.connection_edit = None;
-                self.parameters.editor = None;
-                self.form.clear();
+                self.switch_screen(Screen::ALL[next]);
             }
             UiAction::PreviousScreen => {
                 let index = self.screen.index();
@@ -247,12 +248,7 @@ impl UiState {
                 } else {
                     index - 1
                 };
-                self.screen = Screen::ALL[previous];
-                self.scroll_offset = 0;
-                self.selected_index = 0;
-                self.connection_edit = None;
-                self.parameters.editor = None;
-                self.form.clear();
+                self.switch_screen(Screen::ALL[previous]);
             }
             UiAction::ScrollUp => {
                 self.scroll_offset = self.scroll_offset.saturating_sub(1);
@@ -394,12 +390,8 @@ impl UiState {
                 self.selected_index = 0;
             }
             UiAction::OpenParameterIndex(index) => {
-                self.screen = Screen::Parameters;
+                self.switch_screen(Screen::Parameters);
                 self.selected_index = index;
-                self.scroll_offset = 0;
-                self.connection_edit = None;
-                self.parameters.editor = None;
-                self.form.clear();
             }
             UiAction::BeginParameterTextEditor {
                 parameter_id,
@@ -788,5 +780,61 @@ mod tests {
         state.apply(UiAction::CloseModal);
         assert!(state.modal.is_none());
         assert_eq!(state.focus, Focus::Navigation);
+    }
+}
+
+#[cfg(test)]
+mod screen_transition_refactor_tests {
+    use super::{ConnectionEdit, Focus, Screen, UiAction, UiState};
+
+    fn dirty_state(screen: Screen) -> UiState {
+        let mut state = UiState {
+            screen,
+            focus: Focus::Content,
+            scroll_offset: 7,
+            selected_index: 4,
+            connection_edit: Some(ConnectionEdit::ProfileSearch),
+            ..UiState::default()
+        };
+        state.form.replace("transient input");
+        state
+    }
+
+    fn assert_transient_reset(state: &UiState) {
+        assert_eq!(state.scroll_offset, 0);
+        assert_eq!(state.selected_index, 0);
+        assert_eq!(state.connection_edit, None);
+        assert_eq!(state.form.value(), "");
+        assert_eq!(state.focus, Focus::Content);
+    }
+
+    #[test]
+    fn select_next_and_previous_screen_share_the_same_transient_reset() {
+        let mut selected = dirty_state(Screen::Connection);
+        selected.apply(UiAction::SelectScreen(Screen::Dashboard));
+        assert_eq!(selected.screen, Screen::Dashboard);
+        assert_transient_reset(&selected);
+
+        let mut next = dirty_state(Screen::Dashboard);
+        next.apply(UiAction::NextScreen);
+        assert_eq!(next.screen, Screen::Scope);
+        assert_transient_reset(&next);
+
+        let mut previous = dirty_state(Screen::Dashboard);
+        previous.apply(UiAction::PreviousScreen);
+        assert_eq!(previous.screen, Screen::Connection);
+        assert_transient_reset(&previous);
+    }
+
+    #[test]
+    fn open_parameter_index_reuses_screen_reset_and_restores_requested_index() {
+        let mut state = dirty_state(Screen::Faults);
+        state.apply(UiAction::OpenParameterIndex(42));
+        assert_eq!(state.screen, Screen::Parameters);
+        assert_eq!(state.scroll_offset, 0);
+        assert_eq!(state.selected_index, 42);
+        assert_eq!(state.connection_edit, None);
+        assert_eq!(state.form.value(), "");
+        assert_eq!(state.focus, Focus::Content);
     }
 }
