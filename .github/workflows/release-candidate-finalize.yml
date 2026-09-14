@@ -142,7 +142,7 @@ jobs:
 
       - name: Prepare dry-run product snapshot from explicit source run
         if: ${{ inputs.dry_run }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ inputs.product_artifact_name }}
           path: target/finalize/assets
@@ -152,7 +152,7 @@ jobs:
 
       - name: Prepare dry-run gate reports from explicit source run
         if: ${{ inputs.dry_run }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ inputs.reports_artifact_name }}
           path: target/finalize/reports
