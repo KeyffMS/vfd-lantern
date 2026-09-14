@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::{
-    ConnectionEdit, HELP_BINDINGS, Screen, Theme, UiState,
+    ActiveEdit, HELP_BINDINGS, Screen, Theme, UiState,
     fault_render::fault_lines,
     monitoring_parameter_matches_filter,
     monitoring_render::{
@@ -205,7 +205,7 @@ fn scope_lines(view: &ApplicationView, ui: &UiState, area_width: u16) -> Vec<Lin
     }
     let monitoring = view.monitoring();
     let status = if ui.scope.paused { "PAUSED" } else { "LIVE" };
-    let filter = if ui.connection_edit == Some(ConnectionEdit::ScopeSearch) {
+    let filter = if ui.active_edit == Some(ActiveEdit::ScopeSearch) {
         ui.form.value()
     } else {
         &ui.scope_filter
@@ -223,7 +223,7 @@ fn scope_lines(view: &ApplicationView, ui: &UiState, area_width: u16) -> Vec<Lin
     lines.push(Line::from(
         "Space pause | w window | ,/. pan | +/- zoom | c cursor | p/n sample | / search | Enter channel | m panel | H clear history",
     ));
-    if ui.connection_edit == Some(ConnectionEdit::ScopeSearch) {
+    if ui.active_edit == Some(ActiveEdit::ScopeSearch) {
         lines.push(Line::from(format!("Scope search: {filter}_")));
     }
     if let Some(error) = &monitoring.error {
@@ -352,7 +352,7 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
                     port.product.as_deref().unwrap_or("-"),
                 )));
             }
-            if ui.connection_edit == Some(ConnectionEdit::ManualPath) {
+            if ui.active_edit == Some(ActiveEdit::ManualPath) {
                 lines.push(Line::from(""));
                 lines.push(Line::from(format!(
                     "Manual device path: {}_",
@@ -371,12 +371,12 @@ fn connection_lines(view: &ApplicationView, ui: &UiState) -> Vec<Line<'static>> 
             lines.push(Line::from(
                 "Select one validated profile: j/k, Enter. / searches vendor/family/model/profile ID; x clears; Esc returns.",
             ));
-            let active_filter = if ui.connection_edit == Some(ConnectionEdit::ProfileSearch) {
+            let active_filter = if ui.active_edit == Some(ActiveEdit::ProfileSearch) {
                 ui.form.value()
             } else {
                 &ui.profile_filter
             };
-            if ui.connection_edit == Some(ConnectionEdit::ProfileSearch) {
+            if ui.active_edit == Some(ActiveEdit::ProfileSearch) {
                 lines.push(Line::from(format!("Profile search: {active_filter}_")));
                 lines.push(Line::from(
                     "Enter applies the search; Esc keeps the previous filter.",

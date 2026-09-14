@@ -66,7 +66,7 @@ pub enum Focus {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ConnectionEdit {
+pub enum ActiveEdit {
     ManualPath,
     ProfileSearch,
     ScopeSearch,
@@ -85,11 +85,11 @@ enum SearchTarget {
 }
 
 impl SearchTarget {
-    const fn edit(self) -> ConnectionEdit {
+    const fn edit(self) -> ActiveEdit {
         match self {
-            Self::Profile => ConnectionEdit::ProfileSearch,
-            Self::Scope => ConnectionEdit::ScopeSearch,
-            Self::Parameter => ConnectionEdit::ParameterSearch,
+            Self::Profile => ActiveEdit::ProfileSearch,
+            Self::Scope => ActiveEdit::ScopeSearch,
+            Self::Parameter => ActiveEdit::ParameterSearch,
         }
     }
 }
@@ -124,7 +124,7 @@ pub struct UiState {
     pub scroll_offset: usize,
     pub selected_index: usize,
     pub form: FormState,
-    pub connection_edit: Option<ConnectionEdit>,
+    pub active_edit: Option<ActiveEdit>,
     pub profile_filter: String,
     pub scope_filter: String,
     pub scope: ScopeUiState,
@@ -142,7 +142,7 @@ impl Default for UiState {
             scroll_offset: 0,
             selected_index: 0,
             form: FormState::default(),
-            connection_edit: None,
+            active_edit: None,
             profile_filter: String::new(),
             scope_filter: String::new(),
             scope: ScopeUiState::default(),
@@ -255,7 +255,7 @@ impl UiState {
     }
 
     fn finish_search(&mut self) {
-        self.connection_edit = None;
+        self.active_edit = None;
         self.form.clear();
         self.selected_index = 0;
         self.focus = Focus::Navigation;
@@ -264,7 +264,7 @@ impl UiState {
     fn begin_search(&mut self, target: SearchTarget) {
         let filter = self.search_filter(target).to_owned();
         self.form.replace(filter);
-        self.connection_edit = Some(target.edit());
+        self.active_edit = Some(target.edit());
         self.focus = Focus::Content;
     }
 
@@ -282,7 +282,7 @@ impl UiState {
     fn reset_transient_navigation_state(&mut self) {
         self.scroll_offset = 0;
         self.selected_index = 0;
-        self.connection_edit = None;
+        self.active_edit = None;
         self.parameters.editor = None;
         self.form.clear();
     }
@@ -328,7 +328,7 @@ impl UiState {
             }
             UiAction::BeginManualPath(initial) => {
                 self.form.replace(initial);
-                self.connection_edit = Some(ConnectionEdit::ManualPath);
+                self.active_edit = Some(ActiveEdit::ManualPath);
                 self.focus = Focus::Content;
             }
             UiAction::BeginProfileSearch => self.begin_search(SearchTarget::Profile),
@@ -342,25 +342,25 @@ impl UiState {
             UiAction::ClearParameterSearch => self.clear_search(SearchTarget::Parameter),
             UiAction::BeginWriteArming => {
                 self.form.clear();
-                self.connection_edit = Some(ConnectionEdit::WriteArming);
+                self.active_edit = Some(ActiveEdit::WriteArming);
                 self.parameters.editor = None;
                 self.focus = Focus::Content;
             }
             UiAction::BeginWriteConfirmation => {
                 self.form.clear();
-                self.connection_edit = Some(ConnectionEdit::WriteConfirmation);
+                self.active_edit = Some(ActiveEdit::WriteConfirmation);
                 self.parameters.editor = None;
                 self.focus = Focus::Content;
             }
             UiAction::BeginBackupSourcePath(initial) => {
                 self.form.replace(initial);
-                self.connection_edit = Some(ConnectionEdit::BackupSourcePath);
+                self.active_edit = Some(ActiveEdit::BackupSourcePath);
                 self.parameters.editor = None;
                 self.focus = Focus::Content;
             }
             UiAction::BeginRestoreConfirmation => {
                 self.form.clear();
-                self.connection_edit = Some(ConnectionEdit::RestoreConfirmation);
+                self.active_edit = Some(ActiveEdit::RestoreConfirmation);
                 self.parameters.editor = None;
                 self.focus = Focus::Content;
             }
@@ -410,7 +410,7 @@ impl UiState {
             } => {
                 self.form.replace(initial);
                 self.parameters.editor = Some(ParameterEditorUiState::Text { parameter_id, kind });
-                self.connection_edit = None;
+                self.active_edit = None;
                 self.focus = Focus::Content;
             }
             UiAction::BeginParameterEnumEditor {
@@ -421,7 +421,7 @@ impl UiState {
                     parameter_id,
                     option_index,
                 });
-                self.connection_edit = None;
+                self.active_edit = None;
                 self.focus = Focus::Content;
             }
             UiAction::BeginParameterBitfieldEditor {
@@ -434,7 +434,7 @@ impl UiState {
                     flag_index,
                     value,
                 });
-                self.connection_edit = None;
+                self.active_edit = None;
                 self.focus = Focus::Content;
             }
             UiAction::ParameterSetEditorIndex(index) => {
@@ -465,7 +465,7 @@ impl UiState {
             UiAction::InputChar(character) => self.form.insert(character),
             UiAction::Backspace => self.form.backspace(),
             UiAction::CancelEdit => {
-                self.connection_edit = None;
+                self.active_edit = None;
                 self.form.clear();
                 self.focus = Focus::Navigation;
             }
@@ -595,7 +595,7 @@ mod tests {
     };
 
     use super::{
-        ConnectionEdit, Focus, ModalState, Screen, UiAction, UiState,
+        ActiveEdit, Focus, ModalState, Screen, UiAction, UiState,
         monitoring_parameter_matches_filter, profile_fields_match_filter,
     };
     use crate::{ScopeWindow, ScopeYRange};
@@ -695,7 +695,7 @@ mod tests {
         }
         state.apply(UiAction::ApplyScopeSearch);
         assert_eq!(state.scope_filter, "rpm");
-        assert!(state.connection_edit.is_none());
+        assert!(state.active_edit.is_none());
     }
 
     #[test]
@@ -703,26 +703,20 @@ mod tests {
         let mut state = UiState::default();
         state.apply(UiAction::BeginManualPath("/dev/ttyUSB".to_owned()));
         state.apply(UiAction::InputChar('0'));
-        assert_eq!(state.connection_edit, Some(ConnectionEdit::ManualPath));
+        assert_eq!(state.active_edit, Some(ActiveEdit::ManualPath));
         assert_eq!(state.form.value(), "/dev/ttyUSB0");
         state.apply(UiAction::CancelEdit);
-        assert!(state.connection_edit.is_none());
+        assert!(state.active_edit.is_none());
     }
 
     #[test]
     fn backup_and_restore_edits_are_presentation_only() {
         let mut state = UiState::default();
         state.apply(UiAction::BeginBackupSourcePath("/data/backup".to_owned()));
-        assert_eq!(
-            state.connection_edit,
-            Some(ConnectionEdit::BackupSourcePath)
-        );
+        assert_eq!(state.active_edit, Some(ActiveEdit::BackupSourcePath));
         state.apply(UiAction::CancelEdit);
         state.apply(UiAction::BeginRestoreConfirmation);
-        assert_eq!(
-            state.connection_edit,
-            Some(ConnectionEdit::RestoreConfirmation)
-        );
+        assert_eq!(state.active_edit, Some(ActiveEdit::RestoreConfirmation));
     }
 
     #[test]
@@ -763,7 +757,7 @@ mod tests {
         }
         state.apply(UiAction::ApplyProfileSearch);
         assert_eq!(state.profile_filter, "vfd1000");
-        assert!(state.connection_edit.is_none());
+        assert!(state.active_edit.is_none());
     }
 
     #[test]
@@ -795,7 +789,7 @@ mod tests {
 
 #[cfg(test)]
 mod screen_transition_refactor_tests {
-    use super::{ConnectionEdit, Focus, Screen, UiAction, UiState};
+    use super::{ActiveEdit, Focus, Screen, UiAction, UiState};
 
     fn dirty_state(screen: Screen) -> UiState {
         let mut state = UiState {
@@ -803,7 +797,7 @@ mod screen_transition_refactor_tests {
             focus: Focus::Content,
             scroll_offset: 7,
             selected_index: 4,
-            connection_edit: Some(ConnectionEdit::ProfileSearch),
+            active_edit: Some(ActiveEdit::ProfileSearch),
             ..UiState::default()
         };
         state.form.replace("transient input");
@@ -813,7 +807,7 @@ mod screen_transition_refactor_tests {
     fn assert_transient_reset(state: &UiState) {
         assert_eq!(state.scroll_offset, 0);
         assert_eq!(state.selected_index, 0);
-        assert_eq!(state.connection_edit, None);
+        assert_eq!(state.active_edit, None);
         assert_eq!(state.form.value(), "");
         assert_eq!(state.focus, Focus::Content);
     }
@@ -843,7 +837,7 @@ mod screen_transition_refactor_tests {
         assert_eq!(state.screen, Screen::Parameters);
         assert_eq!(state.scroll_offset, 0);
         assert_eq!(state.selected_index, 42);
-        assert_eq!(state.connection_edit, None);
+        assert_eq!(state.active_edit, None);
         assert_eq!(state.form.value(), "");
         assert_eq!(state.focus, Focus::Content);
     }
@@ -851,14 +845,14 @@ mod screen_transition_refactor_tests {
 
 #[cfg(test)]
 mod search_lifecycle_refactor_tests {
-    use super::{ConnectionEdit, Focus, Screen, UiAction, UiState};
+    use super::{ActiveEdit, Focus, Screen, UiAction, UiState};
 
     fn assert_search_lifecycle(
         mut state: UiState,
         begin: UiAction,
         apply: UiAction,
         clear: UiAction,
-        expected_edit: ConnectionEdit,
+        expected_edit: ActiveEdit,
         filter: fn(&UiState) -> &str,
     ) {
         let screen = state.screen;
@@ -867,7 +861,7 @@ mod search_lifecycle_refactor_tests {
         let initial_filter = filter(&state).to_owned();
 
         state.apply(begin.clone());
-        assert_eq!(state.connection_edit, Some(expected_edit));
+        assert_eq!(state.active_edit, Some(expected_edit));
         assert_eq!(state.focus, Focus::Content);
         assert_eq!(state.form.value(), initial_filter);
         assert_eq!(state.selected_index, 4);
@@ -877,7 +871,7 @@ mod search_lifecycle_refactor_tests {
         state.form.replace("  needle  ");
         state.apply(apply);
         assert_eq!(filter(&state), "needle");
-        assert_eq!(state.connection_edit, None);
+        assert_eq!(state.active_edit, None);
         assert_eq!(state.form.value(), "");
         assert_eq!(state.selected_index, 0);
         assert_eq!(state.scroll_offset, 9);
@@ -888,7 +882,7 @@ mod search_lifecycle_refactor_tests {
         state.apply(begin);
         state.apply(clear);
         assert_eq!(filter(&state), "");
-        assert_eq!(state.connection_edit, None);
+        assert_eq!(state.active_edit, None);
         assert_eq!(state.form.value(), "");
         assert_eq!(state.selected_index, 0);
         assert_eq!(state.scroll_offset, 9);
@@ -908,7 +902,7 @@ mod search_lifecycle_refactor_tests {
             UiAction::BeginProfileSearch,
             UiAction::ApplyProfileSearch,
             UiAction::ClearProfileSearch,
-            ConnectionEdit::ProfileSearch,
+            ActiveEdit::ProfileSearch,
             |state| &state.profile_filter,
         );
 
@@ -922,7 +916,7 @@ mod search_lifecycle_refactor_tests {
             UiAction::BeginScopeSearch,
             UiAction::ApplyScopeSearch,
             UiAction::ClearScopeSearch,
-            ConnectionEdit::ScopeSearch,
+            ActiveEdit::ScopeSearch,
             |state| &state.scope_filter,
         );
 
@@ -936,7 +930,7 @@ mod search_lifecycle_refactor_tests {
             UiAction::BeginParameterSearch,
             UiAction::ApplyParameterSearch,
             UiAction::ClearParameterSearch,
-            ConnectionEdit::ParameterSearch,
+            ActiveEdit::ParameterSearch,
             |state| &state.parameters.filters.search,
         );
     }

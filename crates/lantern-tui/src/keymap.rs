@@ -11,7 +11,7 @@ use lantern_app::{
 };
 
 use crate::{
-    ConnectionEdit, Screen, UiAction, UiState,
+    ActiveEdit, Screen, UiAction, UiState,
     fault_keymap::map_fault_key,
     monitoring_parameter_matches_filter,
     parameter_keymap::{map_parameter_editor_key, map_parameter_key},
@@ -262,9 +262,9 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
         return map_parameter_editor_key(ui, view, key);
     }
 
-    if let Some(edit) = ui.connection_edit {
+    if let Some(edit) = ui.active_edit {
         return match edit {
-            ConnectionEdit::ManualPath => match key.code {
+            ActiveEdit::ManualPath => match key.code {
                 KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
                 KeyCode::Enter => Some(MappedAction::Combined {
                     ui: UiAction::CancelEdit,
@@ -276,28 +276,28 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
                 KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
                 _ => None,
             },
-            ConnectionEdit::ProfileSearch => match key.code {
+            ActiveEdit::ProfileSearch => match key.code {
                 KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
                 KeyCode::Enter => Some(MappedAction::Ui(UiAction::ApplyProfileSearch)),
                 KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
                 KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
                 _ => None,
             },
-            ConnectionEdit::ScopeSearch => match key.code {
+            ActiveEdit::ScopeSearch => match key.code {
                 KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
                 KeyCode::Enter => Some(MappedAction::Ui(UiAction::ApplyScopeSearch)),
                 KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
                 KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
                 _ => None,
             },
-            ConnectionEdit::ParameterSearch => match key.code {
+            ActiveEdit::ParameterSearch => match key.code {
                 KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
                 KeyCode::Enter => Some(MappedAction::Ui(UiAction::ApplyParameterSearch)),
                 KeyCode::Backspace => Some(MappedAction::Ui(UiAction::Backspace)),
                 KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
                 _ => None,
             },
-            ConnectionEdit::WriteArming => match key.code {
+            ActiveEdit::WriteArming => match key.code {
                 KeyCode::Esc => Some(MappedAction::Combined {
                     ui: UiAction::CancelEdit,
                     application: Box::new(ApplicationAction::Session(SessionInput::CancelArming)),
@@ -320,7 +320,7 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
                 KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
                 _ => None,
             },
-            ConnectionEdit::WriteConfirmation => match key.code {
+            ActiveEdit::WriteConfirmation => match key.code {
                 KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
                 KeyCode::Enter => Some(MappedAction::Combined {
                     ui: UiAction::CancelEdit,
@@ -334,7 +334,7 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
                 KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
                 _ => None,
             },
-            ConnectionEdit::BackupSourcePath => match key.code {
+            ActiveEdit::BackupSourcePath => match key.code {
                 KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
                 KeyCode::Enter => Some(MappedAction::Combined {
                     ui: UiAction::CancelEdit,
@@ -346,7 +346,7 @@ pub fn map_key(ui: &UiState, view: &ApplicationView, key: KeyEvent) -> Option<Ma
                 KeyCode::Char(character) => Some(MappedAction::Ui(UiAction::InputChar(character))),
                 _ => None,
             },
-            ConnectionEdit::RestoreConfirmation => match key.code {
+            ActiveEdit::RestoreConfirmation => match key.code {
                 KeyCode::Esc => Some(MappedAction::Ui(UiAction::CancelEdit)),
                 KeyCode::Enter => Some(MappedAction::Combined {
                     ui: UiAction::CancelEdit,
@@ -661,7 +661,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use lantern_app::ApplicationView;
 
-    use crate::{ConnectionEdit, ModalState, Screen, UiAction, UiState};
+    use crate::{ActiveEdit, ModalState, Screen, UiAction, UiState};
 
     use super::{MappedAction, keymap_is_collision_free, map_key};
 
@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn manual_path_mode_treats_q_as_text_not_shutdown() {
         let ui = UiState {
-            connection_edit: Some(ConnectionEdit::ManualPath),
+            active_edit: Some(ActiveEdit::ManualPath),
             ..UiState::default()
         };
         let view = ApplicationView::default();
@@ -704,7 +704,7 @@ mod tests {
     fn scope_search_mode_treats_q_as_filter_text_not_shutdown() {
         let ui = UiState {
             screen: Screen::Scope,
-            connection_edit: Some(ConnectionEdit::ScopeSearch),
+            active_edit: Some(ActiveEdit::ScopeSearch),
             ..UiState::default()
         };
         let view = ApplicationView::default();
@@ -718,7 +718,7 @@ mod tests {
     #[test]
     fn profile_search_mode_treats_q_as_filter_text_not_shutdown() {
         let ui = UiState {
-            connection_edit: Some(ConnectionEdit::ProfileSearch),
+            active_edit: Some(ActiveEdit::ProfileSearch),
             ..UiState::default()
         };
         let view = ApplicationView::default();
@@ -733,7 +733,7 @@ mod tests {
     fn backup_source_path_mode_treats_q_as_path_text() {
         let ui = UiState {
             screen: Screen::Backup,
-            connection_edit: Some(ConnectionEdit::BackupSourcePath),
+            active_edit: Some(ActiveEdit::BackupSourcePath),
             ..UiState::default()
         };
         let view = ApplicationView::default();
