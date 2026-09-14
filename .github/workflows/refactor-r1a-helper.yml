@@ -1,0 +1,184 @@
+name: Refactor R1a helper
+
+on:
+  push:
+    branches:
+      - agent/refactor-r1a-ui-state
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/refactor-r1a-ui-state
+          fetch-depth: 0
+      - name: Apply exact R1a transformation
+        shell: bash
+        run: |
+          set -euo pipefail
+          file=crates/lantern-tui/src/ui_state.rs
+
+          perl -0777 -pi -e '
+          $old = q{impl UiState {
+              pub fn apply(&mut self, action: UiAction) {};
+          $new = q{impl UiState {
+              fn reset_transient_navigation_state(&mut self) {
+                  self.scroll_offset = 0;
+                  self.selected_index = 0;
+                  self.connection_edit = None;
+                  self.parameters.editor = None;
+                  self.form.clear();
+              }
+
+              fn switch_screen(&mut self, screen: Screen) {
+                  self.screen = screen;
+                  self.reset_transient_navigation_state();
+              }
+
+              pub fn apply(&mut self, action: UiAction) {};
+          $count = s/\Q$old\E/$new/;
+          die "R1a helper insertion matched $count times\n" unless $count == 1;
+          ' "$file"
+
+          perl -0777 -pi -e '
+          $old = q{            UiAction::SelectScreen(screen) => {
+                          self.screen = screen;
+                          self.scroll_offset = 0;
+                          self.selected_index = 0;
+                          self.connection_edit = None;
+                          self.parameters.editor = None;
+                          self.form.clear();
+                      }
+                      UiAction::NextScreen => {
+                          let next = (self.screen.index() + 1) % Screen::ALL.len();
+                          self.screen = Screen::ALL[next];
+                          self.scroll_offset = 0;
+                          self.selected_index = 0;
+                          self.connection_edit = None;
+                          self.parameters.editor = None;
+                          self.form.clear();
+                      }
+                      UiAction::PreviousScreen => {
+                          let index = self.screen.index();
+                          let previous = if index == 0 {
+                              Screen::ALL.len() - 1
+                          } else {
+                              index - 1
+                          };
+                          self.screen = Screen::ALL[previous];
+                          self.scroll_offset = 0;
+                          self.selected_index = 0;
+                          self.connection_edit = None;
+                          self.parameters.editor = None;
+                          self.form.clear();
+                      }};
+          $new = q{            UiAction::SelectScreen(screen) => self.switch_screen(screen),
+                      UiAction::NextScreen => {
+                          let next = (self.screen.index() + 1) % Screen::ALL.len();
+                          self.switch_screen(Screen::ALL[next]);
+                      }
+                      UiAction::PreviousScreen => {
+                          let index = self.screen.index();
+                          let previous = if index == 0 {
+                              Screen::ALL.len() - 1
+                          } else {
+                              index - 1
+                          };
+                          self.switch_screen(Screen::ALL[previous]);
+                      }};
+          $count = s/\Q$old\E/$new/;
+          die "R1a screen actions matched $count times\n" unless $count == 1;
+          ' "$file"
+
+          perl -0777 -pi -e '
+          $old = q{            UiAction::OpenParameterIndex(index) => {
+                          self.screen = Screen::Parameters;
+                          self.selected_index = index;
+                          self.scroll_offset = 0;
+                          self.connection_edit = None;
+                          self.parameters.editor = None;
+                          self.form.clear();
+                      }};
+          $new = q{            UiAction::OpenParameterIndex(index) => {
+                          self.switch_screen(Screen::Parameters);
+                          self.selected_index = index;
+                      }};
+          $count = s/\Q$old\E/$new/;
+          die "R1a parameter route matched $count times\n" unless $count == 1;
+          ' "$file"
+
+          cat >> "$file" <<'EOF'
+
+          #[cfg(test)]
+          mod screen_transition_refactor_tests {
+              use super::{ConnectionEdit, Focus, Screen, UiAction, UiState};
+
+              fn dirty_state(screen: Screen) -> UiState {
+                  let mut state = UiState {
+                      screen,
+                      focus: Focus::Content,
+                      scroll_offset: 7,
+                      selected_index: 4,
+                      connection_edit: Some(ConnectionEdit::ProfileSearch),
+                      ..UiState::default()
+                  };
+                  state.form.replace("transient input");
+                  state
+              }
+
+              fn assert_transient_reset(state: &UiState) {
+                  assert_eq!(state.scroll_offset, 0);
+                  assert_eq!(state.selected_index, 0);
+                  assert_eq!(state.connection_edit, None);
+                  assert_eq!(state.form.value(), "");
+                  assert_eq!(state.focus, Focus::Content);
+              }
+
+              #[test]
+              fn select_next_and_previous_screen_share_the_same_transient_reset() {
+                  let mut selected = dirty_state(Screen::Connection);
+                  selected.apply(UiAction::SelectScreen(Screen::Dashboard));
+                  assert_eq!(selected.screen, Screen::Dashboard);
+                  assert_transient_reset(&selected);
+
+                  let mut next = dirty_state(Screen::Dashboard);
+                  next.apply(UiAction::NextScreen);
+                  assert_eq!(next.screen, Screen::Scope);
+                  assert_transient_reset(&next);
+
+                  let mut previous = dirty_state(Screen::Dashboard);
+                  previous.apply(UiAction::PreviousScreen);
+                  assert_eq!(previous.screen, Screen::Connection);
+                  assert_transient_reset(&previous);
+              }
+
+              #[test]
+              fn open_parameter_index_reuses_screen_reset_and_restores_requested_index() {
+                  let mut state = dirty_state(Screen::Faults);
+                  state.apply(UiAction::OpenParameterIndex(42));
+                  assert_eq!(state.screen, Screen::Parameters);
+                  assert_eq!(state.scroll_offset, 0);
+                  assert_eq!(state.selected_index, 42);
+                  assert_eq!(state.connection_edit, None);
+                  assert_eq!(state.form.value(), "");
+                  assert_eq!(state.focus, Focus::Content);
+              }
+          }
+          EOF
+
+          cargo fmt --all
+          cargo test --locked -p lantern-tui
+          sh scripts/check-architecture.sh
+
+          git rm .github/workflows/refactor-r1a-helper.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$file"
+          git diff --cached --check
+          git commit -m "refactor: deduplicate TUI screen transitions (R1a)"
+          git push origin HEAD:agent/refactor-r1a-ui-state
