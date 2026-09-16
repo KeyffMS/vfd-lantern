@@ -7,16 +7,16 @@ use thiserror::Error;
 use crate::{
     AuditHealth, Authorization, BackupCaptureRequest, BackupRestoreAction, BackupRestoreEffect,
     BackupRestoreState, BusError, ConnectionAction, ConnectionAttemptKind, ConnectionEffect,
-    ConnectionFailure, ConnectionStep, ConnectionWizardState, Connectivity,
-    CsvLoggingFaultSummary, CsvLoggingRuntimeStatus, CsvLoggingStateView, FaultAction, FaultEffect,
-    FaultTracker, MAX_PARAMETER_BROWSER_VISIBLE, MonitoringAction, MonitoringEffect,
-    MonitoringRuntimeSnapshot, MonitoringView, OperationState, ParameterAction,
-    ParameterBrowserView, ParameterDescriptorView, ParameterIntentContext,
-    ParameterWritePresentation, PreparedWritePlan, ProfileRegistry, RestoreConfirmation,
-    ScopeSelection, SerialConnectError, SessionEffect, SessionFault, SessionInput, SessionState,
-    SessionStateMachine, StagedWriteIntent, WriteConfirmation, WriteConfirmationModel, WriteEffect,
-    WriteSessionSnapshot, default_dashboard_parameters, parameter_catalog,
-    prepare_parameter_intent, project_monitoring_view, project_parameter_browser_view,
+    ConnectionFailure, ConnectionStep, ConnectionWizardState, Connectivity, CsvLoggingFaultSummary,
+    CsvLoggingRuntimeStatus, CsvLoggingStateView, FaultAction, FaultEffect, FaultTracker,
+    MAX_PARAMETER_BROWSER_VISIBLE, MonitoringAction, MonitoringEffect, MonitoringRuntimeSnapshot,
+    MonitoringView, OperationState, ParameterAction, ParameterBrowserView, ParameterDescriptorView,
+    ParameterIntentContext, ParameterWritePresentation, PreparedWritePlan, ProfileRegistry,
+    RestoreConfirmation, ScopeSelection, SerialConnectError, SessionEffect, SessionFault,
+    SessionInput, SessionState, SessionStateMachine, StagedWriteIntent, WriteConfirmation,
+    WriteConfirmationModel, WriteEffect, WriteSessionSnapshot, default_dashboard_parameters,
+    parameter_catalog, prepare_parameter_intent, project_monitoring_view,
+    project_parameter_browser_view,
 };
 
 mod connection;
@@ -24,10 +24,11 @@ mod faults;
 mod monitoring;
 mod view;
 
-pub use view::{
-    ApplicationView, AuditHealthView, AuthorizationView, OperationView, SessionPhaseView, SessionView,
-};
 use view::port_label;
+pub use view::{
+    ApplicationView, AuditHealthView, AuthorizationView, OperationView, SessionPhaseView,
+    SessionView,
+};
 
 #[derive(Clone, Debug, Default)]
 struct ApplicationMonitoringState {
