@@ -11,8 +11,8 @@ use crate::{
     CsvLoggingStateView, FaultAction, FaultEffect, FaultTracker, MAX_PARAMETER_BROWSER_VISIBLE,
     MonitoringAction, MonitoringEffect, MonitoringView, OperationState, ParameterAction,
     ParameterBrowserView, ParameterIntentContext, ParameterWritePresentation, ProfileRegistry,
-    RestoreConfirmation, SerialConnectError, SessionEffect, SessionFault, SessionInput, SessionState,
-    SessionStateMachine, WriteConfirmation, WriteConfirmationModel, WriteEffect,
+    RestoreConfirmation, SerialConnectError, SessionEffect, SessionFault, SessionInput,
+    SessionState, SessionStateMachine, WriteConfirmation, WriteConfirmationModel, WriteEffect,
     WriteSessionSnapshot, prepare_parameter_intent, project_monitoring_view,
     project_parameter_browser_view,
 };
