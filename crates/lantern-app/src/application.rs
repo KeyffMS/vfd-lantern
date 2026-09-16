@@ -6,13 +6,13 @@ use thiserror::Error;
 
 use crate::{
     AuditHealth, Authorization, BackupCaptureRequest, BackupRestoreAction, BackupRestoreEffect,
-    BackupRestoreState, BusError, ConnectionAction, ConnectionAttemptKind, ConnectionEffect,
+    BackupRestoreState, ConnectionAction, ConnectionAttemptKind, ConnectionEffect,
     ConnectionFailure, ConnectionStep, ConnectionWizardState, Connectivity, CsvLoggingFaultSummary,
     CsvLoggingStateView, FaultAction, FaultEffect, FaultTracker, MAX_PARAMETER_BROWSER_VISIBLE,
     MonitoringAction, MonitoringEffect, OperationState, ParameterAction, ParameterIntentContext,
-    ProfileRegistry, RestoreConfirmation, SerialConnectError, SessionEffect, SessionFault,
-    SessionInput, SessionState, SessionStateMachine, WriteConfirmation, WriteConfirmationModel,
-    WriteEffect, WriteSessionSnapshot, prepare_parameter_intent,
+    ProfileRegistry, RestoreConfirmation, SessionEffect, SessionInput, SessionState,
+    SessionStateMachine, WriteConfirmation, WriteConfirmationModel, WriteEffect,
+    WriteSessionSnapshot, prepare_parameter_intent,
 };
 
 mod connection;
@@ -654,24 +654,6 @@ impl<R: EffectRunner> ApplicationRuntime<R> {
     #[must_use]
     pub const fn state(&self) -> &ApplicationState {
         &self.state
-    }
-}
-
-fn session_fault_for_connect_error(error: &SerialConnectError) -> SessionFault {
-    match error {
-        SerialConnectError::Missing { .. } | SerialConnectError::IdentityChanged { .. } => {
-            SessionFault::PortRemoved
-        }
-        SerialConnectError::PermissionDenied { .. } => {
-            SessionFault::Transport(BusError::PermissionDenied)
-        }
-        SerialConnectError::PortBusy { .. } => SessionFault::Transport(BusError::PortBusy),
-        SerialConnectError::NotCharacterDevice { .. }
-        | SerialConnectError::InvalidPathEncoding { .. }
-        | SerialConnectError::InvalidSettings(_)
-        | SerialConnectError::StableIdentityRequired { .. }
-        | SerialConnectError::UnsupportedRs485Ioctl { .. }
-        | SerialConnectError::Io { .. } => SessionFault::Transport(BusError::Io(error.to_string())),
     }
 }
 
