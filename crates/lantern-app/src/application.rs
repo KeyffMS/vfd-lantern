@@ -9,12 +9,10 @@ use crate::{
     BackupRestoreState, BusError, ConnectionAction, ConnectionAttemptKind, ConnectionEffect,
     ConnectionFailure, ConnectionStep, ConnectionWizardState, Connectivity, CsvLoggingFaultSummary,
     CsvLoggingStateView, FaultAction, FaultEffect, FaultTracker, MAX_PARAMETER_BROWSER_VISIBLE,
-    MonitoringAction, MonitoringEffect, MonitoringView, OperationState, ParameterAction,
-    ParameterBrowserView, ParameterIntentContext, ParameterWritePresentation, ProfileRegistry,
-    RestoreConfirmation, SerialConnectError, SessionEffect, SessionFault, SessionInput,
-    SessionState, SessionStateMachine, WriteConfirmation, WriteConfirmationModel, WriteEffect,
-    WriteSessionSnapshot, prepare_parameter_intent, project_monitoring_view,
-    project_parameter_browser_view,
+    MonitoringAction, MonitoringEffect, OperationState, ParameterAction, ParameterIntentContext,
+    ProfileRegistry, RestoreConfirmation, SerialConnectError, SessionEffect, SessionFault,
+    SessionInput, SessionState, SessionStateMachine, WriteConfirmation, WriteConfirmationModel,
+    WriteEffect, WriteSessionSnapshot, prepare_parameter_intent,
 };
 
 mod connection;
@@ -82,71 +80,6 @@ impl ApplicationState {
             faults: FaultTracker::default(),
             backup_restore: BackupRestoreState::default(),
             write_guard_revision: 0,
-        }
-    }
-
-    #[must_use]
-    pub fn view(&self) -> ApplicationView {
-        let monitoring = if self.session.session_id().is_some() {
-            self.active_profile
-                .as_ref()
-                .and_then(|id| self.registry.get(id))
-                .map(|entry| {
-                    project_monitoring_view(
-                        entry.profile(),
-                        &self.monitoring.dashboard_parameters,
-                        &self.monitoring.scope,
-                        self.monitoring.snapshot.as_ref(),
-                        &self.monitoring.csv_parameters,
-                        &self.monitoring.csv_status,
-                        self.monitoring.error.as_deref(),
-                    )
-                })
-                .unwrap_or_default()
-        } else {
-            MonitoringView::default()
-        };
-        let parameters = if self.session.session_id().is_some() {
-            self.active_profile
-                .as_ref()
-                .and_then(|id| self.registry.get(id))
-                .map(|entry| {
-                    project_parameter_browser_view(
-                        entry.profile(),
-                        entry.origin(),
-                        Arc::clone(&self.parameters.catalog),
-                        self.monitoring
-                            .snapshot
-                            .as_ref()
-                            .map(|snapshot| Arc::clone(&snapshot.latest)),
-                        ParameterWritePresentation {
-                            staged_intent: self.parameters.staged_intent.clone(),
-                            prepared_write: self.parameters.prepared_write.clone(),
-                            write_status: self.parameters.write_status.clone(),
-                            error: self.parameters.error.clone(),
-                        },
-                    )
-                })
-                .unwrap_or_default()
-        } else {
-            ParameterBrowserView::default()
-        };
-        ApplicationView {
-            active_profile: self.active_profile.clone(),
-            registry_profile_ids: self
-                .registry
-                .entries()
-                .keys()
-                .map(|id| id.as_str().to_owned())
-                .collect(),
-            session: SessionView::from_state(self.session.state()),
-            connection: self
-                .connection
-                .view(&self.registry, self.active_profile.as_ref()),
-            monitoring,
-            parameters,
-            faults: self.faults.view(),
-            backup_restore: self.backup_restore.view(),
         }
     }
 
