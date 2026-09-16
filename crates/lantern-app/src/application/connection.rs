@@ -4,8 +4,8 @@ use lantern_domain::{IdentificationMatch, SessionId};
 
 use crate::{
     BusError, ConnectionAction, ConnectionAttemptKind, ConnectionEffect, ConnectionFailure,
-    ConnectionStep, Connectivity, FaultTracker, MonitoringEffect, SerialConnectError, SessionEffect,
-    SessionFault, SessionInput, SessionState, identification_error_attempt,
+    ConnectionStep, Connectivity, FaultTracker, MonitoringEffect, SerialConnectError,
+    SessionEffect, SessionFault, SessionInput, SessionState, identification_error_attempt,
     identification_report_export,
 };
 
