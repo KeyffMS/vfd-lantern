@@ -3,15 +3,33 @@ use std::time::Instant;
 use lantern_domain::{IdentificationMatch, SessionId};
 
 use crate::{
-    ConnectionAction, ConnectionAttemptKind, ConnectionEffect, ConnectionFailure, ConnectionStep,
-    Connectivity, FaultTracker, MonitoringEffect, SerialConnectError, SessionEffect, SessionInput,
-    SessionState, identification_error_attempt, identification_report_export,
+    BusError, ConnectionAction, ConnectionAttemptKind, ConnectionEffect, ConnectionFailure,
+    ConnectionStep, Connectivity, FaultTracker, MonitoringEffect, SerialConnectError,
+    SessionEffect, SessionFault, SessionInput, SessionState, identification_error_attempt,
+    identification_report_export,
 };
 
 use super::{
     ApplicationEffect, ApplicationMonitoringState, ApplicationParameterState, ApplicationState,
-    session_fault_for_connect_error,
 };
+
+fn session_fault_for_connect_error(error: &SerialConnectError) -> SessionFault {
+    match error {
+        SerialConnectError::Missing { .. } | SerialConnectError::IdentityChanged { .. } => {
+            SessionFault::PortRemoved
+        }
+        SerialConnectError::PermissionDenied { .. } => {
+            SessionFault::Transport(BusError::PermissionDenied)
+        }
+        SerialConnectError::PortBusy { .. } => SessionFault::Transport(BusError::PortBusy),
+        SerialConnectError::NotCharacterDevice { .. }
+        | SerialConnectError::InvalidPathEncoding { .. }
+        | SerialConnectError::InvalidSettings(_)
+        | SerialConnectError::StableIdentityRequired { .. }
+        | SerialConnectError::UnsupportedRs485Ioctl { .. }
+        | SerialConnectError::Io { .. } => SessionFault::Transport(BusError::Io(error.to_string())),
+    }
+}
 
 impl ApplicationState {
     pub(super) fn reduce_connection(&mut self, action: ConnectionAction) -> Vec<ApplicationEffect> {
