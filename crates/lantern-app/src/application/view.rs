@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Instant};
 use lantern_domain::{ProfileId, SessionId};
 
 use crate::{
-    AuditHealth, ApplicationState, Authorization, BackupRestoreView, ConnectionWizardState,
+    ApplicationState, AuditHealth, Authorization, BackupRestoreView, ConnectionWizardState,
     ConnectionWizardView, Connectivity, FaultTimelineView, MonitoringView, OperationState,
     ParameterBrowserView, ParameterWritePresentation, ProfileRegistry, SessionState,
     project_monitoring_view, project_parameter_browser_view,
