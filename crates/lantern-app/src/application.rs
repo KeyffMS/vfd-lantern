@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use lantern_domain::{DriveState, ParameterId, ProfileId, SessionId, SlaveId};
+use lantern_domain::{DriveState, ProfileId, SessionId, SlaveId};
 use lantern_profile::ValidatedDeviceProfile;
 use thiserror::Error;
 
@@ -8,84 +8,27 @@ use crate::{
     AuditHealth, Authorization, BackupCaptureRequest, BackupRestoreAction, BackupRestoreEffect,
     BackupRestoreState, BusError, ConnectionAction, ConnectionAttemptKind, ConnectionEffect,
     ConnectionFailure, ConnectionStep, ConnectionWizardState, Connectivity, CsvLoggingFaultSummary,
-    CsvLoggingRuntimeStatus, CsvLoggingStateView, FaultAction, FaultEffect, FaultTracker,
-    MAX_PARAMETER_BROWSER_VISIBLE, MonitoringAction, MonitoringEffect, MonitoringRuntimeSnapshot,
-    MonitoringView, OperationState, ParameterAction, ParameterBrowserView, ParameterDescriptorView,
-    ParameterIntentContext, ParameterWritePresentation, PreparedWritePlan, ProfileRegistry,
-    RestoreConfirmation, ScopeSelection, SerialConnectError, SessionEffect, SessionFault,
-    SessionInput, SessionState, SessionStateMachine, StagedWriteIntent, WriteConfirmation,
-    WriteConfirmationModel, WriteEffect, WriteSessionSnapshot, default_dashboard_parameters,
-    parameter_catalog, prepare_parameter_intent, project_monitoring_view,
+    CsvLoggingStateView, FaultAction, FaultEffect, FaultTracker, MAX_PARAMETER_BROWSER_VISIBLE,
+    MonitoringAction, MonitoringEffect, MonitoringView, OperationState, ParameterAction,
+    ParameterBrowserView, ParameterIntentContext, ParameterWritePresentation, ProfileRegistry,
+    RestoreConfirmation, SerialConnectError, SessionEffect, SessionFault, SessionInput,
+    SessionState, SessionStateMachine, WriteConfirmation, WriteConfirmationModel, WriteEffect,
+    WriteSessionSnapshot, prepare_parameter_intent, project_monitoring_view,
     project_parameter_browser_view,
 };
 
 mod connection;
 mod faults;
 mod monitoring;
+mod state;
 mod view;
 
+use state::{ApplicationMonitoringState, ApplicationParameterState};
 use view::port_label;
 pub use view::{
     ApplicationView, AuditHealthView, AuthorizationView, OperationView, SessionPhaseView,
     SessionView,
 };
-
-#[derive(Clone, Debug, Default)]
-struct ApplicationMonitoringState {
-    dashboard_parameters: Vec<ParameterId>,
-    scope: ScopeSelection,
-    snapshot: Option<MonitoringRuntimeSnapshot>,
-    csv_parameters: Vec<ParameterId>,
-    csv_status: CsvLoggingRuntimeStatus,
-    next_logging_id: u128,
-    error: Option<String>,
-}
-
-impl ApplicationMonitoringState {
-    fn for_profile(profile: &ValidatedDeviceProfile) -> Self {
-        Self {
-            dashboard_parameters: default_dashboard_parameters(profile),
-            scope: ScopeSelection::default(),
-            snapshot: None,
-            csv_parameters: Vec::new(),
-            csv_status: CsvLoggingRuntimeStatus::default(),
-            next_logging_id: 1,
-            error: None,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct ApplicationParameterState {
-    catalog: Arc<[ParameterDescriptorView]>,
-    visible: Vec<ParameterId>,
-    staged_intent: Option<StagedWriteIntent>,
-    prepared_write: Option<PreparedWritePlan>,
-    write_status: Option<String>,
-    error: Option<String>,
-}
-
-impl Default for ApplicationParameterState {
-    fn default() -> Self {
-        Self {
-            catalog: Vec::<ParameterDescriptorView>::new().into(),
-            visible: Vec::new(),
-            staged_intent: None,
-            prepared_write: None,
-            write_status: None,
-            error: None,
-        }
-    }
-}
-
-impl ApplicationParameterState {
-    fn for_profile(profile: &ValidatedDeviceProfile) -> Self {
-        Self {
-            catalog: parameter_catalog(profile),
-            ..Self::default()
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct ApplicationState {
