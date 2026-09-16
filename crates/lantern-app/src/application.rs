@@ -2,7 +2,6 @@ use std::{path::PathBuf, sync::Arc};
 
 use lantern_domain::{DriveState, ProfileId, SessionId, SlaveId};
 use lantern_profile::ValidatedDeviceProfile;
-use thiserror::Error;
 
 use crate::{
     AuditHealth, Authorization, BackupCaptureRequest, BackupRestoreAction, BackupRestoreEffect,
@@ -18,11 +17,13 @@ use crate::{
 mod connection;
 mod faults;
 mod monitoring;
+mod runtime;
 mod state;
 mod view;
 
 use state::{ApplicationMonitoringState, ApplicationParameterState};
 use view::port_label;
+pub use runtime::{ApplicationEffectError, ApplicationRuntime, EffectRunner};
 pub use view::{
     ApplicationView, AuditHealthView, AuthorizationView, OperationView, SessionPhaseView,
     SessionView,
@@ -623,38 +624,6 @@ pub enum ApplicationEffect {
     BackupRestore(BackupRestoreEffect),
     Write(WriteEffect),
     Session(SessionEffect),
-}
-
-#[derive(Debug, Error)]
-#[error("application effect failed: {0}")]
-pub struct ApplicationEffectError(pub String);
-
-pub trait EffectRunner {
-    fn execute(&mut self, effect: ApplicationEffect) -> Result<(), ApplicationEffectError>;
-}
-
-pub struct ApplicationRuntime<R> {
-    state: ApplicationState,
-    runner: R,
-}
-
-impl<R: EffectRunner> ApplicationRuntime<R> {
-    #[must_use]
-    pub fn new(state: ApplicationState, runner: R) -> Self {
-        Self { state, runner }
-    }
-
-    pub fn dispatch(&mut self, action: ApplicationAction) -> Result<(), ApplicationEffectError> {
-        for effect in self.state.reduce(action) {
-            self.runner.execute(effect)?;
-        }
-        Ok(())
-    }
-
-    #[must_use]
-    pub const fn state(&self) -> &ApplicationState {
-        &self.state
-    }
 }
 
 #[cfg(test)]
