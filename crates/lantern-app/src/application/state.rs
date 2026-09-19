@@ -1,12 +1,16 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
-use lantern_domain::ParameterId;
+use lantern_domain::{ParameterId, SlaveId};
 use lantern_profile::ValidatedDeviceProfile;
 
 use crate::{
-    CsvLoggingRuntimeStatus, MonitoringRuntimeSnapshot, ParameterDescriptorView, PreparedWritePlan,
-    ScopeSelection, StagedWriteIntent, default_dashboard_parameters, parameter_catalog,
+    BackupRestoreState, ConnectionWizardState, CsvLoggingRuntimeStatus, FaultTracker,
+    MonitoringRuntimeSnapshot, ParameterDescriptorView, PreparedWritePlan, ProfileRegistry,
+    ScopeSelection, SessionStateMachine, StagedWriteIntent, default_dashboard_parameters,
+    parameter_catalog,
 };
+
+use super::ApplicationState;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ApplicationMonitoringState {
@@ -62,5 +66,58 @@ impl ApplicationParameterState {
             catalog: parameter_catalog(profile),
             ..Self::default()
         }
+    }
+}
+
+impl Default for ApplicationState {
+    fn default() -> Self {
+        Self {
+            active_profile: None,
+            registry: Arc::new(ProfileRegistry::default()),
+            session: SessionStateMachine::new(false),
+            connection: ConnectionWizardState::default(),
+            monitoring: ApplicationMonitoringState::default(),
+            parameters: ApplicationParameterState::default(),
+            faults: FaultTracker::default(),
+            backup_restore: BackupRestoreState::default(),
+            write_guard_revision: 0,
+        }
+    }
+}
+
+impl ApplicationState {
+    #[must_use]
+    pub fn with_registry(registry: Arc<ProfileRegistry>, process_writes_enabled: bool) -> Self {
+        Self::with_registry_and_suggestions(registry, process_writes_enabled, None, None)
+    }
+
+    #[must_use]
+    pub fn with_registry_and_suggestions(
+        registry: Arc<ProfileRegistry>,
+        process_writes_enabled: bool,
+        suggested_device: Option<PathBuf>,
+        suggested_slave: Option<SlaveId>,
+    ) -> Self {
+        Self {
+            active_profile: None,
+            registry,
+            session: SessionStateMachine::new(process_writes_enabled),
+            connection: ConnectionWizardState::new(suggested_device, suggested_slave),
+            monitoring: ApplicationMonitoringState::default(),
+            parameters: ApplicationParameterState::default(),
+            faults: FaultTracker::default(),
+            backup_restore: BackupRestoreState::default(),
+            write_guard_revision: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn registry(&self) -> &Arc<ProfileRegistry> {
+        &self.registry
+    }
+
+    #[must_use]
+    pub const fn session(&self) -> &SessionStateMachine {
+        &self.session
     }
 }
