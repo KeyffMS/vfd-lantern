@@ -33,7 +33,6 @@ pub enum ApplicationEffect {
     Session(SessionEffect),
 }
 
-
 #[derive(Debug, Error)]
 #[error("application effect failed: {0}")]
 pub struct ApplicationEffectError(pub String);
