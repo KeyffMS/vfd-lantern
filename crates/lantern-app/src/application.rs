@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use lantern_domain::{DriveState, ProfileId, SessionId};
-use lantern_profile::ValidatedDeviceProfile;
 
 use crate::{
     AuditHealth, Authorization, BackupCaptureRequest, BackupRestoreAction, BackupRestoreEffect,
@@ -494,21 +493,6 @@ impl ApplicationState {
                 },
             },
         ))
-    }
-
-    fn selected_profile(&self) -> Option<Arc<ValidatedDeviceProfile>> {
-        self.active_profile
-            .as_ref()
-            .and_then(|id| self.registry.get(id))
-            .map(|entry| Arc::clone(entry.profile()))
-    }
-
-    fn profile_candidates(&self) -> Vec<Arc<ValidatedDeviceProfile>> {
-        self.registry
-            .entries()
-            .values()
-            .map(|entry| Arc::clone(entry.profile()))
-            .collect()
     }
 
     fn translate_session_effects(&mut self, effects: Vec<SessionEffect>) -> Vec<ApplicationEffect> {

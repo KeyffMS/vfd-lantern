@@ -120,4 +120,19 @@ impl ApplicationState {
     pub const fn session(&self) -> &SessionStateMachine {
         &self.session
     }
+
+    pub(super) fn selected_profile(&self) -> Option<Arc<ValidatedDeviceProfile>> {
+        self.active_profile
+            .as_ref()
+            .and_then(|id| self.registry.get(id))
+            .map(|entry| Arc::clone(entry.profile()))
+    }
+
+    pub(super) fn profile_candidates(&self) -> Vec<Arc<ValidatedDeviceProfile>> {
+        self.registry
+            .entries()
+            .values()
+            .map(|entry| Arc::clone(entry.profile()))
+            .collect()
+    }
 }
