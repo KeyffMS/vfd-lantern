@@ -4,11 +4,10 @@ use lantern_domain::{DriveState, ProfileId, SessionId};
 
 use crate::{
     AuditHealth, Authorization, BackupCaptureRequest, BackupRestoreAction, BackupRestoreEffect,
-    BackupRestoreState, ConnectionAction, ConnectionAttemptKind, ConnectionEffect,
-    ConnectionFailure, ConnectionStep, ConnectionWizardState, Connectivity, CsvLoggingFaultSummary,
-    CsvLoggingStateView, FaultAction, FaultEffect, FaultTracker, MAX_PARAMETER_BROWSER_VISIBLE,
-    MonitoringAction, MonitoringEffect, OperationState, ParameterAction, ParameterIntentContext,
-    ProfileRegistry, RestoreConfirmation, SessionEffect, SessionInput, SessionState,
+    BackupRestoreState, ConnectionAttemptKind, ConnectionEffect, ConnectionFailure, ConnectionStep,
+    ConnectionWizardState, Connectivity, CsvLoggingFaultSummary, CsvLoggingStateView, FaultTracker,
+    MAX_PARAMETER_BROWSER_VISIBLE, MonitoringEffect, OperationState, ParameterAction,
+    ParameterIntentContext, ProfileRegistry, RestoreConfirmation, SessionEffect, SessionState,
     SessionStateMachine, WriteConfirmation, WriteConfirmationModel, WriteEffect,
     WriteSessionSnapshot, prepare_parameter_intent,
 };
@@ -20,7 +19,9 @@ mod runtime;
 mod state;
 mod view;
 
-pub use runtime::{ApplicationEffectError, ApplicationRuntime, EffectRunner};
+pub use runtime::{
+    ApplicationAction, ApplicationEffect, ApplicationEffectError, ApplicationRuntime, EffectRunner,
+};
 use state::{ApplicationMonitoringState, ApplicationParameterState};
 use view::port_label;
 pub use view::{
@@ -535,28 +536,6 @@ impl ApplicationState {
         }
         translated
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum ApplicationAction {
-    ReplaceRegistry(Arc<ProfileRegistry>),
-    SelectProfile(ProfileId),
-    Connection(ConnectionAction),
-    Monitoring(MonitoringAction),
-    Parameters(ParameterAction),
-    Faults(FaultAction),
-    BackupRestore(BackupRestoreAction),
-    Session(SessionInput),
-}
-
-#[derive(Clone, Debug)]
-pub enum ApplicationEffect {
-    Connection(ConnectionEffect),
-    Monitoring(MonitoringEffect),
-    Faults(FaultEffect),
-    BackupRestore(BackupRestoreEffect),
-    Write(WriteEffect),
-    Session(SessionEffect),
 }
 
 #[cfg(test)]

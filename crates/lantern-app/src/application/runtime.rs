@@ -1,6 +1,38 @@
+use std::sync::Arc;
+
+use lantern_domain::ProfileId;
 use thiserror::Error;
 
-use super::{ApplicationAction, ApplicationEffect, ApplicationState};
+use crate::{
+    BackupRestoreAction, BackupRestoreEffect, ConnectionAction, ConnectionEffect, FaultAction,
+    FaultEffect, MonitoringAction, MonitoringEffect, ParameterAction, ProfileRegistry,
+    SessionEffect, SessionInput, WriteEffect,
+};
+
+use super::ApplicationState;
+
+#[derive(Clone, Debug)]
+pub enum ApplicationAction {
+    ReplaceRegistry(Arc<ProfileRegistry>),
+    SelectProfile(ProfileId),
+    Connection(ConnectionAction),
+    Monitoring(MonitoringAction),
+    Parameters(ParameterAction),
+    Faults(FaultAction),
+    BackupRestore(BackupRestoreAction),
+    Session(SessionInput),
+}
+
+#[derive(Clone, Debug)]
+pub enum ApplicationEffect {
+    Connection(ConnectionEffect),
+    Monitoring(MonitoringEffect),
+    Faults(FaultEffect),
+    BackupRestore(BackupRestoreEffect),
+    Write(WriteEffect),
+    Session(SessionEffect),
+}
+
 
 #[derive(Debug, Error)]
 #[error("application effect failed: {0}")]
