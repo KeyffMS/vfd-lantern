@@ -19,6 +19,9 @@ use serde::Deserialize;
 use sha2::Digest as _;
 use tempfile::TempDir;
 
+#[path = "support/backup_restore_process.rs"]
+mod backup_restore_process;
+
 const ROWS: usize = 64;
 const COLS: usize = 140;
 const SEED: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
@@ -577,6 +580,8 @@ fn main() -> Result<()> {
         println!("process-e2e rejected-confirmation-no-write ok");
         run_guarded_write_case(&simulator, &product, true)?;
         println!("process-e2e simulator-device-rejection-no-retry ok");
+        backup_restore_process::run_backup_restore_process_matrix(&simulator, &product)?;
+        println!("process-e2e backup-diff-restore-pty-matrix ok");
     }
     Ok(())
 }
